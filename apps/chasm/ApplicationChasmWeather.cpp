@@ -574,6 +574,8 @@ void ApplicationChasm::SetSnowUniforms(){
 #ifdef USE_IMGUI
 //RENDER THREAD with physics_mutex held, under the Time panel.
 void ApplicationChasm::RenderWeatherPanel(){
+    //The rainbow's own section first, under the sun's: the bow is the sun's light on the spray.
+    RenderRainbowPanel();
     if (!ImGui::CollapsingHeader("Weather",ImGuiTreeNodeFlags_DefaultOpen)){
         return;
     }
@@ -631,11 +633,12 @@ json ApplicationChasm::WeatherStatusJson(){
                 {"held",weather_held.load() >= 0.0f},{"strength",r(weather_strength.load(),100.0f)},
                 {"dated",json{{"storm",r(date.active,100.0f)},{"breeze",r(date.breeze,100.0f)}}},
                 {"wind",r(weather_view_wind.length(),100.0f)},{"snow",r(snow_density,100.0f)},
-                {"big_gusts",weather_big_count},{"armed",f_weather_armed},{"bake_ms",r(weather_bake_ms,100.0f)}};
+                {"big_gusts",weather_big_count},{"armed",f_weather_armed},{"bake_ms",r(weather_bake_ms,100.0f)},
+                {"rainbow",RainbowStatusJson()}};
 }
 
 //chasm_time's `weather`: storm (0..1) holds a storm over the view, held false lets it go; strength scales the wind;
-//gust true calls the big gust now.
+//gust true calls the big gust now; rainbow sets the bow's knobs (ApplicationChasmRainbow.cpp).
 void ApplicationChasm::SteerWeather(const json& s){
     if (!s.is_object()){
         return;
@@ -655,6 +658,10 @@ void ApplicationChasm::SteerWeather(const json& s){
     it = s.find("gust");
     if (it != s.end() && it->is_boolean() && it->get<bool>()){
         f_weather_gust_asked = true;
+    }
+    it = s.find("rainbow");
+    if (it != s.end()){
+        SteerRainbow(*it);
     }
 }
 #endif

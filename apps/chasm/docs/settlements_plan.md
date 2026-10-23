@@ -170,6 +170,13 @@ Each checked in the game, and a recording replayed twice, every tick equal.
 - **No replay**: the view's alone - nothing the rules read changed, so nothing a trace hashes can.
 - *Seen, left for the user*: the jobs overview and MOST IN NEED, at the bottom left, are still the whole colony's.
   *Answered* (the user, 2026-10-22): MOST IN NEED covers every colony - that is right. The jobs overview left as it is.
+  *Changed* (the user, 2026-10-23): the jobs overview shows the colony in view after all, since jobs are given out
+  within a settlement and the whole's figures set one colony's jobless beside another's empty places. Titled
+  "JOBS, COLONY 2", or "JOBS" with one colony. `EconomyJobCounts` takes a settlement: workplaces by their door, people
+  by `EconomyPersonLand`. `chasm_economy`'s `jobs_shown` is the panel's, with `colony`; `jobs` stays every colony's,
+  as the Void reads it beside `people`. *Checked* on `saves/kept_by_colony_test.json`: colony 1 BUILDERS, WOODCUTTERS,
+  WATER CARRIERS and PICKERS 1 / 1, NO JOB 6; colony 2 BUILDERS 1 / 1, NO JOB 2; the two the whole's. A new map:
+  "JOBS", the whole's. Seen on screen. View only, so no replay.
 
 ### As built: statistics by colony (step 4, 2026-10-22)
 

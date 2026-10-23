@@ -4,7 +4,7 @@ Talked through with the user 2026-10-21. Once a village has lived through its fi
 things left to do: **survive the zombies**, by building defence (`zombies_plan.md`, `defence_plan.md`), and
 **get to the chasm** - set up a camp on its rim, gather floatstone, and build a zeppelin. This plan is the
 second: the chasm's heat, steam as a good, the buildings that make it and turn it into water, and the zeppelin
-they lead to. Nothing here is built.
+they lead to. Steps 1 to 5 are built (the build order, below): flight and the boiler are left.
 
 What came before it: `gameplay_plan.md` made steam "the key resource" (boiled anywhere from water and wood, made
 in quantity by the chasm) and suggested steam as fuel and lift, collectors on the rim, and steam carried as a good
@@ -42,6 +42,17 @@ plan settles all three.
   collector and condenser working under snow, the boiler, the sail loft, the dock, a floatstone seam guaranteed at
   home (since left to the user, separately: below), and the tuning figures to start from.
 - **Brass in the palette** for the steam works, and **no tip on the readout** (the user, 2026-10-21, on seeing step 2).
+- **The dock is the size of a field, and the zeppelin big** (the user, 2026-10-23, on seeing step 4): a dock placed
+  over coarse cells as a field is, since a zeppelin is quite an achievement and quite large - and it is built in
+  **several stages of construction** you can see, not just finished. Modelled the same day, below ("The zeppelin,
+  modelled").
+- **The scaffold stays until the zeppelin is finished** (the user, 2026-10-23, on seeing the model), and the stages,
+  the cabin and the propellers as modelled ("Perfect job!").
+- **A dock goes at the chasm's edge, and its tool has no key** (the user, 2026-10-23, of two each): it lies along the
+  edge of the open chasm - the rim, or a balcony's or an island's edge, balconies allowed unlike fields; as built, every
+  cell within `ZONE_DOCK_REACH` of it -
+  since a zeppelin floats only over the chasm and will leave over it. Every letter is taken, so the build bar alone
+  reaches it: a dock is placed once or twice a game.
 - **After this plan: the ballista tower** (the user picked it from the gatehouse, the ballista, coal, and the
   swamp's winter work). Not planned here.
 
@@ -180,8 +191,10 @@ Each step is playable on the one before.
 3. **(BUILT 2026-10-21, "As built: step 3" below)** **The condenser.** Beside a collector, several to one, and fed
    from a store. Tested: a condenser beside a rim collector taking every unit as it comes, one beside a balcony's
    leaving the rest to build up for its carrier, and one alone condensing steam its hand fetched from a store.
-4. **Canvas and the sail loft.** Tested: hemp to canvas; the store beside it.
-5. **The dock and the zeppelin as a site.** Tested: a zeppelin built from goods gathered on a balcony, its steam last.
+4. **(BUILT 2026-10-23, "As built: step 4" below)** **Canvas and the sail loft.** Tested: hemp to canvas, two
+   sailmakers sharing a loft, the ropewalk beside it on the same hemp; the store beside it; canvas kept in a store.
+5. **(BUILT 2026-10-23, "As built: step 5" below)** **The dock and the zeppelin as a site.** Tested: a zeppelin built
+   by the builders from goods gathered by the dock, its steam last.
 6. **Flight** - its own plan, then.
 7. **The boiler**, whenever a map wants steam without a collector.
 
@@ -274,6 +287,114 @@ the tool **L** (`CHASM_TOOL_CONDENSER`), unlocked with the chasm as the collecto
 - **Not tested**: two condensers beside one collector (the share is by building order, a unit at a time), and houses
   fetching from one.
 
+## As built: step 4 (2026-10-23)
+
+The good is `GOOD_CANVAS` (12, a material, and a made good kept as rope is), the kind `ZONE_KIND_SAIL_LOFT` ("sail_loft"),
+its job `WORKER_JOB_SAILMAKER` (12, "sailmaker", by precision), the tool **I** (`CHASM_TOOL_SAIL_LOFT`, the last letter
+free), unlocked with the chasm as the steam works are. Pages: `wiki/sail_loft.md`, `wiki/canvas.md`.
+
+- **One errand for both hemp workshops** (`EconomyHempWork`, Economy.h): the ropemaker's round, made general -
+  `MakeRope` and `AtRopewalk` became `MakeOfHemp` and `AtHempWorkshop`, reading a two-row table of kind, job, made good,
+  hemp a piece, seconds and pile. The ropewalk does what it did.
+- **Hands, not speed** (worked out here, for the user to overrule): a sailmaker for every `ECONOMY_PLOTS_PER_WORKER`
+  plots, as `building_size_plan.md`'s decision D has it for workshops; the ropewalk stays the exception it was, its
+  length its speed. No least size - one plot works, with one sailmaker - and one storey.
+- **Several at one loft**: before one goes, what the others are sewing or on their way to sew takes room in the pile,
+  and the hemp they are bringing counts as come. `FetchFromWorkplace` now also counts the loads the others are coming
+  for against the kept shortfall: before it did, two sailmakers walked for one load of kept canvas (a ropewalk's one
+  ropemaker never could).
+- **Hemp wanted twice**: no priority between a ropewalk and a loft; each fetches for its own pile, whoever comes first,
+  and a full pile leaves the rest to the other.
+- **The look**: tarred planks (`PAL_BARK_DARK`) under slate - plaster at first, but the canvas came out the plaster's
+  colour - and a yard dressed as a ropewalk's (`YardSpot`, now shared): a tenter frame facing the camera, a canvas of
+  three widths on it while the loft has anything to work, bolts of canvas (`SAIL_CANVAS_A_BOLT` each) and hemp sheaves.
+  Canvas is two new cells in the crops row, `PAL_CANVAS` and `PAL_CANVAS_DARK`: goods made from crops have theirs there,
+  never snowed on.
+- **The card**: its workers by plots, the canvas against its pile, the hemp to sew, the kept chips and make more, and a
+  "no hemp" line.
+- **Tested** (2026-10-23, debug build, `village_year5.json` with six people added and 40 hemp in a store -
+  `saves/sail_loft_test.json` is that colony, its loft at 269,-30): a 4-plot loft took two sailmakers, who fetched 5
+  hemp each and sewed side by side - 5 canvas in some 2,500 ticks, at half pace in the houses the added people crowd -
+  while the ropemaker took his hemp from the same store. A store wrapped round the loft took hemp and canvas. 5 canvas
+  kept went to it in one sailmaker's load, the other fetching hemp meanwhile, once the fix above was in. Save and reload
+  kept the loft, its stock and its sailmakers. Screenshots: the frame with its seams and the bolts (behind a pine on
+  that map; seen with the forest hidden), the card, I SAIL LOFT on the bar, SAILMAKERS 2 / 2.
+- **Not tested**: a site taking canvas (nothing is built with it before step 5), a stopped loft, a yard on an east or
+  west side.
+
+## As built: step 5 (2026-10-23)
+
+The kind is `ZONE_KIND_DOCK` (19, "dock"), on coarse cells as a field is (`ZONE_OP_DOCK_PAINT`, appended), the tool
+`CHASM_TOOL_DOCK` on the build bar with no key, unlocked with the chasm. The zeppelin is not a building of its own but the
+dock's second site: its stages standing, `EconomyState::zeppelin` by building id, saved (`zeppelins`) and hashed. Pages:
+`wiki/dock.md`, `wiki/zeppelin.md`; the goods pages say what each stage takes.
+
+- **Where**: `ZoneCanDock` is a field's cell rule (`CellBuildable`, shared now) but on a balcony or an island too, and
+  every cell's middle within `ZONE_DOCK_REACH` of the chasm's edge (`ChasmRiftDistance`) - the user's "at the chasm's
+  edge". 9 units was tried first and refused every 2-wide dock on `casm_edge`'s rim: its first buildable column stands
+  about 7 in, past bare rock and the cliff, its second about 11, so 13. A cell across a cliff from the rest of the dock is
+  refused: one floor. At most `ZONE_DOCK_MAX_CELLS`, a field's 8.
+- **Its own site**: `ECONOMY_DOCK_WOOD_PER_CELL` a cell, all at once, as a field's.
+- **Fitting a zeppelin** (`ZoneDockFrame`, the rules' and the view's): the cells' middle, their principal axis for its
+  long way, the nose toward the chasm; it fits when a `ZONE_DOCK_FIT_LENGTH` by `ZONE_DOCK_FIT_WIDTH` oblong round the
+  middle lies on the dock's cells, tried along the axis and turned up to 45 degrees. That oblong is what stands on the
+  ground - the scaffold's frames and trestles - not the 14-long envelope, which overhangs in the air: sized on the
+  envelope (13 x 4.4) it refused the crooked 2 x 4s the grid makes away from its straight parts. A dock nothing fits on
+  has its mast alone, its card says "Too small for a zeppelin", and NEEDS ATTENTION lists it (`dock_small`).
+- **The zeppelin's site** (`Economy::ZeppelinSite`): a dock standing whole, fitting, its zeppelin not finished. `SiteNeed`
+  is every stage still to stand, so the builders bring any of its goods from anywhere they take a site's - stores, the
+  camp, crates, a ropewalk's rope and a sail loft's canvas - and `Build` raises a stage once those before it stand and
+  all of its good is there: steam last. `EVENT_ZEPPELIN_STAGE` tells each, journaled and on the notice line ("the
+  zeppelin's frame is built" ... "the zeppelin is finished - filled with steam, and moored").
+- **The look** (`ApplicationChasmDock.cpp`): instance sets of the GLB's models in one frame - the mast once the dock
+  stands, the scaffold from the zeppelin's beginning until it is finished (the user's), the stage's model, and finished,
+  `dock_mooring`. The dock's cells are trodden ground and a fence (CropMesh), as a range's.
+- **The card**: the stages, the next one's good against what has been brought, who is carrying, the stages after; with
+  none of the next good held in the colony, what makes it (a mine, a ropewalk, a sail loft, a steam collector).
+  `chasm_pick`'s building economy has `zeppelin` (fits, nose, stages, next, brought); `set_stock` with `site` sets what
+  a site has been brought and builds what that pays for, a debug's shortcut through the stages.
+- **Tested** (2026-10-23, debug, `casm_edge.json`; `saves/zeppelin_dock_test.json` is that colony with a dock on its rim,
+  the zeppelin just begun): every stage set through `set_stock site` and screenshot from the game's angle - scaffold and
+  mast, frame, hull, rigging, the slack envelope, finished on its mooring; a crooked 7-cell dock refused, with its card
+  line and its NEEDS ATTENTION row; the card with no steam held ("No steam to be had"); save and reload keeping a finished
+  zeppelin. Then for real: a dock painted in play on that save, four people and a three-plot builders' hut added, the
+  goods in a crate by it - the builders built the dock, then carried wood, floatstone, rope, canvas and steam, bringing
+  the later stages' goods early while the earlier stood, and finished it in 15,000 ticks.
+- **Not tested**: a dock on an island; a zeppelin begun and its dock erased (what was brought should be left as a crate,
+  as any site's).
+
+## The zeppelin, modelled (2026-10-23)
+
+For step 5, before its code: the zeppelin in five stages and the scaffold it is built on, generated by
+`tools/blender_chasm_props.py` (`zeppelin(stage)`, `zeppelin_scaffold`) into `art_source/chasm/chasm_props.blend` and
+appended to `chasm_props.glb` with `--add --merge` (the file's other 110 nodes, 62 meshes and 21 clips byte for byte as
+they were). The user's own `zeppelin` in the file, the finished one this took after, is left as it was. Previews:
+`art_source/chasm/previews/zeppelin_stages_game.png` (55 degrees, a dock lying east-west), `_side.png`, `_close.png`,
+`zeppelin_front.png`.
+
+| Asset | Shows | Its site's good | Triangles |
+|---|---|---|---|
+| `zeppelin_1` | the frame: the gondola's keel and ribs, the envelope's hoops and stringers, the fins' frames | wood | 1804 |
+| `zeppelin_2` | the hull: the gondola planked, its lower strakes and keel crystals floatstone, decked, railed, a plaster cabin under red tile | floatstone | 1778 |
+| `zeppelin_3` | the rigging: the gondola hung from the frame on rope, the brass steam pipe into it, two propellers, brass nose and tail caps | rope | 2110 |
+| `zeppelin_4` | the canvas on, but slack - fallen in between the hoops, the frame hidden inside it; fins covered, the brass valve on top | canvas | 1374 |
+| `zeppelin_5` | filled: taut, timber girths over the hoops, a red pennant at the stern | steam | 1676 |
+| `zeppelin_scaffold` | trestles under the keel, three frames with cradle beams under the envelope, a ladder | - | 512 |
+
+- **Each stage is the one before and more**, built from the same code and seeds, so swapping the mesh as the site
+  goes on moves nothing already built - the frame alone goes, once the canvas covers it.
+- **One origin for all six**: the dock's ground under the middle. The gondola's keel rests on the trestles at
+  `ZEP_KEEL_Z`, the envelope's axis is `ZEP_AXIS_Z` up; the nose is Blender +Y, glTF -Z - the engine's forward - so a
+  dock turns it by turning the mesh.
+- **Its size**: 14 long, 5 wide over the propellers, 7.4 high - about twice a two-storey house; a villager (0.86)
+  stands at the rail, the deck at `ZEP_DECK_Z` on the trestles. It fits a dock of 2 x 4 field cells (some 7 x 14), the
+  long way along the 4. Drawn at 1, as the rocks and crates are.
+- **Colours**: the props' row-0 timber, plaster and tile, and off-row cells the season and snow never change: canvas
+  (`PAL_CANVAS`, row 9), brass (row 12), floatstone (row 10), rope (row 9). `blender_chasm_props_check.py` knows them
+  now, and the zeppelin's own origin (`DOCK_ORIGIN`); all six pass its `--verify`.
+- **The user's say** (2026-10-23): as modelled - and the scaffold comes down when it is finished. The dock's mast and
+  a finished one's mooring lines were added for step 5 (`dock_mast`, `dock_mooring`, the same frame).
+
 ## Current tuning
 
 Figures to start from, each a named constant, none of them a rule (`tuning_numbers_not_rules`):
@@ -286,8 +407,9 @@ Figures to start from, each a named constant, none of them a rule (`tuning_numbe
 | the chasm's warmth | +5 degrees at the open edge, gone some 24 units inland; +3 for each step down |
 | the air | about +20 in midsummer, -8 in midwinter, a few degrees colder at the north edge and in the storm |
 | a boiler | a unit of steam from a unit of water and 1 wood, every 8 s |
-| a canvas | 2 hemp, as a rope |
-| the first zeppelin | 40 floatstone, 20 rope, 20 canvas, 30 steam, its frame's wood |
+| a canvas | 2 hemp, as a rope, sewn in 8 s a sailmaker; 12 at most waiting at the loft |
+| the first zeppelin | 60 wood for its frame, 40 floatstone, 20 rope, 20 canvas, 30 steam - a stage each, in that order |
+| a dock | 8 wood a cell; at most 8 cells, at the chasm's edge (9 units in from it at most) |
 
 A seam holds 50 floatstone (`DEPOSIT_SEAM_FLOATSTONE`), so a home seam builds one zeppelin and part of a second;
 the islands give the rest. How many zeppelins' worth there is in all is still open (`gameplay_plan.md`).

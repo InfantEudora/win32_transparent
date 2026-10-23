@@ -470,6 +470,8 @@ const char* ChasmKindLabel(int kind, bool f_plural){
         case ZONE_KIND_WELL:        return f_plural ? "wells" : "well";
         case ZONE_KIND_STEAM:       return f_plural ? "steam collectors" : "steam collector";
         case ZONE_KIND_CONDENSER:   return f_plural ? "condensers" : "condenser";
+        case ZONE_KIND_SAIL_LOFT:   return f_plural ? "sail lofts" : "sail loft";
+        case ZONE_KIND_DOCK:        return f_plural ? "zeppelin docks" : "zeppelin dock";
         default:                    return f_plural ? "buildings" : "building";
     }
 }
@@ -503,6 +505,10 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
                                                     : who + " died of " + EconomyDeathCause(ev.amount);
         case EVENT_RANKED:
             return who + " rose to " + EconomyRankName(ev.amount);
+        case EVENT_ZEPPELIN_STAGE:
+            //steam_plan.md step 5: each of its stages, the last its finishing.
+            return (ev.amount >= ZEPPELIN_STAGES) ? std::string("The zeppelin was finished")
+                                                  : std::string("The zeppelin's ") + EconomyZeppelinStageName(ev.amount) + " was built";
         case EVENT_HARVEST:
             snprintf(buf,sizeof(buf),"Harvested %i %s",ev.amount,good.c_str());
             return buf;

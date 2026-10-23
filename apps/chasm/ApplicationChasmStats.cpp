@@ -341,6 +341,7 @@ uint32_t JournalColour(int kind){
         case EVENT_EXPECTING:           return UIColor(156,204,112);
         case EVENT_FROST_TOOK:          return UIColor(200,224,240);
         case EVENT_BOULDER_FOUND:       return HudGoodColour(GOOD_STONE);
+        case EVENT_ZEPPELIN_STAGE:      return HudGoodColour(GOOD_CANVAS);
         case EVENT_BALCONY_REACHED:     return UIColor(120,190,230);
         case EVENT_GOAL_MET:
         case EVENT_DEMO_COMPLETE:       return HUD_SELECT;

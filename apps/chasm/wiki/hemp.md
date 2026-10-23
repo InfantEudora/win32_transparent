@@ -3,15 +3,16 @@ title: Hemp
 aliases: hemp field, hemp fields
 kind: goods
 status: built
-summary: A crop that is not food, grown on a field for rope. AUTO never sows it, and its harvest never goes home.
-plans: goods_plan.md > Decided; goods_plan.md > Hemp; goods_plan.md > Step 2: hemp, the crop
+summary: A crop that is not food, grown on a field for rope and canvas. AUTO never sows it, and its harvest never goes home.
+plans: goods_plan.md > Decided; goods_plan.md > Hemp; goods_plan.md > Step 2: hemp, the crop; steam_plan.md > Hemp canvas and the sail loft
 code: Goods.h: GOOD_HEMP GOODS_CROPS GoodOfCrop; Zones.h: ZONE_CROP_HEMP; Economy.cpp: CropIsFood FetchHarvest PickHarvest; CropMesh.cpp: HEMP_RIPE_HEIGHT
-verified: 2026-10-10
+verified: 2026-10-23
 ---
 
 Hemp is grown on a [[Field|field]] like the other crops, but it is **not a food**: it feeds nobody, and no
-[[House|house]] keeps it. It is an **input**, a good that is made into something else: [[Rope|rope]], at
-a [[Ropewalk]], whose ropemaker fetches it from the stores.
+[[House|house]] keeps it. It is an **input**, a good that is made into something else: [[Rope|rope]] at
+a [[Ropewalk]], and [[Canvas|canvas]] at a [[Sail loft|sail loft]]. Their makers fetch it from the stores, each
+as much as its own pile has room for, whoever comes first - so once one pile is full, the other gets the rest.
 
 ## Growing it
 

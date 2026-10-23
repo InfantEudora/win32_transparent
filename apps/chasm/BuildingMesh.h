@@ -27,28 +27,14 @@
 */
 
 /*
-    WHERE A BUILDING'S WALL CROSSES the fine edge between neighbouring plots a and b, either way round (the user's,
-    2026-10-18). A plot's ground is the quarters of the cells round it, in to each edge's midpoint and out to each
-    cell's centre - and round a point of five or six cells that is a STAR, the midpoints drawn in past the line
-    between the centres, while a site's frame (BuildSite) stands on the centres and is straight. So on an edge with
-    such a point at either end a wall runs straight from centre to centre, crossing the edge where that line does,
-    and the house stands in its frame's shape. Elsewhere at the midpoint: round a point of three cells the
-    midpoints stand OUT past the centres' line, and straightened the house would be a small sharp triangle; on the
-    fours that are most of the grid the two all but agree.
-
-    Worked the same from either side, so the cells either side of an edge agree on its point to the bit and the
-    houses either side of it meet.
+    WHERE THE UPPER DOOR from building plot `b` onto the terrace on plot `u` is (ZoneUpperDoor, terraces_plan.md stage 3):
+    in the wall between them, on the piece of it in the lower-numbered of the two cells either side of their edge - `quad`
+    - at that piece's middle, `at`. BuildHouseCell draws it there and the walkers' figures are drawn through it. False when
+    b has no door onto u.
 */
-vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b);
-
-/*
-    THE FLOOR a building on `plot` stands on, in half storeys from y = 0 (BuildHouseCell's `foot`): its ground rounded to
-    the nearest - so a row on a gentle slope shares a roof - or on a FOUNDATION (terraces_plan.md: a `kind` that needs
-    one there) the highest ground under its walls rounded UP, so the stone plinth is built up all round and nothing is
-    dug into the hill - or on a TERRACE that stands, its top. Every height drawn or picked off a building's floor goes by
-    it. `kind` is what stands there - ZONE_KIND_NONE for an arch's road, which keeps its ground.
-*/
-int BuildingFootHalves(const ChasmWorld& w, const ZoneState& z, int kind, int plot);
+bool BuildingUpperDoorAt(const ChasmWorld& w, const ZoneState& z, int b, int u, int& quad, vec2& at);
+//How far out from its wall the steps down from a door reach, its floor `drop` over level ground (DoorSteps): 0 for none.
+float BuildingDoorStepsRun(float drop);
 
 /*
     What of a house the view lights up while it is warm (needs_plan.md, step 3): its chimney's top, where
@@ -76,8 +62,11 @@ struct BuildingFixtures{
 */
 float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot);
 //How high a walker stands on layer `layer` of plot `plot` (Walkers.h, LAYERS) at its point: a guard tower's platform,
-//or so many half storeys over the plot's ground - a castle piece's top (CastleMesh.h), a stair's middle.
+//or so many half storeys over the castle piece's level (ZoneCastleBase) - its top (CastleMesh.h), a stair's middle.
 float BuildingLayerHeight(const ChasmWorld& w, const ZoneState& z, int plot, int layer);
+//How high nodes (a, la) and (b, lb), joined at `meet` (WalkJoin), meet at `at` on the edge between them: the ground's own
+//height there where one of them is the ground - a terrace's top, the hill, a stair's foot - else the meet's.
+float BuildingMeetHeight(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int lb, int meet, const vec2& at);
 //How far its walls are from its plot's point, along `toward` - where a palisade beside it meets it (RoadMesh).
 float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward);
 //Whether `at` is on its platform.
@@ -92,6 +81,13 @@ bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at);
     coils and sheaves are the economy's (ApplicationChasmRopewalk.cpp).
 */
 void BuildRopewalkYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int coils, int sheaves,
+                       std::vector<vertex>& out);
+/*
+    A SAIL LOFT's dressing (steam_plan.md step 4), in its yard as a ropewalk's (the same open side): a TENTER FRAME
+    facing the camera with a canvas stretched on it while the loft has anything to work - bare, it is out of hemp -
+    `bolts` bolts of canvas stacked beside it and `sheaves` sheaves of hemp leant on the wall.
+*/
+void BuildSailLoftYard(const ChasmWorld& w, const ZoneState& z, uint32_t id, int bolts, int sheaves,
                        std::vector<vertex>& out);
 
 //`fixtures`, if given, gets the houses' chimneys and panes this cell builds. `harm` (ZoneMesh.h), if given: a

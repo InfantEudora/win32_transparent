@@ -2,6 +2,7 @@
 #define _CHASM_WALKERS_H_
 
 #include <algorithm>
+#include <climits>
 #include <memory>
 #include <stdint.h>
 #include <string>
@@ -35,10 +36,13 @@
     so with no decks A* sees what it always saw - or a DECK over it, apart from what stands on its ground
     (the arches' rule). A layer counts half storeys: a flat deck stands on whole storeys (even), a stair's
     middle on a half (odd); a flat node spans its one height, a stair the storey from under its middle to
-    over it. Two nodes on neighbouring plots of one ground join where their spans meet (WalkLayersMeet); a
-    CONNECTOR joins layers that do not - a guard tower's ladder, from the plot it stands on up to the deck,
-    at the ladder edge's old cost. Decks are few: nodes after the plots', worked out again whenever the
-    zones change, as the links are.
+    over it. A castle piece's layers count from its LEVEL (ZoneCastleBase, terraces_plan.md: whole storeys,
+    as a terrace's top), a tower's from its ground - so heights are compared as heights (WalkNodeHalves). Two
+    nodes on neighbouring plots of one ground join where their spans meet - a castle's deck and a terrace's
+    top, or the hill, level with it, too - and a stair's foot comes down to the ground as much as a storey
+    under it; a CONNECTOR joins layers that do not - a guard tower's ladder, from the plot it stands on up to
+    the deck, at the ladder edge's old cost. Decks are few: nodes after the plots', worked out again whenever
+    the zones change, as the links are.
 
     WHO walks decides what is open: a tower's deck is anyone's (a dead end - its guards, and the caretakers
     who stock it), a castle's only the POSTED's - guards and anyone under an order (the user's, 2026-10-10:
@@ -100,14 +104,23 @@ inline int WalkLayersMeet(int a, int b){
 //many - 0, its ground its only node.
 int WalkDeckLayers(const ZoneState& z, int v, int* out);
 /*
-    Whether node (a, la) and node (b, lb) on neighbouring plots join - the layer they meet at, or -1. On one ground,
-    where their spans meet, and never to the ground under a block or a stair; and a STAIR comes down to the GROUND one
-    way - on the side across from its higher neighbours, never off its flanks - while to other pieces it joins
-    wherever they are, so a flight may turn. The walkers' joins and the castle's drawing (CastleMesh.h) both ask here.
+    How high node (plot, layer) stands, in half storeys from y = 0: its ground's height rounded to a half storey (a
+    terrace's top is one exactly); a castle piece's deck over its level (ZoneCastleBase); a tower's over its ground.
+*/
+int WalkNodeHalves(const ChasmWorld& w, const ZoneState& z, int plot, int layer);
+#define WALK_NO_JOIN            INT_MIN     //WalkJoin's: the two do not join
+/*
+    Whether node (a, la) and node (b, lb) on neighbouring plots join - the height they meet at, in half storeys
+    (WalkNodeHalves), or WALK_NO_JOIN. On one ground, where their spans meet - a stair's foot reaching down to ground
+    as much as a storey under it - and never to the ground under a block or a stair; and a STAIR comes down to the
+    GROUND one way - on the side across from its higher neighbours, never off its flanks - while to other pieces it
+    joins wherever they are, so a flight may turn. The walkers' joins and the castle's drawing (CastleMesh.h) both ask
+    here.
 */
 int WalkJoin(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int lb);
-//The layer node (a, la) meets any of b's nodes at - its top deck asked first, its ground last - or -1.
-int WalkJoinAny(const ChasmWorld& w, const ZoneState& z, int a, int la, int b);
+//The height node (a, la) meets any of b's nodes at - its top deck asked first, its ground last - or WALK_NO_JOIN; the
+//layer of b's it meets in `lb_out`.
+int WalkJoinAny(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int* lb_out = NULL);
 
 /*
     A ZOMBIE'S WAY (zombies_plan.md, step 4): what stands in a walk's way costs a zombie time instead of stopping it - a

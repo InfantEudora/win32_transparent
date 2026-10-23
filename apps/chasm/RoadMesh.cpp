@@ -337,6 +337,8 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
 #define WALL_GATE_HEIGHT    1.80f   //the gate posts, and the top of the crossbeam between them
 #define WALL_GATE_BEAM      0.18f
 #define WALL_DOOR_HEIGHT    1.42f   //a gate's door's logs (defence_plan.md): over the palisade's, under the beam
+#define WALL_RIM_ACROSS     0.3f    //a wall's end on the rim: the drop it runs on to is at least this far across (cosine)...
+#define WALL_RIM_REACH      0.9f    //...and it stops this much of the way to the edge, short of the brink
 #define WALL_DOOR_LOG_W     0.15f
 #define WALL_DOOR_BATTEN    0.21f   //the battens across a leaf: wider than its logs, so they show either side
 #define WALL_DOOR_GAP       0.03f   //between the two leaves of a shut door
@@ -504,6 +506,31 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         }
         HarmedLog(out,pos[v],ground(pos[v]),WALL_LOG_HEIGHT + WALL_LOG_JITTER,WALL_LOG_W * 1.4f,PAL_BARK,
                   away(vec2()),f,MeshHash((uint32_t)v,0xC0u));
+    }
+    /*
+        AT A CLIFF'S EDGE (the user's, 2026-10-23: walls built right up to the chasm, PlotIsBuildable's `f_rim`): a wall
+        ending on the rim runs on from its point to the drop most across from the rest of it, almost to the edge - so no
+        strip of the rim shows round its end, as nobody walks round it there.
+    */
+    if (n == 1){
+        const Terrain& t = *w.terrain;
+        vec2 back = pos[nb[0]] - pos[v];
+        back = back * (1.0f / std::max(1e-6f,back.length()));
+        int nbs[8];
+        int c = ZonePlotNeighbours(w,v,nbs,8);
+        int drop = -1;
+        float best = WALL_RIM_ACROSS;
+        for (int i = 0; i < c; i++){
+            vec2 d = pos[nbs[i]] - pos[v];
+            float across = -back.dot(d * (1.0f / std::max(1e-6f,d.length())));
+            if (!t.SameGround(v,nbs[i]) && across > best){
+                best = across;
+                drop = nbs[i];
+            }
+        }
+        if (drop >= 0){
+            pieces.push_back(Piece{{pos[v],pos[v] + (pos[drop] - pos[v]) * (0.5f * WALL_RIM_REACH)},-1,-1});
+        }
     }
     /*
         Against a GUARD TOWER (defence_plan.md) the piece runs on past the midpoint to the tower's wall, which stands

@@ -40,7 +40,7 @@ struct ChasmSave{
     uint64_t calendar_tick = 0;                         //the date (Calendar.h); absent in older saves, which start in spring
     EconomySaved economy;                               //stocks, felled trees, workers, fields (Economy.h); absent in older saves
     std::string explored;                               //Exploration::ToString (play_mode_plan.md); absent in older saves, which load all explored
-    std::vector<std::pair<int,int>> castle;             //the debug castle's pieces, plot and ZoneCastlePiece in the order painted - an arch over a piece after it (ramparts_plan.md); absent with none
+    std::vector<ZoneSavedCastle> castle;                //the debug castle's pieces, plot, ZoneCastlePiece and level in the order painted - an arch over a piece after it (ramparts_plan.md); absent with none
     std::vector<ZoneSavedTerrace> terraces;             //plot, top in storeys, built (terraces_plan.md stage 2); absent with none
 };
 

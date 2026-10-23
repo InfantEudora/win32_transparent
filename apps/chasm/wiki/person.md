@@ -6,7 +6,7 @@ status: built
 summary: Everyone in the colony, each with a family, a home, four skills, a job, and two bars that must not run out.
 plans: people_plan.md > As built; lifeline_plan.md > As built: step 1; needs_plan.md > Decided; selection_plan.md > What a person carries; selection_plan.md > How far along; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 1c: a crowd keeps its room
 code: Economy.h: EconomyWorker EconomySkillFactor EconomyBody EconomyCarryPace EconomyStartTimer EconomyTaskProgress EconomyLoadRoom; Economy.cpp: AssignJobs HouseFamilies TickWorker Needs EconomyPackFood FindSiteWork; Spacing.cpp: SpaceOut
-verified: 2026-10-21
+verified: 2026-10-23
 ---
 
 The colony is the **settlers** it starts with, a few families waiting at the [[Camp]], and nobody else.
@@ -27,8 +27,8 @@ score: their skill for that job, minus the walk from home (one point of skill is
 {ECONOMY_SKILL_DISTANCE} world units). So **where you paint houses decides who works where**.
 [[Builders' hut|Builders' huts]] are staffed first, then the other workplaces in the order they were
 placed, so with too few people the newest workplaces stand empty. [[Field|Fields]] are farmed by the
-family whose land they are. A workplace's card can **stop work** there - a [[Water collector|collector]],
-woodcutter's hut, ropewalk, builders' hut or range: it takes nobody, and its people go free.
+family whose land they are. A workplace's card can **stop work** there - every kind but a guard tower, from a
+[[Water collector|collector]] to a [[Sail loft|sail loft]]: it takes nobody, and its people go free.
 
 The job's skill sets the **pace** of the work (felling, sowing, building): average at 5, faster above
 that, slower below (`EconomySkillFactor`). Empty-handed everyone walks alike; with a load, the

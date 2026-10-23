@@ -85,6 +85,9 @@ void ApplicationChasm::BuildWaterScene(){
     foam_set->SetInstances(std::vector<fmat4>());
     foam_set->SetVisibility(false);
     world_scene->AddObject(foam_set);
+
+    //The bow in the spray (ApplicationChasmRainbow.cpp), registered after the water's programs.
+    BuildRainbowScene();
 }
 
 //The simulation's clock in seconds: a paused game holds the water, mist and foam still. The world's, whichever is active.
@@ -179,6 +182,8 @@ void ApplicationChasm::UploadWater(){
     objects. A new world makes more sets only if it has more chunks than any before it.
 */
 void ApplicationChasm::UpdateMist(){
+    //The bow in the spray, posed with it - and hidden with no world, before the return below.
+    UpdateRainbow();
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     if (!w || !w->mist || !w->water || !foam_set){
         return;

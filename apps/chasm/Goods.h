@@ -8,12 +8,12 @@
     THE GOODS (docs/economy_plan.md): wood, water, and food by its crop - three foods, because what
     keeps is the point of the three (gameplay_plan.md, "Goods and food") - PROVISIONS, made from a
     wheat and a beans for posted people (defence_plan.md), HEMP and the ROPE made from it (goods_plan.md),
-    FRUIT picked from the wild (foraging_plan.md), STONE and FLOATSTONE (stone_plan.md), and STEAM from the chasm
-    (steam_plan.md). Never renumber: saves
+    FRUIT picked from the wild (foraging_plan.md), STONE and FLOATSTONE (stone_plan.md), STEAM from the chasm and
+    the CANVAS sewn of hemp for a zeppelin's envelope (steam_plan.md). Never renumber: saves
     name a store's stock and what it takes by these.
 
     A MASK of goods is a GoodsMask, one bit a good - what a store takes (ZoneBuilding::allow). 16 bits
-    (the user's, 2026-10-09): steam, coal and leather are coming.
+    (the user's, 2026-10-09): coal, leather and meat would fill it.
     PROVISIONS ARE NOT IN GOODS_FOOD, on purpose: everything villagers do with food - fetching it home, a
     house's pantry, fair shares, a home's days of food - then leaves them alone, and they count only where
     GOODS_EATEN is used instead: a posted person's needs and pack, and a villager's last resort.
@@ -30,7 +30,8 @@
 #define GOOD_STONE      9       //a building material: rubble from the chasm's walls at first (stone_plan.md)
 #define GOOD_FLOATSTONE 10      //the chasm's own: dug from seams in its walls, the zeppelin's hull (stone_plan.md)
 #define GOOD_STEAM      11      //caught over the chasm by a steam collector, carried in canisters: fills a zeppelin (steam_plan.md)
-#define GOOD_COUNT      12
+#define GOOD_CANVAS     12      //a building material: hemp sewn at a sail loft, a zeppelin's envelope (steam_plan.md step 4)
+#define GOOD_COUNT      13
 
 /*
     A good's CATEGORY (goods_plan.md, the user's 2026-10-10): FOOD is eaten and WATER drunk; a MATERIAL is
@@ -72,7 +73,8 @@ inline int GoodCategory(int good){
         case GOOD_WOOD:
         case GOOD_ROPE:
         case GOOD_STONE:
-        case GOOD_FLOATSTONE:   return GOOD_CATEGORY_MATERIALS;
+        case GOOD_FLOATSTONE:
+        case GOOD_CANVAS:       return GOOD_CATEGORY_MATERIALS;
         case GOOD_HEMP:
         case GOOD_STEAM:        return GOOD_CATEGORY_INPUTS;
         default:                return -1;

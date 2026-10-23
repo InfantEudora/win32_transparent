@@ -6,15 +6,15 @@ status: partial
 summary: Four base skills from 1 to 10. A job's skill decides who gets the job and how fast they work it.
 plans: gameplay_plan.md > People; lifeline_plan.md > Skills passed on
 code: Economy.h: SKILL_STRENGTH EconomySkillFactor EconomyJobSkill; Economy.cpp: AssignJobs Walk
-verified: 2026-10-12
+verified: 2026-10-23
 ---
 
 | Skill | Used today by | Proposed for later |
 |---|---|---|
-| Strength | [[Woodcutter|woodcutters]], [[Construction|builders]], anyone laying a road or carrying a load | |
-| Precision | [[Archery range|archers]], [[Guard tower|guards]], [[Ropewalk|ropemakers]] | toolmakers |
+| Strength | [[Woodcutter|woodcutters]], [[Stonecutter|stonecutters]], [[Mine|miners]], [[Construction|builders]], anyone laying a road or carrying a load | |
+| Precision | [[Archery range|archers]], [[Guard tower|guards]], [[Ropewalk|ropemakers]], [[Sail loft|sailmakers]] | toolmakers |
 | Husbandry | [[Field|farmers]], [[Fruit|pickers]] | herders, cooks |
-| Ingenuity | [[Water collector|water carriers]] | boilers, machines |
+| Ingenuity | [[Water collector|water carriers]], [[Steam collector|steam carriers]], [[Condenser|condenser hands]] | boilers, machines |
 
 - **Who gets a job**: an empty place goes to the free grown-up with the best score, which is their skill
   for the job (each point worth {ECONOMY_SKILL_DISTANCE} world units) minus how far they live from the

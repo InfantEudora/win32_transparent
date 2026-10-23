@@ -37,19 +37,33 @@ std::shared_ptr<const WalkGraph> BuildWalkGraph(std::shared_ptr<const ChasmWorld
 }
 
 /*
+    Where two nodes' spans meet, in half storeys (WalkNodeHalves): `a` and `b` their heights, each a stair's middle or
+    flat. A flat node spans its one height, a stair the storey round its middle. WALK_NO_JOIN where they do not.
+*/
+int SpansMeet(int a, bool f_stair_a, int b, bool f_stair_b){
+    int lo = std::max(f_stair_a ? a - 1 : a,f_stair_b ? b - 1 : b);
+    int hi = std::min(f_stair_a ? a + 1 : a,f_stair_b ? b + 1 : b);
+    if (lo > hi){
+        return WALK_NO_JOIN;
+    }
+    return (lo == hi) ? lo : a;     //two stairs side by side, over the same storey: at their middle
+}
+
+/*
     A stair's way up: toward the neighbours' decks its top meets, on its ground - (0,0) with none, when it takes any
-    side. The stair's own judgement, by layers alone, so asking it never asks WalkJoin back.
+    side. The stair's own judgement, by heights alone, so asking it never asks WalkJoin back.
 */
 vec2 StairUp(const ChasmWorld& w, const ZoneState& z, int v, int layer){
     const Terrain& t = *w.terrain;
     vec2 up(0.0f,0.0f);
+    int me = WalkNodeHalves(w,z,v,layer);
     int nb[8];
     int n = ZonePlotNeighbours(w,v,nb,8);
     for (int i = 0; i < n; i++){
         int ls[WALK_MOST_DECKS];
         int c = t.SameGround(v,nb[i]) ? WalkDeckLayers(z,nb[i],ls) : 0;
         for (int j = 0; j < c; j++){
-            if (WalkLayersMeet(layer,ls[j]) == layer + 1){
+            if (SpansMeet(me,true,WalkNodeHalves(w,z,nb[i],ls[j]),WalkLayerStair(ls[j])) == me + 1){
                 vec2 d = w.grid->fine.pos[nb[i]] - w.grid->fine.pos[v];
                 float l = d.length();
                 up = up + ((l > 1e-5f) ? d * (1.0f / l) : vec2(0.0f,0.0f));
@@ -63,12 +77,12 @@ vec2 StairUp(const ChasmWorld& w, const ZoneState& z, int v, int layer){
 #define STAIR_FOOT_ACROSS   -0.3f   //a stair's foot: a side at least this much across from its way up (cosine)
 
 /*
-    Whether stair (v, layer) takes the side toward node (other, other_layer), which it meets at `meet`. Its top, a
-    stair beside it, and a piece below it are taken wherever they are - a flight may turn - but the GROUND only across
-    from its way up: taking every side the ground is on made a first stair a mound, sloping down three sides.
+    Whether stair (v, layer) takes the side toward node (other, other_layer). Its top, a stair beside it, and a piece
+    below it are taken wherever they are - a flight may turn - but the GROUND only across from its way up: taking every
+    side the ground is on made a first stair a mound, sloping down three sides.
 */
-bool StairTakes(const ChasmWorld& w, const ZoneState& z, int v, int layer, int other, int other_layer, int meet){
-    if (meet != layer - 1 || other_layer != WALK_GROUND){
+bool StairTakes(const ChasmWorld& w, const ZoneState& z, int v, int layer, int other, int other_layer){
+    if (other_layer != WALK_GROUND){
         return true;
     }
     vec2 up = StairUp(w,z,v,layer);
@@ -98,29 +112,61 @@ int WalkDeckLayers(const ZoneState& z, int v, int* out){
     return n;
 }
 
+int WalkNodeHalves(const ChasmWorld& w, const ZoneState& z, int plot, int layer){
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    if (layer != WALK_GROUND && ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
+        return 2 * ZoneCastleBase(z,plot) + layer;
+    }
+    return (int)std::lround(ZoneGroundAt(w,z,plot) / HALF) + layer;
+}
+
 int WalkJoin(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int lb){
     if (!w.terrain->SameGround(a,b)){
-        return -1;
+        return WALK_NO_JOIN;
     }
     //Under a block or a stair there is no ground to step onto.
     if ((la == WALK_GROUND && ZoneCastleShuts(z,a)) || (lb == WALK_GROUND && ZoneCastleShuts(z,b))){
-        return -1;
+        return WALK_NO_JOIN;
     }
-    int meet = WalkLayersMeet(la,lb);
-    if (meet < 0 || (WalkLayerStair(la) && !StairTakes(w,z,a,la,b,lb,meet))
-        || (WalkLayerStair(lb) && !StairTakes(w,z,b,lb,a,la,meet))){
-        return -1;
+    //A tower's platform is got onto by its ladder alone (the connector), whatever ground stands level with it.
+    if ((la == WALK_GROUND && lb != WALK_GROUND && ZoneCastleShape(z,b) == ZONE_CASTLE_NONE)
+        || (lb == WALK_GROUND && la != WALK_GROUND && ZoneCastleShape(z,a) == ZONE_CASTLE_NONE)){
+        return WALK_NO_JOIN;
+    }
+    bool f_stair_a = WalkLayerStair(la);
+    bool f_stair_b = WalkLayerStair(lb);
+    int ha = WalkNodeHalves(w,z,a,la);
+    int hb = WalkNodeHalves(w,z,b,lb);
+    int meet = SpansMeet(ha,f_stair_a,hb,f_stair_b);
+    /*
+        A STAIR'S FOOT on the ground as much as a storey under it: a castle's level is its ground built up to a whole
+        storey (ZoneCastleBase), so its first stair starts over the ground round it - and comes down to it there.
+    */
+    if (meet == WALK_NO_JOIN && f_stair_a && lb == WALK_GROUND && hb < ha - 1 && hb >= ha - 3){
+        meet = hb;
+    }
+    if (meet == WALK_NO_JOIN && f_stair_b && la == WALK_GROUND && ha < hb - 1 && ha >= hb - 3){
+        meet = ha;
+    }
+    if (meet == WALK_NO_JOIN || (f_stair_a && !StairTakes(w,z,a,la,b,lb)) || (f_stair_b && !StairTakes(w,z,b,lb,a,la))){
+        return WALK_NO_JOIN;
     }
     return meet;
 }
 
-int WalkJoinAny(const ChasmWorld& w, const ZoneState& z, int a, int la, int b){
+int WalkJoinAny(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int* lb_out){
     int ls[WALK_MOST_DECKS];
     for (int j = WalkDeckLayers(z,b,ls) - 1; j >= 0; j--){
         int meet = WalkJoin(w,z,a,la,b,ls[j]);
-        if (meet >= 0){
+        if (meet != WALK_NO_JOIN){
+            if (lb_out){
+                *lb_out = ls[j];
+            }
             return meet;
         }
+    }
+    if (lb_out){
+        *lb_out = WALK_GROUND;
     }
     return WalkJoin(w,z,a,la,b,WALK_GROUND);
 }
@@ -185,7 +231,8 @@ void Walkers::EnsureDecks(const ZoneState& z){
             joins.push_back(Join{ladder,node,len,speed});
             joins.push_back(Join{node,ladder,len,speed});
         }
-        //To each of a neighbour's decks the two join at (WalkJoin), and down a first stair to the ground.
+        //To each of a neighbour's decks the two join at (WalkJoin), and to its ground: down a first stair, or level
+        //onto a terrace or the hill.
         int nb[8];
         int c = ZonePlotNeighbours(*world,d.plot,nb,8);
         for (int j = 0; j < c; j++){
@@ -195,14 +242,15 @@ void Walkers::EnsureDecks(const ZoneState& z){
             int lc = WalkDeckLayers(z,u,ls);
             for (int k = 0; k < lc; k++){
                 int e = DeckNode(u,ls[k]);
-                if (e >= 0 && WalkJoin(*world,z,d.plot,d.layer,u,ls[k]) >= 0){
+                if (e >= 0 && WalkJoin(*world,z,d.plot,d.layer,u,ls[k]) != WALK_NO_JOIN){
                     bool f_stair = WalkLayerStair(d.layer) || WalkLayerStair(ls[k]);
                     joins.push_back(Join{node,e,len,f_stair ? WALKER_SPEED_STAIR : WALKER_SPEED_DECK});
                 }
             }
-            if (WalkJoin(*world,z,d.plot,d.layer,u,WALK_GROUND) >= 0){
-                joins.push_back(Join{node,u,len,WALKER_SPEED_STAIR});
-                joins.push_back(Join{u,node,len,WALKER_SPEED_STAIR});
+            if (WalkJoin(*world,z,d.plot,d.layer,u,WALK_GROUND) != WALK_NO_JOIN){
+                float speed = WalkLayerStair(d.layer) ? WALKER_SPEED_STAIR : WALKER_SPEED_DECK;
+                joins.push_back(Join{node,u,len,speed});
+                joins.push_back(Join{u,node,len,speed});
             }
         }
     }
@@ -318,15 +366,20 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int w
         return false;
     }
     //Too steep to walk: past a rise of WALKER_STEEPEST over the edge's run (step 2's relief) - a terrace's top its ground.
-    if (step != ZONE_STEP_STAIR
+    //Not a stair's, nor a building's stairs up to its upper door (stage 3).
+    if (step == ZONE_STEP_OPEN
         && std::fabs(ZoneGroundAt(*world,z,b) - ZoneGroundAt(*world,z,a)) > WALKER_STEEPEST * EdgeLength(a,b)){
         return false;
     }
-    //A house is walked into only where the walk ends, and out of only where it starts. A winch is
-    //walked through - its plot is the way on to the rope - and so is a camp, open ground between tents,
-    //and a bridge that stands. A bridge's SITE too, under the snow, by those who walk the ice (ICE): its piles
-    //stand in the frozen river and its banks are only staked - and it lies where the crossing is, so a
-    //woodcutter after its far bank's trees went the long way round the river without it (2026-10-16).
+    /*
+        A house is walked into only where the walk ends, and out of only where it starts - and on THROUGH ITS ROOMS only by
+        a walk to or from it (terraces_plan.md stage 3, the user's 2026-10-23): in at any door and on inside to the plot it
+        ends on, or out at any - an upper door onto a terrace too - so its own people come and go by either level, and
+        nobody else cuts through. A winch is walked through - its plot is the way on to the rope - and so is a camp, open
+        ground between tents, and a bridge that stands. A bridge's SITE too, under the snow, by those who walk the ice
+        (ICE): its piles stand in the frozen river and its banks are only staked - and it lies where the crossing is, so a
+        woodcutter after its far bank's trees went the long way round the river without it (2026-10-16).
+    */
     auto passage = [&](int v){
         int kind = z.KindOf(v);
         return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_CAMP || ZoneBridgeWalkable(z,v)
@@ -337,10 +390,15 @@ bool Walkers::EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int w
     auto house = [&](int v){
         return breaks && ZoneKindHasDoor(z.KindOf(v)) && z.standing[v] > 0;
     };
-    if (z.storeys[b] > 0 && b != to && !passage(b) && !house(b)){
+    //The building the walk starts or ends in: walked inside. Not by a zombie, whose way in is breaching (`house`).
+    auto own = [&](int v){
+        uint32_t id = z.building[v];
+        return id && who != WALK_WHO_ZOMBIE && ((to >= 0 && z.building[to] == id) || (from >= 0 && z.building[from] == id));
+    };
+    if (z.storeys[b] > 0 && b != to && !passage(b) && !house(b) && !own(b)){
         return false;
     }
-    if (z.storeys[a] > 0 && a != from && !passage(a) && !house(a)){
+    if (z.storeys[a] > 0 && a != from && !passage(a) && !house(a) && !own(a)){
         return false;
     }
     float cost = 0.0f;
@@ -416,8 +474,10 @@ float Walkers::EdgeSpeed(const ZoneState& z, int a, int b) const{
     }else if (world->terrain->biome[a] == TERRAIN_BIOME_SWAMP && world->terrain->biome[b] == TERRAIN_BIOME_SWAMP){
         speed = WALKER_SPEED_SWAMP;     //off a road the swamp is mud
     }
-    //A stair up a terrace's wall (terraces_plan.md stage 2), at a stair's pace.
-    if (ZoneTerraceStep(*world,z,a,b) == ZONE_STEP_STAIR){
+    //A stair up a terrace's wall (terraces_plan.md stage 2), at a stair's pace - and a building's stairs up to its upper
+    //door (stage 3).
+    int step = ZoneTerraceStep(*world,z,a,b);
+    if (step == ZONE_STEP_STAIR || step == ZONE_STEP_DOOR){
         return WALKER_SPEED_STAIR;
     }
     //Slower up and down a slope, by how steep it is - never faster, so A*'s estimate (the straight

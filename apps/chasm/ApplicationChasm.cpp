@@ -61,6 +61,7 @@ static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
 #define CHASM_CAM_LEVEL_GLIDE   3.0f        //the ease a second down or up to another level: most of the way in a second
 #define CHASM_CAM_RELIEF_EASE   12.0f       //...and over the relief of one level: a ridge does not jolt the view
 #define CHASM_CAM_CLEAR         1.5f        //world units the line from the point to the camera keeps over the ground
+#define CHASM_CAM_CLEAR_RAMP    3.0f        //...in full from this far out; over 2.2, or flat ground tilts the lowest pitch
 #define CHASM_CAM_CLEAR_SAMPLES 12          //ground looked at along it
 #define CHASM_CAM_CLEAR_PITCH   1.45f       //the most it tilts up to: about 83 degrees
 #define CHASM_CAM_LIFT_EASE     6.0f        //the tilt's ease a second, as the ground along the line steps
@@ -382,6 +383,7 @@ void ApplicationChasm::SetupInput(){
     view_key('P',INPUT_CHASM_TOOL_STEAM);         //P for plume (steam_plan.md)
     view_key('L',INPUT_CHASM_TOOL_CONDENSER);     //L for liquid (steam_plan.md step 3)
     view_key('Y',INPUT_CHASM_TOOL_TERRACE);       //Y, the last letter free (terraces_plan.md stage 2)
+    view_key('I',INPUT_CHASM_TOOL_SAIL_LOFT);     //I, the one after it (steam_plan.md step 4): WASD and U are core's
     view_key('V',INPUT_CHASM_FOG);
     //Time (gameplay_plan.md P1): space pauses, - and = (the + key) slow down and speed up.
     view_key(VK_SPACE,INPUT_CHASM_PAUSE);
@@ -1033,13 +1035,19 @@ ChasmSave ApplicationChasm::MakeSave(){
                 s.grounds.push_back(g);
             }
         }
-        //The debug castle's pieces (ramparts_plan.md), as they are painted: a piece over a piece after it, on the same plot.
+        //The debug castle's pieces (ramparts_plan.md), as they are painted: a piece over a piece after it, on the same
+        //plot - each at the plot's level.
         for (size_t v = 0; v < z->castle.size(); v++){
+            ZoneSavedCastle c;
+            c.plot = (int)v;
+            c.base = ZoneCastleBase(*z,(int)v);
             if (z->castle[v]){
-                s.castle.push_back(std::make_pair((int)v,(int)z->castle[v]));
+                c.piece = z->castle[v];
+                s.castle.push_back(c);
             }
             if (z->castle_over[v]){
-                s.castle.push_back(std::make_pair((int)v,(int)z->castle_over[v]));
+                c.piece = z->castle_over[v];
+                s.castle.push_back(c);
             }
         }
         //Terraces (terraces_plan.md stage 2).
@@ -1194,6 +1202,7 @@ void ApplicationChasm::HashSimState(StateHash& h){
     for (size_t v = 0; v < z.castle.size(); v++){
         if (z.castle[v]){
             h.Add(((uint64_t)v << 32) | 0xCA500u | z.castle[v]);
+            h.Add(((uint64_t)v << 32) | 0xBA5E00u | (uint8_t)ZoneCastleBase(z,(int)v));     //its level
         }
         if (z.castle_over[v]){
             h.Add(((uint64_t)v << 32) | 0x0E000u | z.castle_over[v]);
@@ -1335,8 +1344,8 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         ground = ToolKind(tool);
     }else if (tool == CHASM_TOOL_FIELD){
         op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_FIELD_PAINT;
-    }else if (tool == CHASM_TOOL_RANGE){
-        op = f_shift ? ZONE_OP_FIELD_ERASE : ZONE_OP_RANGE_PAINT;      //erased as a field is (range_plan.md)
+    }else if (tool == CHASM_TOOL_RANGE || tool == CHASM_TOOL_DOCK){
+        op = f_shift ? ZONE_OP_FIELD_ERASE : ChasmCellToolOp(tool);     //erased as a field is (range_plan.md)
     }else if (tool == CHASM_TOOL_CASTLE){
         //The debug castle (ramparts_plan.md): the panel's piece on every plot the drag reaches; shift takes one off.
         op = ZONE_OP_CASTLE;
@@ -1496,6 +1505,7 @@ void ApplicationChasm::LoadProps(){
     names.push_back(CHASM_ANGEL_ASSET);      //zombies_plan.md step 6: rising from where a person sank
     names.push_back(CHASM_BIRD_ASSET);       //birds_plan.md: its shape keys come with it
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
+    names.insert(names.end(),dock_asset_names,dock_asset_names + DOCK_PROPS);    //steam_plan.md step 5: the zeppelin
     GetAssetsFromGLTF(names);
     int loaded = 0;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
@@ -1561,6 +1571,7 @@ void ApplicationChasm::LoadProps(){
     }
     //The archery range's props (range_plan.md): the GLB's where it has them, stand-ins where not.
     BuildRangeScene();
+    BuildDockScene();
     BuildSeasonLooks();
     //The people's figures are in the same file (ApplicationChasmWorkersView.cpp), so they are made here.
     BuildWorkerScene();
@@ -1915,8 +1926,8 @@ json ApplicationChasm::BuildingJson(const ChasmWorld& w, const ZoneState& z, uin
         j["crop"] = ZoneCropName(b.crop);           //its starting crop, "none" until chosen
         j["next"] = ZoneCropName(b.next_crop);      //a crop, or "auto"
         j["site_cells"] = b.site_cells;
-    }else if (b.kind == ZONE_KIND_RANGE){
-        j["site_cells"] = b.site_cells;             //range_plan.md: cells still a site
+    }else if (b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_DOCK){
+        j["site_cells"] = b.site_cells;             //range_plan.md, steam_plan.md step 5: cells still a site
     }else{
         j["storeys"] = b.storeys;
     }
@@ -2031,6 +2042,7 @@ int ApplicationChasm::ToolKind(int tool){
         case CHASM_TOOL_WELL:       return ZONE_KIND_WELL;
         case CHASM_TOOL_STEAM:      return ZONE_KIND_STEAM;
         case CHASM_TOOL_CONDENSER:  return ZONE_KIND_CONDENSER;
+        case CHASM_TOOL_SAIL_LOFT:  return ZONE_KIND_SAIL_LOFT;
         default:                    return ZONE_KIND_NONE;
     }
 }
@@ -2083,11 +2095,31 @@ void ApplicationChasm::UpdatePickView(){
     //Up on a deck (ramparts_plan.md): flat at its height instead - the plot the cursor is on the castle's top of.
     bool f_on_deck = false;
     float deck_h = 0.0f;
-    auto emit = [&verts,&segs,&level_h,&terrain,&f_on_deck,&deck_h](uint32_t color){
+    /*
+        On a TERRACE (terraces_plan.md): on its top, not the ground buried under it - as on the castle's deck. `ground_plot`
+        names the plot an outline is round, whose top its edge lies on - a point on the edge between a terrace and the
+        ground below it is either's; with none, each point's own plot.
+    */
+    std::shared_ptr<const ZoneState> zones_on = GetZones();
+    const ZoneState* zg = (zones_on && zones_on->world == w) ? zones_on.get() : NULL;
+    const GridPicker* picker_on = w->picker.get();
+    int ground_plot = -1;
+    auto emit = [&verts,&segs,&level_h,&terrain,&f_on_deck,&deck_h,zg,picker_on,&ground_plot](uint32_t color){
         line_vertex v;
         v.color = color;
         auto put = [&](const vec2& p){
-            v.pos = vec3(p.x,f_on_deck ? deck_h : terrain.GroundHeight(p,level_h),p.y);
+            float y = terrain.GroundHeight(p,level_h);
+            if (zg){
+                int under = ground_plot;
+                if (under < 0){
+                    GridPick pk = picker_on->Pick(p);
+                    under = pk.f_hit ? pk.plot : -1;
+                }
+                if (ZoneTerraceStands(*zg,under)){
+                    y = ZoneTerraceTop(*zg,under);
+                }
+            }
+            v.pos = vec3(p.x,f_on_deck ? deck_h : y,p.y);
             verts.push_back(v);
         };
         for (size_t i = 0; i + 1 < segs.size(); i += 2){
@@ -2117,7 +2149,9 @@ void ApplicationChasm::UpdatePickView(){
                 segs.push_back(c + (s - c) * t);
             }
         }
+        ground_plot = selected.plot;
         emit(PICK_SELECTED_PLOT);
+        ground_plot = -1;
     }
     //Drawing a road or wall (line_works_plan.md): the chain so far, each plot green where the line may take it.
     std::vector<int> chain;
@@ -2222,6 +2256,7 @@ void ApplicationChasm::UpdatePickView(){
             bool f_cell = c.op == ZONE_OP_FIELD_PAINT || c.op == ZONE_OP_RANGE_PAINT || c.op == ZONE_OP_FIELD_ERASE;
             int at = f_cell ? g.fine.quads[c.index * 4].v[2] : c.index;     //a cell's middle vertex, for its height
             level_h = terrain.Height(at);
+            ground_plot = at;
             if (f_cell){
                 p->CoarseOutline(c.index,segs);
             }else{
@@ -2229,6 +2264,7 @@ void ApplicationChasm::UpdatePickView(){
             }
             emit((plan->refused[i] || plan->f_erase || plan->tool == CHASM_TOOL_ERASE) ? PICK_PAINT_REFUSED : PICK_PAINT_OK);
         }
+        ground_plot = -1;
     }
     if (hover.f_hit){
         level_h = terrain.Height(hover.plot);
@@ -2254,7 +2290,8 @@ void ApplicationChasm::UpdatePickView(){
             bool f_ok = ZoneCanGround(*w,z,hover.plot,NULL,ChasmLineTool(tool) ? ChasmLineGround(tool) : ZONE_GROUND_GARDEN);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }else if (tool == CHASM_TOOL_CASTLE && !z.castle.empty()){
-            bool f_ok = ZoneCanCastle(*w,z,hover.plot,castle_shape,castle_storeys,NULL);
+            //At the level a drag started here would take (ZoneCastleLevelFor).
+            bool f_ok = ZoneCanCastle(*w,z,hover.plot,castle_shape,castle_storeys,ZoneCastleLevelFor(*w,z,hover.plot,0),NULL);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }else if (tool == CHASM_TOOL_TERRACE && !z.terrace.empty()){
             //By the square (terraces_plan.md stage 2): green if any of its plots would take the terrace a click there makes,
@@ -2280,8 +2317,10 @@ void ApplicationChasm::UpdatePickView(){
             }
             level_h = terrain.Height(hover.plot);
         }
+        ground_plot = g.fine.quads[hover.coarse_quad * 4].v[2];     //the square's middle: a terrace is by the square
         p->CoarseOutline(hover.coarse_quad,segs);
         emit(coarse_colour);
+        ground_plot = -1;
         const GridQuad& q = g.fine.quads[hover.fine_quad];
         for (int k = 0; k < 4; k++){
             segs.push_back(g.fine.pos[q.v[k]]);
@@ -2291,8 +2330,10 @@ void ApplicationChasm::UpdatePickView(){
         std::shared_ptr<const ZoneState> zd = GetZones();
         f_on_deck = hover.layer > 0 && zd && zd->world == w;
         deck_h = f_on_deck ? BuildingLayerHeight(*w,*zd,hover.plot,hover.layer) : 0.0f;
+        ground_plot = hover.plot;
         p->PlotOutline(hover.plot,segs);
         emit(plot_colour);
+        ground_plot = -1;
         f_on_deck = false;
     }
 
@@ -2593,8 +2634,15 @@ float ApplicationChasm::ViewGroundHeight(const ChasmWorld& w, const vec2& at, fl
 /*
     CLEARANCE: the least pitch, `pitch` or more, at which the line from the orbit point out to the camera keeps
     CHASM_CAM_CLEAR over the ground it passes - so with the point on a balcony, the camera is neither inside the
-    cliff behind it nor looking at the rim instead of the point. Only ground above the point counts: the line
-    starts on the ground. Bare rock stands as any ground does; the floor is far below.
+    cliff behind it nor looking at the rim instead of the point. Bare rock stands as any ground does; the floor is
+    far below.
+
+    The line starts ON the ground, so the clearance grows from nothing at the point to all of it CHASM_CAM_CLEAR_RAMP
+    out. Asked in full everywhere, it cannot be had next to the point even over flat ground - and it was asked only
+    of ground above the point, a switch that a centimetre of relief threw: zoomed in, the nearest sample is half a
+    unit out, so the plateau's ripples flicked the view between 54 and 69 degrees as it panned (measured 2026-10-23;
+    zoomed out the sample is far enough that it never showed). Ramped, flat ground asks at most
+    atan(CLEAR / RAMP), 27 degrees, under the play pitch, and the answer moves with the ground rather than jumping.
 */
 float ApplicationChasm::ClearPitch(const ChasmWorld& w, float pitch) const{
     const Terrain& t = *w.terrain;
@@ -2609,9 +2657,10 @@ float ApplicationChasm::ClearPitch(const ChasmWorld& w, float pitch) const{
         if (!k.f_hit || k.plot < 0 || k.plot >= (int)t.level.size() || t.level[k.plot] == TERRAIN_FLOOR){
             continue;
         }
-        float rise = t.GroundHeight(p,t.Height(k.plot)) + CHASM_CAM_CLEAR - camera_target.y;
-        if (rise > CHASM_CAM_CLEAR && h > 0.0f){
-            need = std::max(need,atanf(rise / h));
+        float clear = CHASM_CAM_CLEAR * std::min(1.0f,h / CHASM_CAM_CLEAR_RAMP);
+        float rise = t.GroundHeight(p,t.Height(k.plot)) + clear - camera_target.y;
+        if (h > 0.0f){
+            need = std::max(need,atanf(rise / h));     //ground below the point asks a negative angle: nothing
         }
     }
     return std::min(need,std::max(pitch,CHASM_CAM_CLEAR_PITCH));
@@ -2953,20 +3002,21 @@ void ApplicationChasm::UpdateView(void){
     //into a text field does not wait and fire once the field lets go.
     {
         const bool f_live = KeysLive();
-        const int keys[22] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
+        const int keys[23] = {INPUT_CHASM_TOOL_HOUSE,INPUT_CHASM_TOOL_FIELD,INPUT_CHASM_TOOL_ERASE,
                               INPUT_CHASM_TOOL_GARDEN,INPUT_CHASM_TOOL_LOT,INPUT_CHASM_TOOL_ROAD,
                               INPUT_CHASM_TOOL_STORE,INPUT_CHASM_TOOL_WOODCUTTER,
                               INPUT_CHASM_TOOL_WATER,INPUT_CHASM_TOOL_WINCH,INPUT_CHASM_TOOL_CAMP,
                               INPUT_CHASM_TOOL_BRIDGE,INPUT_CHASM_TOOL_BUILDERS,INPUT_CHASM_TOOL_WALL,
                               INPUT_CHASM_TOOL_RANGE,INPUT_CHASM_TOOL_TOWER,INPUT_CHASM_TOOL_ROPEWALK,
                               INPUT_CHASM_TOOL_STONECUTTER,INPUT_CHASM_TOOL_MINE,INPUT_CHASM_TOOL_STEAM,
-                              INPUT_CHASM_TOOL_CONDENSER,INPUT_CHASM_TOOL_TERRACE};
-        const int tools[22] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
+                              INPUT_CHASM_TOOL_CONDENSER,INPUT_CHASM_TOOL_TERRACE,INPUT_CHASM_TOOL_SAIL_LOFT};
+        const int tools[23] = {CHASM_TOOL_HOUSE,CHASM_TOOL_FIELD,CHASM_TOOL_ERASE,
                                CHASM_TOOL_GARDEN,CHASM_TOOL_LOT,CHASM_TOOL_ROAD,
                                CHASM_TOOL_STORE,CHASM_TOOL_WOODCUTTER,CHASM_TOOL_WATER,CHASM_TOOL_WINCH,
                                CHASM_TOOL_CAMP,CHASM_TOOL_BRIDGE,CHASM_TOOL_BUILDERS,CHASM_TOOL_WALL,
                                CHASM_TOOL_RANGE,CHASM_TOOL_TOWER,CHASM_TOOL_ROPEWALK,CHASM_TOOL_STONECUTTER,
-                               CHASM_TOOL_MINE,CHASM_TOOL_STEAM,CHASM_TOOL_CONDENSER,CHASM_TOOL_TERRACE};
+                               CHASM_TOOL_MINE,CHASM_TOOL_STEAM,CHASM_TOOL_CONDENSER,CHASM_TOOL_TERRACE,
+                               CHASM_TOOL_SAIL_LOFT};
         //Play mode's tools still waiting for a discovery (demo_plan.md step 6) are not on the bar, and their keys do
         //nothing - and one in hand from before (debug mode, or another colony) is put down.
         uint32_t locked = ToolsLocked();
@@ -3065,6 +3115,7 @@ void ApplicationChasm::PreRender(void){
     UploadZombies();
     UploadFallen();
     UploadRange();
+    UploadDocks();
     UploadRopewalks();
     UploadBorders();
     UploadClouds();
@@ -3499,6 +3550,54 @@ void ApplicationChasm::DrawImGuiUI(void){
     RenderChasmPanel();
 }
 
+//A tool's radio button on the Paint panel: its label ("##tool": "Field" and friends are plain words other widgets may
+//use too), the tool, and its key - shown on hovering, so four fit in a row; NULL for a tool of the panel's only.
+struct PaintToolButton{
+    const char* label;
+    int tool;
+    const char* key;
+};
+
+/*
+    A group of the Paint panel's tools, under its title: radio buttons in lined-up columns, four to a row (the user's,
+    2026-10-23) - fewer only where the panel is too narrow for four, so none runs off its edge.
+*/
+static void PaintToolGroup(const char* title, const PaintToolButton* tools, int n, int& tool){
+    if (title){
+        ImGui::SeparatorText(title);
+    }
+    const ImGuiStyle& style = ImGui::GetStyle();
+    auto width = [&](int i){
+        return ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize(tools[i].label,NULL,true).x;
+    };
+    int columns = 4;
+    for (; columns > 1; columns--){
+        float total = 0.0f;
+        for (int c = 0; c < columns; c++){
+            float widest = 0.0f;
+            for (int i = c; i < n; i += columns){
+                widest = std::max(widest,width(i));
+            }
+            total += widest + style.CellPadding.x * 2.0f;
+        }
+        if (total <= ImGui::GetContentRegionAvail().x){
+            break;
+        }
+    }
+    if (ImGui::BeginTable(title ? title : "##tools",columns,ImGuiTableFlags_SizingFixedFit)){
+        for (int i = 0; i < n; i++){
+            ImGui::TableNextColumn();
+            if (ImGui::RadioButton(tools[i].label,tool == tools[i].tool)){
+                tool = tools[i].tool;
+            }
+            if (tools[i].key && ImGui::IsItemHovered()){
+                ImGui::SetTooltip("key %s",tools[i].key);
+            }
+        }
+        ImGui::EndTable();
+    }
+}
+
 //RENDER THREAD with physics_mutex held - so the camera state may be written directly here.
 void ApplicationChasm::RenderChasmPanel(){
     //A size and a place for the first run only - after that imgui.ini remembers where it was put.
@@ -3681,68 +3780,64 @@ void ApplicationChasm::RenderChasmPanel(){
 
     if (ImGui::CollapsingHeader("Paint",ImGuiTreeNodeFlags_DefaultOpen)){
         int tool = paint_tool;
-        //"##tool" suffixes: "Field" and friends are plain words other widgets may use too.
-        if (ImGui::RadioButton("Select##tool",tool == CHASM_TOOL_SELECT)) tool = CHASM_TOOL_SELECT;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("House (1)##tool",tool == CHASM_TOOL_HOUSE)) tool = CHASM_TOOL_HOUSE;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Field (2)##tool",tool == CHASM_TOOL_FIELD)) tool = CHASM_TOOL_FIELD;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Erase (3)##tool",tool == CHASM_TOOL_ERASE)) tool = CHASM_TOOL_ERASE;
-        if (ImGui::RadioButton("Garden (4)##tool",tool == CHASM_TOOL_GARDEN)) tool = CHASM_TOOL_GARDEN;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Lot (5)##tool",tool == CHASM_TOOL_LOT)) tool = CHASM_TOOL_LOT;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Road (6)##tool",tool == CHASM_TOOL_ROAD)) tool = CHASM_TOOL_ROAD;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Wall (7)##tool",tool == CHASM_TOOL_WALL)) tool = CHASM_TOOL_WALL;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Range (R)##tool",tool == CHASM_TOOL_RANGE)) tool = CHASM_TOOL_RANGE;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Tower (T)##tool",tool == CHASM_TOOL_TOWER)) tool = CHASM_TOOL_TOWER;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Ropewalk (K)##tool",tool == CHASM_TOOL_ROPEWALK)) tool = CHASM_TOOL_ROPEWALK;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Stonecutter (M)##tool",tool == CHASM_TOOL_STONECUTTER)) tool = CHASM_TOOL_STONECUTTER;
-        if (ImGui::RadioButton("Mine (O)##tool",tool == CHASM_TOOL_MINE)) tool = CHASM_TOOL_MINE;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Steam (P)##tool",tool == CHASM_TOOL_STEAM)) tool = CHASM_TOOL_STEAM;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Condenser (L)##tool",tool == CHASM_TOOL_CONDENSER)) tool = CHASM_TOOL_CONDENSER;
-        ImGui::SameLine();
-        //A debug well (water_tools_plan.md), for test maps with no river: the panel's only - no key, no build bar, never in play.
-        if (ImGui::RadioButton("Well (debug)##tool",tool == CHASM_TOOL_WELL)) tool = CHASM_TOOL_WELL;
-        //Water and height placed by hand (water_tools_plan.md): a new map each, so the panel's only, never in play.
-        ImGui::SameLine();
-        if (ImGui::RadioButton("River (debug)##tool",tool == CHASM_TOOL_RIVER)) tool = CHASM_TOOL_RIVER;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Pond (debug)##tool",tool == CHASM_TOOL_POND)) tool = CHASM_TOOL_POND;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Height (debug)##tool",tool == CHASM_TOOL_HEIGHT)) tool = CHASM_TOOL_HEIGHT;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Cliff (debug)##tool",tool == CHASM_TOOL_CLIFF)) tool = CHASM_TOOL_CLIFF;
+        static const PaintToolButton general[] = {
+            {"Select##tool",CHASM_TOOL_SELECT,NULL},
+            {"Erase##tool",CHASM_TOOL_ERASE,"3"},
+        };
+        //A building a drag, each kind's: the people's houses and workplaces first, then what is placed by the land.
+        //The well is a debug one (water_tools_plan.md), for test maps with no river: the panel's only, never in play.
+        static const PaintToolButton buildings[] = {
+            {"House##tool",CHASM_TOOL_HOUSE,"1"},
+            {"Store##tool",CHASM_TOOL_STORE,"8"},
+            {"Woodcutter##tool",CHASM_TOOL_WOODCUTTER,"9"},
+            {"Water##tool",CHASM_TOOL_WATER,"0"},
+            {"Builders##tool",CHASM_TOOL_BUILDERS,"G"},
+            {"Stonecutter##tool",CHASM_TOOL_STONECUTTER,"M"},
+            {"Ropewalk##tool",CHASM_TOOL_ROPEWALK,"K"},
+            {"Sail loft##tool",CHASM_TOOL_SAIL_LOFT,"I"},
+            {"Steam##tool",CHASM_TOOL_STEAM,"P"},
+            {"Condenser##tool",CHASM_TOOL_CONDENSER,"L"},
+            {"Mine##tool",CHASM_TOOL_MINE,"O"},
+            {"Tower##tool",CHASM_TOOL_TOWER,"T"},
+            {"Winch##tool",CHASM_TOOL_WINCH,"H"},
+            {"Bridge##tool",CHASM_TOOL_BRIDGE,"J"},
+            {"Camp##tool",CHASM_TOOL_CAMP,"C"},
+            {"Well##tool",CHASM_TOOL_WELL,NULL},
+        };
+        //Painted on the ground - plots, cells or a line - rather than standing on it.
+        static const PaintToolButton ground[] = {
+            {"Field##tool",CHASM_TOOL_FIELD,"2"},
+            {"Garden##tool",CHASM_TOOL_GARDEN,"4"},
+            {"Lot##tool",CHASM_TOOL_LOT,"5"},
+            {"Range##tool",CHASM_TOOL_RANGE,"R"},
+            {"Dock##tool",CHASM_TOOL_DOCK,NULL},
+            {"Road##tool",CHASM_TOOL_ROAD,"6"},
+            {"Wall##tool",CHASM_TOOL_WALL,"7"},
+            {"Terrace##tool",CHASM_TOOL_TERRACE,"Y"},
+        };
+        //Water and height placed by hand (water_tools_plan.md, ChasmMapTool): a new map each, so the panel's only, never
+        //in play.
+        static const PaintToolButton terrain[] = {
+            {"River##tool",CHASM_TOOL_RIVER,NULL},
+            {"Pond##tool",CHASM_TOOL_POND,NULL},
+            {"Height##tool",CHASM_TOOL_HEIGHT,NULL},
+            {"Cliff##tool",CHASM_TOOL_CLIFF,NULL},
+        };
+        //The debug castle (ramparts_plan.md): a prototype, so the panel's only - no key, no build bar.
+        static const PaintToolButton prototype[] = {
+            {"Castle##tool",CHASM_TOOL_CASTLE,NULL},
+        };
+        PaintToolGroup(NULL,general,(int)(sizeof(general) / sizeof(general[0])),tool);
+        PaintToolGroup("Buildings",buildings,(int)(sizeof(buildings) / sizeof(buildings[0])),tool);
+        PaintToolGroup("Ground",ground,(int)(sizeof(ground) / sizeof(ground[0])),tool);
+        PaintToolGroup("Terrain - each a new map",terrain,(int)(sizeof(terrain) / sizeof(terrain[0])),tool);
         if (ChasmMapTool(tool)){
             RenderMapTools();
         }
-        if (ImGui::RadioButton("Store (8)##tool",tool == CHASM_TOOL_STORE)) tool = CHASM_TOOL_STORE;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Woodcutter (9)##tool",tool == CHASM_TOOL_WOODCUTTER)) tool = CHASM_TOOL_WOODCUTTER;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Water (0)##tool",tool == CHASM_TOOL_WATER)) tool = CHASM_TOOL_WATER;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Winch (H)##tool",tool == CHASM_TOOL_WINCH)) tool = CHASM_TOOL_WINCH;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Camp (C)##tool",tool == CHASM_TOOL_CAMP)) tool = CHASM_TOOL_CAMP;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Bridge (J)##tool",tool == CHASM_TOOL_BRIDGE)) tool = CHASM_TOOL_BRIDGE;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Builders (G)##tool",tool == CHASM_TOOL_BUILDERS)) tool = CHASM_TOOL_BUILDERS;
-        //The debug castle (ramparts_plan.md): a prototype, so the panel's only - no key, no build bar.
-        if (ImGui::RadioButton("Castle (prototype)##tool",tool == CHASM_TOOL_CASTLE)) tool = CHASM_TOOL_CASTLE;
+        PaintToolGroup("Prototype",prototype,(int)(sizeof(prototype) / sizeof(prototype[0])),tool);
         if (tool == CHASM_TOOL_CASTLE){
             int shape = castle_shape;
             int storeys = castle_storeys;
-            ImGui::SameLine();
             if (ImGui::RadioButton("Block##castle",shape == ZONE_CASTLE_BLOCK)) shape = ZONE_CASTLE_BLOCK;
             ImGui::SameLine();
             if (ImGui::RadioButton("Arch##castle",shape == ZONE_CASTLE_ARCH)) shape = ZONE_CASTLE_ARCH;
@@ -3750,9 +3845,10 @@ void ApplicationChasm::RenderChasmPanel(){
             if (ImGui::RadioButton("Stair##castle",shape == ZONE_CASTLE_STAIR)) shape = ZONE_CASTLE_STAIR;
             ImGui::SetNextItemWidth(160.0f);
             ImGui::SliderInt("storeys##castle",&storeys,1,ZONE_CASTLE_MAX_STOREYS);
-            ImGui::SameLine();
-            ImGui::TextDisabled("a stair rises its last storey; an arch is 2 at least. On a piece: an arch 2 above its top, "
-                                "or a stair 1 above an arch, goes on it; shift takes the top piece off");
+            ImGui::PushStyleColor(ImGuiCol_Text,ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("a stair rises its last storey; an arch is 2 at least. On a piece: an arch 2 above its top, "
+                               "or a stair 1 above an arch, goes on it; shift takes the top piece off");
+            ImGui::PopStyleColor();
             if (shape != castle_shape || storeys != castle_storeys){
                 castle_shape = shape;
                 castle_storeys = storeys;
@@ -3763,20 +3859,23 @@ void ApplicationChasm::RenderChasmPanel(){
             paint_tool = tool;
             pick_version++;
         }
-        ImGui::TextDisabled("a drag is one building - start it on one to extend it; a click adds a storey, shift takes one off");
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text,ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("a drag is one building - start it on one to extend it; a click adds a storey, shift takes one off");
+        ImGui::PopStyleColor();
         std::shared_ptr<const ChasmWorld> zw = GetWorld();
         std::shared_ptr<const ZoneState> z = GetZones();
         if (zw && z && z->world == zw){
             ZoneStats st = ComputeZoneStats(*zw,*z);
-            ImGui::Text("%i houses (%.0f floor), %i stores (%.0f), %i woodcutters, %i water collectors, %i winches, "
-                        "%i builders' huts",
-                        st.buildings[ZONE_KIND_HOUSE],st.floor_area[ZONE_KIND_HOUSE],st.buildings[ZONE_KIND_STORE],
-                        st.floor_area[ZONE_KIND_STORE],st.buildings[ZONE_KIND_WOODCUTTER],st.buildings[ZONE_KIND_WATER],
-                        st.buildings[ZONE_KIND_WINCH],st.buildings[ZONE_KIND_BUILDERS]);
-            ImGui::Text("%i fields on %i cells, %.0f units of field",st.buildings[ZONE_KIND_FIELD],st.field_cells,
-                        st.floor_area[ZONE_KIND_FIELD]);
-            ImGui::Text("%i garden and %i lot plots, %.0f units of ground; %i road plots",st.gardens,st.lots,
-                        st.ground_area,st.roads);
+            ImGui::TextWrapped("%i houses (%.0f floor), %i stores (%.0f), %i woodcutters, %i water collectors, %i winches, "
+                               "%i builders' huts",
+                               st.buildings[ZONE_KIND_HOUSE],st.floor_area[ZONE_KIND_HOUSE],st.buildings[ZONE_KIND_STORE],
+                               st.floor_area[ZONE_KIND_STORE],st.buildings[ZONE_KIND_WOODCUTTER],st.buildings[ZONE_KIND_WATER],
+                               st.buildings[ZONE_KIND_WINCH],st.buildings[ZONE_KIND_BUILDERS]);
+            ImGui::TextWrapped("%i fields on %i cells, %.0f units of field",st.buildings[ZONE_KIND_FIELD],st.field_cells,
+                               st.floor_area[ZONE_KIND_FIELD]);
+            ImGui::TextWrapped("%i garden and %i lot plots, %.0f units of ground; %i road plots",st.gardens,st.lots,
+                               st.ground_area,st.roads);
             RenderBuildingInfo(*zw,*z);
         }
         std::string refusal;
@@ -4195,10 +4294,14 @@ void ApplicationChasm::RegisterMCPTools(){
                         result["zone_castle"] = json{{"shape",ZoneCastleShapeName(ZoneCastleShape(*z,pick.plot))},
                                                      {"storeys",ZoneCastleStoreys(*z,pick.plot)},
                                                      {"layer",ZoneCastleLayer(*z,pick.plot)},
+                                                     {"level",ZoneCastleBase(*z,pick.plot)},
+                                                     {"top_y",(z->world && z->world == GetWorld())
+                                                               ? BuildingLayerHeight(*z->world,*z,pick.plot,ZoneCastleLayer(*z,pick.plot))
+                                                               : 0.0f},
                                                      {"over",CastleOverJson(*z,pick.plot)}};
                     }
                     //Its ground (terraces_plan.md stage 2): a terrace's top, or the terrain's - and the step to each
-                    //neighbour, open, a wall or a stair (ZoneTerraceStep).
+                    //neighbour, open, a wall, a stair or a building's upper door, with its storey (ZoneTerraceStep, stage 3).
                     std::shared_ptr<const ChasmWorld> zw = GetWorld();
                     if (zw && z->world == zw){
                         result["zone_ground_y"] = ZoneGroundAt(*zw,*z,pick.plot);
@@ -4209,18 +4312,23 @@ void ApplicationChasm::RegisterMCPTools(){
                         json steps = json::array();
                         int nb[8];
                         int n = ZonePlotNeighbours(*zw,pick.plot,nb,8);
-                        static const char* step_names[] = {"open","wall","stair"};
+                        static const char* step_names[] = {"open","wall","stair","door"};
                         for (int i = 0; i < n; i++){
-                            steps.push_back(json{{"plot",nb[i]},{"ground_y",ZoneGroundAt(*zw,*z,nb[i])},
-                                                 {"step",step_names[ZoneTerraceStep(*zw,*z,pick.plot,nb[i])]}});
+                            int step = ZoneTerraceStep(*zw,*z,pick.plot,nb[i]);
+                            json s = json{{"plot",nb[i]},{"ground_y",ZoneGroundAt(*zw,*z,nb[i])},{"step",step_names[step]}};
+                            if (step == ZONE_STEP_DOOR){
+                                s["door_storey"] = std::max(ZoneUpperDoor(*zw,*z,pick.plot,nb[i]),ZoneUpperDoor(*zw,*z,nb[i],pick.plot));
+                            }
+                            steps.push_back(s);
                         }
                         result["zone_steps"] = steps;
                     }
-                    //An arch over it (arches_plan.md): its storeys and the building it is part of.
+                    //An arch over it (arches_plan.md): its storeys, the building it is part of, and its floor's height.
                     if (z->ArchOf(pick.plot) > 0){
                         result["zone_arch"] = json{{"storeys",z->ArchOf(pick.plot)},{"owner",z->ArchOwnerOf(pick.plot)},
                                                    {"floors",ZoneArchFloors(z->ArchOf(pick.plot))},
-                                                   {"built",z->ArchBuiltOf(pick.plot)}};
+                                                   {"built",z->ArchBuiltOf(pick.plot)},
+                                                   {"floor_y",z->ArchFloorOf(pick.plot,0) * ZONE_STOREY_HEIGHT * 0.5f}};
                     }
                 }
                 //What a person standing here would see (Exploration.h, SIGHT), on a blank raster of its
@@ -4356,7 +4464,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"on",{{"type","boolean"},{"description","for field_priority: first (default) or back in the queue; "
                                                         "for gate_shut: shut (default) or open; for work_stop and range_stop: "
                                                         "stopped (default) or working"}}},
-                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine","well","steam","condenser"}},{"description","for build_* (default house); a well is a debug tool, refused with play:true (water_tools_plan.md)"}}},
+                {"kind",{{"type","string"},{"enum",{"house","store","woodcutter","water","winch","builders","tower","ropewalk","stonecutter","mine","well","steam","condenser","sail_loft"}},{"description","for build_* (default house); a well is a debug tool, refused with play:true (water_tools_plan.md)"}}},
                 {"crop",{{"type","string"},{"enum",{"wheat","greens","beans","hemp","auto"}},{"description","for field_crop (a crop) and field_next (a crop or auto)"}}},
                 {"stroke",{{"type","integer"},{"description","calls with the same stroke are one drag: one building"}}},
                 {"house",{{"type","integer"},{"description","for field_land: the house's building id, 0 automatic"}}},
@@ -4465,11 +4573,14 @@ void ApplicationChasm::RegisterMCPTools(){
                     tool = (kind == ZONE_KIND_WATER) ? CHASM_TOOL_WATER : (kind == ZONE_KIND_WINCH) ? CHASM_TOOL_WINCH
                          : (kind == ZONE_KIND_TOWER) ? CHASM_TOOL_TOWER : (kind == ZONE_KIND_STONECUTTER) ? CHASM_TOOL_STONECUTTER
                          : (kind == ZONE_KIND_MINE) ? CHASM_TOOL_MINE : (kind == ZONE_KIND_STEAM) ? CHASM_TOOL_STEAM
-                         : (kind == ZONE_KIND_CONDENSER) ? CHASM_TOOL_CONDENSER : -1;
+                         : (kind == ZONE_KIND_CONDENSER) ? CHASM_TOOL_CONDENSER
+                         : (kind == ZONE_KIND_SAIL_LOFT) ? CHASM_TOOL_SAIL_LOFT : -1;
                 }else if (op == ZONE_OP_GROUND_PAINT && ground == ZONE_GROUND_WALL){
                     tool = CHASM_TOOL_WALL;
                 }else if (op == ZONE_OP_RANGE_PAINT){
                     tool = CHASM_TOOL_RANGE;
+                }else if (op == ZONE_OP_DOCK_PAINT){
+                    tool = CHASM_TOOL_DOCK;
                 }
                 int need = ChasmToolNeeds(tool);
                 if (need >= 0 && !((discovered_mask.load() >> need) & 1u)){
@@ -4506,6 +4617,8 @@ void ApplicationChasm::RegisterMCPTools(){
                                         {"towers",st.buildings[ZONE_KIND_TOWER]},
                                         {"steam_collectors",st.buildings[ZONE_KIND_STEAM]},
                                         {"condensers",st.buildings[ZONE_KIND_CONDENSER]},
+                                        {"sail_lofts",st.buildings[ZONE_KIND_SAIL_LOFT]},
+                                        {"docks",st.buildings[ZONE_KIND_DOCK]},
                                         {"built_plots",st.built_plots},
                                         {"storeys",st.storeys},{"field_cells",st.field_cells},
                                         {"floor_area",st.floor_area[ZONE_KIND_HOUSE]},{"field_area",st.floor_area[ZONE_KIND_FIELD]}};
@@ -4604,7 +4717,8 @@ void ApplicationChasm::RegisterMCPTools(){
                 {"tool",{{"type","string"},{"enum",{"select","house","field","erase","garden","lot","road",
                                                     "store","woodcutter","water","winch","camp","bridge","builders","wall",
                                                     "range","tower","ropewalk","castle","stonecutter","mine","well",
-                                                    "river","pond","height","cliff","steam","condenser","terrace"}}}},
+                                                    "river","pond","height","cliff","steam","condenser","terrace",
+                                                    "sail_loft","dock"}}}},
                 {"hover_x",{{"type","number"}}},
                 {"hover_z",{{"type","number"}}},
                 {"hover_release",{{"type","boolean"},{"description","the hover follows the mouse again"}}},
@@ -4629,7 +4743,7 @@ void ApplicationChasm::RegisterMCPTools(){
             const char* names[] = {"select","house","field","erase","garden","lot","road",
                                    "store","woodcutter","water","winch","camp","bridge","builders","wall",
                                    "range","tower","ropewalk","castle","stonecutter","mine","well","river","pond","height",
-                                   "cliff","steam","condenser","terrace"};
+                                   "cliff","steam","condenser","terrace","sail_loft","dock"};
             static_assert(sizeof(names) / sizeof(names[0]) == CHASM_TOOL_COUNT,"a name for every ChasmTool");
             //The map tools' sizes (water_tools_plan.md), the panel's sliders' for a script - `width` the cliff's in plots
             //when that is the tool in hand, else the river's.

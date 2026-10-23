@@ -344,21 +344,41 @@ struct PropInstance;
     that takes it, while the stores hold less than the colony keeps (FetchFromWorkplace, rope only, up to
     KeptShort); else, with hemp at the ropewalk, makes rope of it there -
     ECONOMY_ROPE_HEMP a rope, ECONOMY_ROPE_SECONDS each at his pace, faster on a longer ropewalk
-    (EconomyRopewalkPace), up to a load a round; else fetches hemp from a store, the camp or a crate (MakeRope,
-    AtRopewalk - the builders' provisions errand's states). He makes none past ECONOMY_ROPEWALK_PILE waiting
-    there. No count of what is wanted, unlike provisions: hemp has no other use. The rope there is anyone's -
+    (EconomyRopewalkPace), up to a load a round; else fetches hemp from a store, the camp or a crate (MakeOfHemp,
+    AtHempWorkshop - the builders' provisions errand's states). He makes none past ECONOMY_ROPEWALK_PILE waiting
+    there. No count of what is wanted, unlike provisions: the pile is the bound. The rope there is anyone's -
     sites' carriers take it as from a woodpile - and its hemp the ropemaker's alone.
     A WINCH is built with it, ECONOMY_WINCH_ROPE a storey (StoreyGoods), and the colony starts with none: a winch
     site stands staked out, its wood brought, until a hemp field and a ropewalk have made its rope.
 
+    --- CANVAS (docs/steam_plan.md, step 4) ---------------------------------------------------------
+    A SAIL LOFT (ZONE_KIND_SAIL_LOFT) is the ropewalk's twin for a zeppelin's envelope, by the same errand
+    (EconomyHempWork): its SAILMAKERS (WORKER_JOB_SAILMAKER, by precision) sew CANVAS of hemp, ECONOMY_CANVAS_HEMP a
+    canvas, ECONOMY_CANVAS_SECONDS each at his pace, none past ECONOMY_SAIL_LOFT_PILE waiting. Its plots give it
+    HANDS, not speed - a sailmaker for every ECONOMY_PLOTS_PER_WORKER, as a workshop's - so several share one loft:
+    what the others are making, are on their way to make and are bringing counts before he goes (MakeOfHemp). Canvas
+    is a made good, kept as rope is, and anyone's at the loft.
+    HEMP IS WANTED TWICE: a ropewalk and a sail loft each fetch what their pile has room for, whoever comes first,
+    and stop once it is full - neither counts what the other wants, so a full pile hands the hemp to the other.
+
+    --- THE ZEPPELIN DOCK (docs/steam_plan.md, step 5) ----------------------------------------------
+    A DOCK (ZONE_KIND_DOCK) is painted on coarse cells as a field is, at the chasm's edge (ZoneCanDock), and built
+    with ECONOMY_DOCK_WOOD_PER_CELL a cell, all at once. Once it stands and its zeppelin FITS on it (ZoneDockFrame,
+    `dock_lie`), it is a site again: its ZEPPELIN, in ZEPPELIN_STAGES stages, each one good (EconomyZeppelinGood) -
+    the frame wood, the hull floatstone, the rigging rope, the envelope canvas, and STEAM LAST to fill it. The
+    builders bring all of them as they can, as to any site (SiteNeed: every stage still to stand); a stage stands
+    once those before it do and all of its good is there (Build), so a zeppelin is never left half-filled for want
+    of canvas. The stages standing (`zeppelin`, saved and hashed) are its look's, and each is told (EVENT_ZEPPELIN_STAGE).
+    Built, it is finished and moored there; flight is to come.
+
     --- STOCK KEPT (docs/goods_plan.md, "Kept in stock, and made to order") -------------------------
-    A MADE good (GOODS_MADE: provisions, rope) has a KEPT number - the colony's, set by the player - of it to
+    A MADE good (GOODS_MADE: provisions, rope, canvas) has a KEPT number - the colony's, set by the player - of it to
     hold in the stores and the camp's supplies (EconomyStoredTotals, the top bar's count), and may have an ORDER
     for more: a level for those to reach once, cleared when they do (OrderMore). The higher of the two is its
     LEVEL (EconomyKeptLevel). Provisions are made up to it on top of what sites and towers want
-    (ProvisionsLacking). Rope is made to the ropewalk's pile whatever the level - hemp has no other use - and
-    carried off to a store only while the stores hold less (KeptShort), so by default none goes there and the
-    stores never fill with it. Both start at ECONOMY_KEPT_START. Set by recorded commands (CHASM_CMD_KEEP);
+    (ProvisionsLacking). Rope and canvas are made to their workshop's pile whatever the level - the pile is the
+    bound - and carried off to a store only while the stores hold less (KeptShort), so by default none goes there
+    and the stores never fill with it. Both start at ECONOMY_KEPT_START. Set by recorded commands (CHASM_CMD_KEEP);
     saved and hashed.
     BY COLONY (settlements_plan.md, step 2): each colony keeps its own, by its number (`kept`, `ordered`), and it
     is all counted in its own land - its stores and camp's supplies, its sites and towers, the crates on its land and
@@ -516,11 +536,25 @@ struct PropInstance;
 #define ECONOMY_ROPE_SECONDS        8.0f    //making one on a ropewalk of ECONOMY_ROPEWALK_MIN_PLOTS, at the ropemaker's pace
 #define ECONOMY_ROPEWALK_MIN_PLOTS  2       //standing plots a ropewalk works from: with one it is placed, and idle
 #define ECONOMY_ROPEWALK_PILE       12      //rope waiting at the ropewalk at most: he makes no more past it
+//THE SAIL LOFT (steam_plan.md step 4, current tuning): a canvas takes what a rope does, and as long.
+#define ECONOMY_CANVAS_HEMP         2
+#define ECONOMY_CANVAS_SECONDS      8.0f    //sewing one, at the sailmaker's pace
+#define ECONOMY_SAIL_LOFT_PILE      12      //canvas waiting at the loft at most: they sew no more past it
+//THE DOCK AND ITS ZEPPELIN (steam_plan.md step 5, current tuning): the dock's wood a cell, then what each of the
+//zeppelin's stages takes of its one good - the plan's first zeppelin, and its frame's wood.
+#define ECONOMY_DOCK_WOOD_PER_CELL  8
+#define ZEPPELIN_STAGES             5
+#define ECONOMY_ZEPPELIN_WOOD       60
+#define ECONOMY_ZEPPELIN_FLOATSTONE 40
+#define ECONOMY_ZEPPELIN_ROPE       20
+#define ECONOMY_ZEPPELIN_CANVAS     20
+#define ECONOMY_ZEPPELIN_STEAM      30
 #define ECONOMY_WINCH_ROPE          4       //rope a winch's storey takes, with its wood (goods_plan.md): the colony starts with none
 #define ECONOMY_TENT_ROPE           1       //...and a tent's, painted: its guy lines (settlements_plan.md) - one packed and pitched takes none
 #define ECONOMY_KEPT_START          0       //what the colony keeps of a made good before the player says (STOCK KEPT): none
-//The MADE goods (STOCK KEPT): made at a workshop from other goods, and kept to a number - a builders' hut's, a ropewalk's.
-#define GOODS_MADE                  ((GoodsMask)(GOOD_BIT(GOOD_PROVISIONS) | GOOD_BIT(GOOD_ROPE)))
+//The MADE goods (STOCK KEPT): made at a workshop from other goods, and kept to a number - a builders' hut's, a ropewalk's,
+//a sail loft's.
+#define GOODS_MADE                  ((GoodsMask)(GOOD_BIT(GOOD_PROVISIONS) | GOOD_BIT(GOOD_ROPE) | GOOD_BIT(GOOD_CANVAS)))
 #define ECONOMY_FARMER_CELLS        6       //a farmer's share of his land: whole fields up to this many cells or more (land_plan.md)
 #define ECONOMY_CAMP_FARMERS        1       //the camp's land's shares at most: one farmer (woodcutting_plan.md)
 #define ECONOMY_CAMP_WOODCUTTERS    1       //...and its own woodcutter, felling from the camp
@@ -646,7 +680,8 @@ const char* SkillName(int skill);
 #define WORKER_JOB_MINER        9       //at a mine: digs its deposit, stone or floatstone (stone_plan.md step 5)
 #define WORKER_JOB_STEAM        10      //at a steam collector: carries its steam to a store (steam_plan.md)
 #define WORKER_JOB_CONDENSER    11      //at a condenser: its water to a store, steam to it from one (steam_plan.md step 3)
-#define WORKER_JOB_COUNT        12
+#define WORKER_JOB_SAILMAKER    12      //at a sail loft: canvas from hemp (steam_plan.md step 4)
+#define WORKER_JOB_COUNT        13
 //Below WORKER_JOB_NONE, what a stage of life gives instead of a workplace (LIFELINES): never given a place.
 #define WORKER_JOB_PLAYING      -2      //a child: at home, out to play now and then - no work, errands or building
 #define WORKER_JOB_BABY         -3      //a baby, its first year: indoors in its mother's care, doing nothing at all
@@ -1048,7 +1083,8 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_ZOMBIE_FELLED     25      //`person` killed a zombie (KILLS), `amount` how: KILL_BOW or KILL_HAND
 #define EVENT_RANKED            26      //`person` rose to rank `amount` (RANKS) by that kill
 #define EVENT_GREW_OLD          27      //`person` is old (OLD AGE): his work given up, from now on at home
-#define EVENT_COUNT             28
+#define EVENT_ZEPPELIN_STAGE    28      //a stage of the zeppelin on dock `building` stands, `amount` which (steam_plan.md step 5)
+#define EVENT_COUNT             29
 //The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
 //chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
 #define CHASM_GOAL_WINTER       0
@@ -1415,6 +1451,7 @@ struct EconomyState{
     std::vector<EconomyCrate> crates;                   //CRATES, in id order
     uint32_t next_crate = 1;
     std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
+    std::vector<int> zeppelin;                          //by building id: a DOCK's zeppelin's stages standing, 0 none (step 5)
     std::vector<uint8_t> endless;                       //by building id: a WELL kept full (set_stock's), 0 for any other
     //By COLONY NUMBER, then good: its KEPT number of a made good (STOCK KEPT) - a colony past the end keeps the start's
     std::vector<std::array<int,GOOD_COUNT>> kept;
@@ -1545,9 +1582,29 @@ bool EconomyCommandInTerritory(const EconomyState& e, const ChasmWorld& w, int o
 //ONE CAMP TO A COLONY (settlements_plan.md): the camp of the colony `plot` lies in, 0 none - the one a tent pitched or
 //painted there joins, wherever it stands (THE CAMP, Zones.h).
 uint32_t EconomyColonyCamp(const EconomyState& e, const ZoneState& z, int plot);
-//STOCK KEPT: the made good a building of kind `kind` makes - a builders' hut's provisions, a ropewalk's rope - or -1.
+//THE ZEPPELIN (steam_plan.md step 5): the good stage `stage` (1-ZEPPELIN_STAGES) takes and how much, -1 and 0 for none;
+//its name - frame, hull, rigging, envelope, filling; and how many of dock `id`'s stages stand.
+inline int EconomyZeppelinGood(int stage){
+    static const int goods[ZEPPELIN_STAGES] = {GOOD_WOOD,GOOD_FLOATSTONE,GOOD_ROPE,GOOD_CANVAS,GOOD_STEAM};
+    return (stage >= 1 && stage <= ZEPPELIN_STAGES) ? goods[stage - 1] : -1;
+}
+inline int EconomyZeppelinCost(int stage){
+    static const int costs[ZEPPELIN_STAGES] = {ECONOMY_ZEPPELIN_WOOD,ECONOMY_ZEPPELIN_FLOATSTONE,ECONOMY_ZEPPELIN_ROPE,
+                                               ECONOMY_ZEPPELIN_CANVAS,ECONOMY_ZEPPELIN_STEAM};
+    return (stage >= 1 && stage <= ZEPPELIN_STAGES) ? costs[stage - 1] : 0;
+}
+inline const char* EconomyZeppelinStageName(int stage){
+    static const char* names[ZEPPELIN_STAGES] = {"frame","hull","rigging","envelope","filling"};
+    return (stage >= 1 && stage <= ZEPPELIN_STAGES) ? names[stage - 1] : "";
+}
+inline int EconomyZeppelinStage(const EconomyState& e, uint32_t id){
+    return (id < e.zeppelin.size()) ? e.zeppelin[id] : 0;
+}
+//STOCK KEPT: the made good a building of kind `kind` makes - a builders' hut's provisions, a ropewalk's rope, a sail
+//loft's canvas - or -1.
 inline int EconomyMadeAt(int kind){
-    return (kind == ZONE_KIND_BUILDERS) ? GOOD_PROVISIONS : (kind == ZONE_KIND_ROPEWALK) ? GOOD_ROPE : -1;
+    return (kind == ZONE_KIND_BUILDERS) ? GOOD_PROVISIONS : (kind == ZONE_KIND_ROPEWALK) ? GOOD_ROPE
+         : (kind == ZONE_KIND_SAIL_LOFT) ? GOOD_CANVAS : -1;
 }
 //STOCK KEPT, BY COLONY: colony `colony`'s kept number of made good `good` - the start's (ECONOMY_KEPT_START) till set...
 inline int EconomyKept(const EconomyState& e, uint32_t colony, int good){
@@ -1630,6 +1687,7 @@ struct EconomySaved{
     std::vector<EconomyCrate> crates;
     uint32_t next_crate = 1;
     std::vector<std::pair<uint32_t,int>> guards;        //towers' guard counts: building, count
+    std::vector<std::pair<uint32_t,int>> zeppelins;     //docks' zeppelins (steam_plan.md step 5): building, stages standing
     std::vector<uint32_t> endless;                      //the endless WELLS, by building id
     std::vector<std::array<int,3>> kept;                //made goods' kept numbers (STOCK KEPT): colony, good, count - none, the start's
     std::vector<std::array<int,3>> ordered;             //...and their orders' levels: colony, good, level
@@ -1672,7 +1730,10 @@ public:
     //camp's supplies, or with f_pantry its pantry. For putting provisions in a store, or emptying one, without
     //waiting for it. A WELL holds water alone: `f_endless` makes it endless, and an amount without it finite again.
     //False if none, or refused.
-    bool SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry = false, bool f_endless = false);
+    //With `f_site`, what has been BROUGHT to its site instead, which then builds what that pays for (Build) - a zeppelin's
+    //stages among them (steam_plan.md step 5), for testing without the carrying.
+    bool SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry = false, bool f_endless = false,
+                  bool f_site = false);
     /*
         PROVISIONS (POSTS): how many are still wanted in settlement `settlement` (its id) - by its sites, its towers
         and its colony's level kept (STOCK KEPT) - beyond what is made and being made there; below 0, made and not
@@ -1835,6 +1896,7 @@ private:
     std::vector<PickUpLook> pick_up_looks;
     std::vector<std::vector<int>> cells_of;     //by building id: a field's coarse cells, in index order (derived)
     std::vector<int> site_cells;                //by building id: a field's cells still a site (derived)
+    std::vector<ZoneDockLie> dock_lie;          //by building id: where a dock's zeppelin lies, and whether it fits (derived)
     std::vector<int> ground_sites;              //the garden, lot, wall and terrace plots still to build, in index order (derived)
     std::vector<uint8_t> ground_site_stone;     //...per plot, 1 where it is a terrace's: its one good stone, not wood
     std::vector<int> road_sites;                //the road plots still to lay, in index order (derived)
@@ -1996,9 +2058,11 @@ private:
     //PROVISIONS (POSTS): a builder's errand for them, from home (true if he set off); what he does at his hut.
     bool MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
-    //ROPE (goods_plan.md): a ropemaker's errand, from home (true if he set off); what he does at his ropewalk.
-    bool MakeRope(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
-    void AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
+    //ROPE AND CANVAS (EconomyHempWork): a ropemaker's or sailmaker's errand, from home (true if he set off); what he
+    //does at his workshop; and how many others of it are making there now.
+    bool MakeOfHemp(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
+    void AtHempWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace);
+    int OthersMaking(const EconomyWorker& k) const;
     bool FeedCondenser(EconomyWorker& k, const ZoneState& z, Walkers& walkers);      //steam_plan.md step 3
     void AtCondenser(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     //STOCK KEPT: how many of made good `good` settlement `settlement`'s stores still lack of its colony's level, less
@@ -2158,6 +2222,8 @@ private:
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);
+    //A DOCK that stands whole, its zeppelin fitting and not finished: a site again, for its zeppelin (step 5).
+    bool ZeppelinSite(const ZoneState& z, uint32_t id) const;
     //Road works: the next piece to do (from home, or on a stint - near where he stands), and what he does when a
     //piece is done. The trees in a plot's way are RoadTrees, public.
     bool FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint);
@@ -2236,6 +2302,24 @@ int EconomyJobOf(int kind);
 //makes rope against one that short: 1 at 2 plots, 1.5 at 3, 2 at 4. 0 for anything but a ropewalk that works.
 int EconomyRopewalkPlots(const ZoneState& z, uint32_t id);
 float EconomyRopewalkPace(const ZoneState& z, uint32_t id);
+/*
+    A HEMP WORKSHOP: a ropewalk (goods_plan.md) or a sail loft (steam_plan.md step 4) - one errand for both, its maker's,
+    and these its figures: the kind, its job, the good it makes, the hemp one takes, how long one takes at pace 1 and
+    the most waiting there before they stop. By job (Of) or kind (At); NULL for any other.
+*/
+struct EconomyHempWork{
+    int kind;
+    int job;
+    int made;
+    int hemp;
+    float seconds;
+    int pile;
+};
+const EconomyHempWork* EconomyHempWorkOf(int job);
+const EconomyHempWork* EconomyHempWorkAt(int kind);
+//How fast workshop `id` makes against its figure, 0 while it cannot: a ropewalk by its length (EconomyRopewalkPace),
+//a sail loft at 1 once any of it stands - its plots give it hands instead.
+float EconomyHempPace(const ZoneState& z, uint32_t id);
 //All of a good the colony has, wherever it lies - stores, the camp, houses, workplaces, fields, crates - and what is
 //being carried; not what sites have been brought. What a site short of it could still be brought.
 int EconomyGoodHeld(const EconomyState& e, int good);
@@ -2248,12 +2332,14 @@ int EconomyGoodHeld(const EconomyState& e, int good);
 #define ECONOMY_ROPE_NO_ROPEWALK    1
 #define ECONOMY_ROPE_MAKING         2
 int EconomyRopeChain(const EconomyState& e, const ZoneState& z);
-//The colony's jobs at a glance - the overview's and the tool's: per job, who works it and its places.
+//The colony's jobs at a glance - the overview's and the tool's: per job, who works it and its places. Of one
+//settlement (settlements_plan.md): its workplaces by their door, its people by EconomyPersonLand - as jobs are given out.
 struct EconomyJobCount{
     int working = 0;
     int places = 0;
 };
-void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount out[WORKER_JOB_COUNT], int* jobless);
+void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount out[WORKER_JOB_COUNT], int* jobless,
+                      uint32_t settlement = ECONOMY_EVERY_SETTLEMENT);
 //THE MINE (stone_plan.md step 5): what is left in deposit `d` to dig - INT_MAX for one that never runs out, 0 for none.
 int EconomyDepositLeft(const EconomyState& e, int d);
 //The skill a job leans on, and how fast a worker with `skill` of it works: 1 at 5, 1.4 at 10, 0.68 at 1.

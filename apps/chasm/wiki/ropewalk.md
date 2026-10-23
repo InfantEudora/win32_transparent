@@ -5,8 +5,8 @@ kind: buildings
 status: built
 summary: A long low shed where a ropemaker makes rope from hemp. It works from 2 plots, and a 3rd and 4th make it faster.
 plans: goods_plan.md > Decided; goods_plan.md > The ropewalk; goods_plan.md > Step 3: the ropewalk; goods_plan.md > The ropewalk's props; goods_plan.md > Kept in stock, and made to order
-code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE ECONOMY_KEPT_START; Economy.cpp: MakeRope AtRopewalk EconomyRopewalkPace WorkplaceMakes FetchFromWorkplace KeptShort; BuildingMesh.cpp: BuildRopewalkYard
-verified: 2026-10-22
+code: Zones.h: ZONE_KIND_ROPEWALK ZONE_ROPEWALK_MAX_PLOTS ZoneKindMaxPlots; Economy.h: ECONOMY_ROPE_HEMP ECONOMY_ROPE_SECONDS ECONOMY_ROPEWALK_MIN_PLOTS ECONOMY_ROPEWALK_PILE ECONOMY_KEPT_START; Economy.cpp: MakeOfHemp AtHempWorkshop EconomyRopewalkPace WorkplaceMakes FetchFromWorkplace KeptShort; BuildingMesh.cpp: BuildRopewalkYard
+verified: 2026-10-23
 ---
 
 Where [[Rope|rope]] is made, from [[Hemp|hemp]]. It is dragged over plots like any building (key K), one
@@ -32,7 +32,8 @@ One place, filled like any workplace, by **precision** ([[Skills]]). From home, 
    [[Crate|crate]].
 
 He makes none past {ECONOMY_ROPEWALK_PILE} waiting there. Unlike [[Provisions|provisions]], he makes rope
-whether or not anything wants it - hemp has no other use - so a ropewalk with hemp keeps its pile full.
+whether or not anything wants it - the pile is the bound - so a ropewalk with hemp keeps its pile full. A
+[[Sail loft|sail loft]] wants hemp too, by the same round: each fetches what its own pile has room for.
 Its card can **stop work**: it takes no ropemaker then, and makes nothing, until it is set working again.
 
 ## Kept in the stores

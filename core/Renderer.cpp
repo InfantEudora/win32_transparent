@@ -1519,6 +1519,25 @@ void Renderer::CustomShaderSubPass(Camera* camera, int index, const vec2& target
         UploadLighting(shader);
     }
 
+    /*
+        The blend function the half was set up with, put back after the draw like the depth and cull
+        state below, so a callback may change it - light that ADDS, such as apps/chasm's rainbow,
+        wants GL_ONE,GL_ONE - without every later shader adding too. Read rather than assumed:
+        the two halves of the pass blend differently (CustomShaderPass). Core GL names this
+        repo's trimmed glad.h leaves out.
+    */
+#ifndef GL_BLEND_DST_RGB
+#define GL_BLEND_DST_RGB    0x80C8
+#define GL_BLEND_SRC_RGB    0x80C9
+#define GL_BLEND_DST_ALPHA  0x80CA
+#define GL_BLEND_SRC_ALPHA  0x80CB
+#endif
+    GLint blend[4];
+    glGetIntegerv(GL_BLEND_SRC_RGB,&blend[0]);
+    glGetIntegerv(GL_BLEND_DST_RGB,&blend[1]);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA,&blend[2]);
+    glGetIntegerv(GL_BLEND_DST_ALPHA,&blend[3]);
+
     //We'd like a callback so the custom shader can set its own uniforms and such.
     if (shader->uniform_callback){
         shader->uniform_callback();
@@ -1527,6 +1546,7 @@ void Renderer::CustomShaderSubPass(Camera* camera, int index, const vec2& target
     glCullFace(GL_BACK);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+    glBlendFuncSeparate(blend[0],blend[1],blend[2],blend[3]);
 }
 
 /*

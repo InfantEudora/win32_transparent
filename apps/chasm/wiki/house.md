@@ -5,8 +5,8 @@ kind: buildings
 status: built
 summary: Home to one family, sized by its floor area. It keeps its own food, water and firewood, and the family fetches them.
 plans: buildings_plan.md > Decided; people_plan.md > As built; needs_plan.md > As built: step 3; yards_plan.md > Extend; yards_plan.md > Noted; selection_plan.md > Selecting someone indoors; building_size_plan.md > Decided (the user, 2026-10-18); zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4d, the look
-code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock EconomyCrowdedPace EconomyHouseAppeal; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn EconomyBreached ZOMBIE_BREACH_DOOR
-verified: 2026-10-19
+code: Economy.cpp: Derive HouseFamilies HouseRoom PrivateStock EconomyCrowdedPace EconomyHouseAppeal; Zones.h: ZONE_HOUSE_MAX_PLOTS ZoneKindMaxStoreys ZoneCanExtend; Economy.h: EconomyShutIn EconomyBreached ZOMBIE_BREACH_DOOR; BuildingMesh.cpp: WallDoor BuildingSureDoor
+verified: 2026-10-23
 ---
 
 The player drags out houses - a new one every {ZONE_HOUSE_MAX_PLOTS:#plots}, as the preview shows ([[Construction|placing]]) - and gives them storeys
@@ -56,13 +56,13 @@ from it. Once nobody lives there, its stock is anyone's, like a [[Store|store's]
 
 ## Doors and shut-in houses
 
-A house needs a way in: one of its plots has to be reachable from open ground. A house closed in on every
-side by other buildings, walls or water is **shut in**. No family moves into it, and a family already
-living there can't get out until the player clears a plot beside it. Its card warns about it.
+A house needs a way in: one of its plots reachable from open ground - or from a terrace, by an upper door onto it
+([[Terrace|terraces]]). Closed in on every side by other buildings, walls, terraces or water, it is **shut in**: no family
+moves in, and one living there can't get out until the player clears a plot beside it. Its card warns about it. Its
+**doors** open only where they lead somewhere - never into a building, a terrace's wall or off its edge.
 
 **Zombies breach** its door in {ZOMBIE_BREACH_DOOR:#seconds} of hitting, as any building's ([[Zombie|zombies]]): nothing of
-it comes down, but they walk through it from then on, and whoever is indoors there can be got at. Its doors stand
-open on the dark.
+it comes down, but they walk through it from then on, and whoever is indoors can be got at. Its doors stand open on the dark.
 
 ## Planned
 

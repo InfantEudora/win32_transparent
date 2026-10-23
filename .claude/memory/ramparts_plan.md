@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 9c1efb04-f5be-4246-803d-f0b9ad53ecb3
-  modified: 2026-10-10T21:18:14.909Z
+  modified: 2026-10-23T21:01:03.749Z
 ---
 
 apps/chasm/docs/ramparts_plan.md, agreed and built 2026-10-10 (steps 1 and 2). Walls people walk on, roads under
@@ -31,6 +31,10 @@ them, Stronghold-style.
   (`SurfaceLayer`). Orders carry the layer (`post_layer`, CHASM_CMD_ORDER value[1] = layer+1). Test the mapping with
   `chasm_pick surface:[x,y,z] normal:[..]`, or since 2026-10-11 `chasm_select under/press` at a pixel - they pin the engine's pick pixel ([[chasm-person-picking]]).
 - Selected person's route shown as dots + ring (`BuildPathMarks`, Select.cpp).
+- **Levels, as terraces (2026-10-23, user's ask)**: castle layers count from a per-plot LEVEL in whole storeys
+  (`castle_base`, `ZoneCastleBase`); a drag is one level (`ZoneCastleLevelFor`). Joins compare ABSOLUTE heights
+  (`WalkNodeHalves`, `WalkJoin` returns the meet in half storeys or `WALK_NO_JOIN`), so a deck level with a terrace's
+  top or the hill joins it; heights drawn via `BuildingLayerHeight`/`BuildingMeetHeight`. Saves: castle `[plot, piece, level]`.
 - User verdict 2026-10-10: "it reads very well".
 
 **Why:** prototype to judge whether stacked walkable layers READ from the camera before weaving it into play.

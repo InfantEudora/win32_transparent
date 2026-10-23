@@ -704,7 +704,7 @@ const BarTool chasm_bar[] = {
     {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
     {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"Y","TERRACE",CHASM_TOOL_TERRACE},
     {"H","WINCH",CHASM_TOOL_WINCH},{"P","STEAM",CHASM_TOOL_STEAM},{"L","CONDENSER",CHASM_TOOL_CONDENSER},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
-    {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
+    {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"I","SAIL LOFT",CHASM_TOOL_SAIL_LOFT},{"","DOCK",CHASM_TOOL_DOCK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
     {"3","ERASE",CHASM_TOOL_ERASE}};
 
 /*
@@ -810,6 +810,16 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
                      ECONOMY_ROPEWALK_MIN_PLOTS);
             what = buf;
             snprintf(buf,sizeof(buf),"Drag for a ropewalk of up to %i plots; past that, a new one starts.",plots);
+            break;
+        case CHASM_TOOL_DOCK:
+            what = "Where a zeppelin is built: frame, hull, rigging, canvas, and steam last to fill it. It floats only over the chasm.";
+            snprintf(buf,sizeof(buf),"Drag over the large squares at the chasm's edge, up to %i; a zeppelin wants about 2 by 4 of them.",
+                     ZoneKindMaxPlots(ZONE_KIND_DOCK));
+            break;
+        case CHASM_TOOL_SAIL_LOFT:
+            what = "Sews canvas from hemp, for a zeppelin's envelope. Like the ropewalk, it needs hemp from a field.";
+            snprintf(buf,sizeof(buf),"Drag for a loft of up to %i plots, a sailmaker for every %i.",plots,
+                     ECONOMY_PLOTS_PER_WORKER);
             break;
         case CHASM_TOOL_STONECUTTER:
             what = "Breaks the rocks around his hut for stone, starting with any boulder on a building site.";
@@ -1050,7 +1060,7 @@ float ApplicationChasm::DrawBuildBar(float s){
                                 || kind == EVENT_FROST_TOOK || kind == EVENT_GREW_UP || kind == EVENT_GREW_OLD || kind == EVENT_EXPECTING
                                 || kind == EVENT_BOULDER_FOUND || kind == EVENT_BALCONY_REACHED
                                 || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED
-                                || kind == EVENT_RANKED
+                                || kind == EVENT_RANKED || kind == EVENT_ZEPPELIN_STAGE
                                 || (kind == EVENT_BUILDING_FINISHED && discovery_of(ne->events[i]) >= 0)
                                 || ((kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED) && TriggerOn(ne->events[i].amount));
                 newest = f_notice ? &ne->events[i] : newest;
@@ -1085,6 +1095,11 @@ float ApplicationChasm::DrawBuildBar(float s){
                              : (n.kind == EVENT_BREACHED) ? std::string("the zombies have broken into a ") + ChasmKindLabel(n.amount,false)
                              //RANKS (ranks_plan.md): risen by a kill.
                              : (n.kind == EVENT_RANKED) ? name + " has risen to " + EconomyRankName(n.amount)
+                             //THE ZEPPELIN (steam_plan.md step 5): each of its stages, and its finishing.
+                             : (n.kind == EVENT_ZEPPELIN_STAGE && n.amount >= ZEPPELIN_STAGES)
+                                 ? std::string("the zeppelin is finished - filled with steam, and moored")
+                             : (n.kind == EVENT_ZEPPELIN_STAGE)
+                                 ? std::string("the zeppelin's ") + EconomyZeppelinStageName(n.amount) + " is built"
                              : (n.kind == EVENT_BUILDING_FINISHED) ? std::string(n.amount == ZONE_KIND_WINCH ? "the first winch"
                                                                                                          : "the builders' hut")
                                                                      + " is finished"
@@ -1330,6 +1345,8 @@ void ApplicationChasm::DrawToolTip(float s){
     RENDER THREAD, from DrawOverlay in play mode (builders_plan.md): in the bottom left corner, how many work
     at each job against its places - amber where a place stands empty, which with too few people is the
     newest workplace's - and the jobless, who carry wood and build too, and any away at a post (defence_plan.md).
+    Of the colony in view, as the top bar is (ViewColony): jobs are given out within a settlement, so an empty
+    place shown beside the jobless is one they could take. Titled with its number when there is more than one.
     Above the tools' grid only when the window is too narrow for the two side by side. Only what has places or
     people. Returns its top: what stacks over it (DrawNeediest) goes above that.
 */
@@ -1340,18 +1357,20 @@ float ApplicationChasm::DrawJobsOverview(float s){
     if (!e || !z || e->world != z->world || e->workers.empty()){
         return corner;
     }
+    uint32_t view = ViewColony(*e);
+    uint32_t colony = (view == ECONOMY_EVERY_SETTLEMENT) ? 0 : EconomyColonyNumber(*e,view);
     EconomyJobCount counts[WORKER_JOB_COUNT];
     int jobless = 0;
-    EconomyJobCounts(*e,*z,counts,&jobless);
+    EconomyJobCounts(*e,*z,counts,&jobless,view);
     struct Row{ const char* name; int working; int places; bool f_places; };
     std::vector<Row> rows;
     static const int shown[] = {WORKER_JOB_BUILDER,WORKER_JOB_WOODCUTTER,WORKER_JOB_FARMER,WORKER_JOB_WATER,
                                 WORKER_JOB_PICKER,WORKER_JOB_ARCHER,WORKER_JOB_GUARD,WORKER_JOB_ROPEMAKER,
                                 WORKER_JOB_STONECUTTER,WORKER_JOB_MINER,WORKER_JOB_STEAM,
-                                WORKER_JOB_CONDENSER};
+                                WORKER_JOB_CONDENSER,WORKER_JOB_SAILMAKER};
     static const char* names[] = {"BUILDERS","WOODCUTTERS","FARMERS","WATER CARRIERS","PICKERS","ARCHERS","GUARDS",
                                   "ROPEMAKERS","STONECUTTERS","MINERS","STEAM CARRIERS",
-                                  "CONDENSER HANDS"};
+                                  "CONDENSER HANDS","SAILMAKERS"};
     static_assert(sizeof(shown) / sizeof(shown[0]) == sizeof(names) / sizeof(names[0]),"a name for every job shown");
     for (int i = 0; i < (int)(sizeof(shown) / sizeof(shown[0])); i++){
         const EconomyJobCount& c = counts[shown[i]];
@@ -1363,20 +1382,26 @@ float ApplicationChasm::DrawJobsOverview(float s){
     //Away at a post (defence_plan.md) - each still counted in his own row, whose place waits for him.
     int posted = 0;
     for (const EconomyWorker& k : e->workers){
-        posted += (k.post >= 0) ? 1 : 0;
+        if (view == ECONOMY_EVERY_SETTLEMENT || EconomyPersonLand(*e,k) == view){
+            posted += (k.post >= 0) ? 1 : 0;
+        }
     }
     if (posted > 0){
         rows.push_back(Row{"POSTED",posted,0,false});
     }
     const float size = 14.0f * s;
+    const float title_size = 12.0f * s;
+    const float title_h = 18.0f * s;
     const float line_h = 20.0f * s;
     const float pad = 12.0f * s;
+    std::string title = colony ? "JOBS, COLONY " + std::to_string(colony) : std::string("JOBS");
     float label_w = 0.0f;
     for (const Row& r : rows){
         label_w = std::max(label_w,overlay->MeasureText(r.name,size).x);
     }
     float w = pad * 2.0f + label_w + overlay->MeasureText("00 / 00",size).x + 14.0f * s;
-    float h = pad * 0.6f + line_h * (float)rows.size() + pad * 0.4f;
+    w = std::max(w,pad * 2.0f + overlay->MeasureText(title.c_str(),title_size).x);
+    float h = pad * 0.6f + title_h + line_h * (float)rows.size() + pad * 0.4f;
     float x0 = 16.0f * s;
     float bottom = corner;
     if (x0 + w > build_bar_min.x - 10.0f * s){
@@ -1386,7 +1411,8 @@ float ApplicationChasm::DrawJobsOverview(float s){
     vec2 p1(x0 + w,bottom);
     overlay->AddRect(p0,p1,9.0f * s,HUD_PANEL);
     overlay_hits_drawing.push_back(OverlayHit{p0,p1,OVERLAY_HIT_BLOCK,0});
-    float y = p0.y + pad * 0.6f;
+    overlay->AddText(title.c_str(),vec2(p0.x + pad,p0.y + pad * 0.8f + 11.0f * s),title_size,HUD_TEXT_DIM,UI_ALIGN_LEFT);
+    float y = p0.y + pad * 0.6f + title_h;
     for (const Row& r : rows){
         y += line_h;
         bool f_short = r.f_places && r.working < r.places;
@@ -1495,7 +1521,11 @@ void ApplicationChasm::RegisterTimeTools(){
         "thickness, the big gusts so far and whether the next may come; `weather` as an argument takes storm (0-1: "
         "a storm held over the view, the front's line through it), held (false lets it go), strength (the wind's, 1 as "
         "tuned) and gust (true: the big gust now, stinger and all) - as the Weather panel does. A look only. "
-        "include_screenshot as elsewhere.",
+        "The weather's `rainbow` (rainbow_plan.md) is the bow in the falls' spray: its strength (0.45 as tuned), width "
+        "(1 a real bow's spread, 2 as tuned) and debug view (0 the bow, 1 the spray's cloud in white, 2 the bow as if all of it "
+        "were spray), and each spray box drawn with the view ray's angle at its middle from the point opposite the "
+        "sun - the bow is at about 41.5; `weather` {rainbow: {strength, width, debug}} sets them, as the Rainbow "
+        "panel does. include_screenshot as elsewhere.",
         json{
             {"type","object"},
             {"properties",{

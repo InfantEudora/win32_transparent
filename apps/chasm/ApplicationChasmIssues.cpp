@@ -93,6 +93,7 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_MINE:        return "THE MINE";
         case ZONE_KIND_STEAM:       return "THE STEAM COLLECTOR";
         case ZONE_KIND_CONDENSER:   return "THE CONDENSER";
+        case ZONE_KIND_SAIL_LOFT:   return "THE SAIL LOFT";
         default:                    return "A WORKPLACE";
     }
 }
@@ -258,7 +259,7 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         bool f_workplace =b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_BUILDERS
                            || b.kind == ZONE_KIND_RANGE || b.kind == ZONE_KIND_TOWER || b.kind == ZONE_KIND_ROPEWALK
                            || b.kind == ZONE_KIND_STONECUTTER || b.kind == ZONE_KIND_MINE || b.kind == ZONE_KIND_STEAM
-                           || b.kind == ZONE_KIND_CONDENSER;
+                           || b.kind == ZONE_KIND_CONDENSER || b.kind == ZONE_KIND_SAIL_LOFT;
         if (f_workplace && stands[id] && id < e.places.size() && e.places[id] > 0 && working[id] == 0){
             ChasmIssue i;
             i.kind = "nobody_at";
@@ -292,6 +293,19 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             i.text = "WOODCUTTER: NO ROOM FOR WOOD";
             i.building = (uint32_t)id;
             out.push_back(i);
+        }
+        //A zeppelin dock that stands but no zeppelin fits on (steam_plan.md step 5): painted too narrow, or crooked.
+        if (b.kind == ZONE_KIND_DOCK && stands[id] && e.world){
+            ZoneDockLie lie;
+            if (ZoneDockFrame(*e.world,z,(uint32_t)id,lie) && !lie.f_fits){
+                ChasmIssue i;
+                i.kind = "dock_small";
+                i.tier = ISSUE_STUCK;
+                i.order = (float)id;
+                i.text = "DOCK: TOO SMALL FOR A ZEPPELIN";
+                i.building = (uint32_t)id;
+                out.push_back(i);
+            }
         }
         //A ropewalk painted too short to work (goods_plan.md) - placed, as a drag lays a plot at a time, but idle.
         if (b.kind == ZONE_KIND_ROPEWALK && stands[id] && b.size < ECONOMY_ROPEWALK_MIN_PLOTS){

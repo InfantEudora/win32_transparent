@@ -44,6 +44,8 @@
 #define PAL_HEMP            0       //columns in the crops row: ripe hemp's stalks, an olive green
 #define PAL_HEMP_HEADS      1       //and its crown, fan leaves and seed heads - a yellow-green, not wheat's gold
 #define PAL_ROPE            2       //hemp rope at a ropewalk: a greyed tan, paler than timber, duller than straw
+#define PAL_CANVAS          3       //hemp canvas at a sail loft (steam_plan.md step 4): undyed sailcloth, a pale buff...
+#define PAL_CANVAS_DARK     4       //...and its shade, a bolt's rolled edge
 //Not a biome either: what is dug, the same in every biome and season and never snowed on (stone_plan.md), so a
 //pile of it or a seam in a wall reads at once. The props (chasm_props.blend) are UV'd straight into it.
 #define PAL_MINERALS        10

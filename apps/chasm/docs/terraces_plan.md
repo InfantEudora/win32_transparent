@@ -178,6 +178,15 @@ houses on two of them).
   `EconomyTerraceStone` - its area times how far it fills on average, times `ECONOMY_TERRACE_STONE` - its trees felled
   first. Four plots painted in play by the first colony, with 40 stone put in its store: three raised once 10 stone
   was carried out, the fourth waiting on a tree. The price tag adds it up: a square's stone and its trees to fell.
+- **Doors** (2026-10-23, the user: a house placed beside a terrace had its door inside the terrace). A wall's door was
+  only ever its hash's, whatever stood across it. Now a ground-floor wall takes a door only where it leads somewhere
+  (`WallDoor`): open ground or an arch's passage over its floor, and no WALL between (`ZoneTerraceStep`) - so none into
+  a terrace's fill, none off a terrace's edge onto the drop, and none into another building or the same one standing
+  higher, which happened on a slope before. A building none of whose walls drew a door gets one on its first wall
+  that can take one (`BuildingSureDoor`) - one small house in ten had none at all. A shut-in building has none. A
+  chimney's stack keeps off a terrace's wall too, and a window comes only clear of the ground outside, as it was cut
+  by the grass of a terrace across. Checked with nine houses on the test save's terraces: against the long wall, in
+  three-sided notches, on a terrace's edge, and one walled in on four sides.
 - `chasm_tool` takes `terrace`; `chasm_paint` ops `terrace` (with `top`) and `terrace_erase`; `chasm_pick` gives a
   plot's `zone_ground_y`, `zone_terrace` and `zone_steps` (open, wall or stair to each neighbour).
 - Unlocked with the stonecutter, by a boulder found (`ChasmToolNeeds`); key Y.
@@ -199,11 +208,53 @@ Open, for the user:
 | `ZONE_TERRACE_STEP` | 0.35 | the most a terrace stands over the plot across and is still walked onto |
 | `ECONOMY_TERRACE_STONE` | 0.5 | stone a unit of a plot's area for each unit it fills |
 
-## Stage 3: buildings that join the levels (not planned)
+## Stage 3: buildings that join the levels
 
-A building on a lower terrace with a **second door on an upper storey**, onto the street up the slope - a link in the
-walk graph through the building, as the tower's ladder is one. Flat roofs that are the terrace of the house above (a
-Santorini look) and **appeal for a view** (a house high on the slope) were suggested with it.
+A building against a terrace's wall with a **second door on an upper storey**, onto the terrace above - so the levels
+of a hill town join through the buildings, not only by stairs.
+
+### Decided (the user, 2026-10-23)
+
+- **Its own people walk through**: a walk that starts or ends at the building may go in at one level and out at the
+  other - its family, its workers, carriers to it. Nobody else cuts through.
+- **Onto open ground on the terrace**: a street, a yard or open ground, where its floor meets the terrace's top (or
+  half a storey over it, with steps down). Not into the building next door.
+- **Upper doors only**: flat roofs that are the terrace of the house above (the Santorini look) and appeal for a view
+  wait.
+
+### As built (2026-10-23)
+
+- **The rule** (`ZoneUpperDoor`, `Zones.cpp`): a building on plot b against the wall of a standing terrace on plot u -
+  nothing built, planned or shut on u - opens onto it on the lowest storey whose floor is at the terrace's top or half
+  a storey over it, once that storey stands; the ground floor itself, on a foundation built up to it. Floors and tops
+  are counted in half storeys (`BuildingFootHalves`, moved to `Zones` with `BuildingWallCrossing`, since the walkers
+  now ask a building's floor). **One door a level from a plot**: onto the first of its neighbours that level opens
+  onto - a plot meeting one terrace along two edges has one door onto it, not two.
+- **The step** (`ZoneTerraceStep`): such a wall is `ZONE_STEP_DOOR`, not a WALL. The walkers (`Walkers::EdgeOpen`)
+  pass it as they pass a stair - its climb is the building's stairs, walked at `WALKER_SPEED_STAIR` - and
+  `chasm_pick`'s `zone_steps` say "door", with the door's storey.
+- **Through one's own building** (`Walkers::EdgeOpen`): a building is walked inside by a walk to or from it - any of
+  its plots, not only its door plot - and by nobody else. A general change: a walk to a building of several plots may
+  now come in at its far side. Not a zombie's, whose way in stays breaching.
+- **Drawn** (`BuildingMesh.cpp`): every upper door is drawn, always - on the piece of the wall in the lower-numbered of
+  the two cells either side of the plots' edge (`BuildingUpperDoorAt`) - with steps down where it stands over the top,
+  and no coping on the terrace's wall along a building that stands over its top (`TerraceMesh.cpp`). A chimney's
+  stack keeps off such a wall. The ground-floor sure door (`BuildingSureDoor`) is the ground's: an upper door is no
+  way out at the bottom.
+- **Walked, drawn** (`ApplicationChasmWorkersView.cpp`, `RouteDoorLeg`): the rules walk people straight from plot to
+  plot, over the wall where the plots' edge crosses it - beside the door, a quarter of a cell off. Drawn, they go up
+  the building's stairs on its own side to the door's floor, out of the door, straight down its steps
+  (`BuildingDoorStepsRun`, DoorSteps' own reach) and on - and back the same way. Only the drawing bends; the rules'
+  positions are as ever.
+- **Checked** on `saves/terraces_test.json`: a two-storey house below the top-5 terrace opens onto it from storey 1, its
+  floor half a storey over the top (it stands on a foundation), with three steps; a person living there, sent onto the
+  terrace, was drawn in the doorway, on the steps and off onto the terrace. A three-storey house in a notch, SHUT IN
+  with one storey, opens onto the top-4 terrace from storey 1 and the top-5 one from storey 2 and is no longer shut in;
+  its route to the top-4 terrace leaves by the door, and none goes from that terrace through it to the pocket at its
+  foot. A walk to a two-plot house came in at its far plot; one past it went round.
+- Found on the way: the test save's three terraces are **walled all round** - rounded up, nowhere does the hill meet
+  them at about their top - so nothing reaches them on foot without a stair (the stage 2 test drew a road for it,
+  not saved). A house with an upper door gives its own people a way up; everyone else still needs a stair.
 
 ## Open
 

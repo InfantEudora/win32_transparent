@@ -28,8 +28,9 @@ cells that are the same in every biome and season (cell()). A face's colour come
 top, darker underneath) - a little baked occlusion, on top of what the sun does in game.
 
 BUDGET: conifers are the forests, drawn instanced by the ten thousand, so they stay near 50
-triangles; nothing here is over about 110. Faces nobody can see - trunk and rock bottoms, which sit
-in the ground - are not built at all.
+triangles; nothing here is over about 110 but the zeppelin's stages, of which a map has one or two in
+all, at a couple of thousand. Faces nobody can see - trunk and rock bottoms, which sit in the ground -
+are not built at all.
 
 SHAPE KEYS: the bird (birds_plan.md) is the one asset with them. A builder writes them as bmesh shape
 layers and build_object turns those into the object's keys, in the order made - the morph index the game
@@ -1442,6 +1443,569 @@ def bird(bm, rng):
 bird.keep_origin = True
 
 
+# ---------------------------------------------------------------------------------------------
+# The zeppelin (steam_plan.md, step 5, 2026-10-23): a canvas envelope on a timber frame and a gondola with a
+# floatstone hull under it, built on a dock in five stages - one asset each, every stage the one before it and
+# more, so the game swaps the whole mesh as the site goes on and nothing already built moves: 1 the FRAME (wood:
+# the gondola's keel and ribs, the envelope's hoops and stringers, the fins'), 2 the HULL (floatstone: the
+# gondola planked, its bottom in crystal, decked, railed, a cabin on it), 3 the RIGGING (rope: the gondola hung
+# from the frame, with the engine's brass pipe up into it, the propellers and the brass nose), 4 the CANVAS (on,
+# but slack between the hoops - no steam in it yet), 5 FILLED (taut, girthed, a pennant flying). The scaffold
+# holding it up while it is built is an asset of its own. All six share one origin, the ground under the middle,
+# and the nose is +Y - glTF -Z, the engine's forward. Sized for a dock of 2 x 4 of a field's cells: 14 long,
+# 7.4 high, a villager (0.86) up to the rail.
+# ---------------------------------------------------------------------------------------------
+
+PAL_CANVAS = cell(3, 9)             #PAL_CROPS' canvas (steam_plan.md step 4): undyed sailcloth...
+PAL_CANVAS_DARK = cell(4, 9)        #...and its shade
+PAL_BRASS_LIGHT = cell(0, 12)       #PAL_METALS: the steam works' brass, catching the light...
+PAL_BRASS = cell(1, 12)
+PAL_BRASS_DARK = cell(2, 12)        #...to tarnished
+PAL_ROOF = 30                       #a house's red tile: the gondola's cabin is a little house
+
+ZEP_LENGTH = 14.0       #the envelope, nose to tail
+ZEP_RADIUS = 2.2        #at its widest...
+ZEP_WIDEST = 5.2        #...this far back from the nose
+ZEP_TAIL_R = 0.20       #what is left of it at the tail, under a brass cap
+ZEP_AXIS_Z = 5.0        #its axis over the ground
+ZEP_SIDES = 12
+ZEP_NOSE_RING = 0.45    #the frame's first ring, where the brass nose cap begins
+#Along the envelope from the nose: the HOOPS of its frame, and the stations between them that slack canvas
+#sags at until it is filled.
+ZEP_HOOPS = (1.2, 3.6, 6.2, 8.8, 11.2, 13.0)
+ZEP_BETWEEN = (2.4, 4.9, 7.5, 10.0, 12.1)
+ZEP_SAG = 0.12          #slack canvas, between two hoops: how far in it falls, of the radius
+ZEP_STRINGERS = 6       #the frame's long timbers, round it; one along the top, one the keel
+#The gondola: stations along y, nose-ward last - (y, the deck's half width) - with its keel and deck heights
+#rising toward the bow (zep_gondola_z).
+ZEP_GONDOLA = ((-2.6, 0.78), (-2.0, 0.95), (-0.9, 1.02), (0.4, 1.02), (1.6, 0.92), (2.6, 0.58), (3.3, 0.06))
+ZEP_KEEL_Z = 0.45       #the keel's bottom amidships, on the scaffold's trestles
+ZEP_DECK_Z = 1.35
+ZEP_RAIL = 0.42         #the rail's height over the deck: half a villager
+ZEP_CABIN = (-2.35, -0.75, 0.68, 0.95)      #its back, its front, its half width, its walls' height
+ZEP_SCAFFOLD_FRAMES = (-2.9, 1.0, 4.9)      #y of the scaffold's frames: aft of the gondola, over it, forward
+
+
+def zep_y(s):
+    """Where a point `s` back from the nose is along y."""
+    return ZEP_LENGTH / 2 - s
+
+
+def zep_radius(s):
+    """The envelope's radius `s` back from the nose: an elliptic nose to its widest, then a long taper."""
+    if s <= ZEP_WIDEST:
+        return ZEP_RADIUS * math.sqrt(max(0.0, 1.0 - (1.0 - s / ZEP_WIDEST) ** 2))
+    u = min(1.0, (s - ZEP_WIDEST) / (ZEP_LENGTH - ZEP_WIDEST))
+    return ZEP_TAIL_R + (ZEP_RADIUS - ZEP_TAIL_R) * (1.0 - u * u)
+
+
+def zep_at(s, theta, r):
+    """The point `r` from the axis, `s` back from the nose, `theta` round from the top toward +x."""
+    return Vector((r * math.sin(theta), zep_y(s), ZEP_AXIS_Z + r * math.cos(theta)))
+
+
+def zep_theta(k, sides=ZEP_SIDES):
+    """The k-th corner of a ring: half a side off the top, so a face, not an edge, looks at the sky."""
+    return (k + 0.5) * 2 * math.pi / sides
+
+
+def zep_ring(bm, s, r, slack=0.0):
+    """A ring of the canvas `s` back from the nose. `slack` 1 is canvas fallen in between two hoops: in by ZEP_SAG of
+    its radius at the top, less underneath, and all of it down a little."""
+    verts = []
+    for k in range(ZEP_SIDES):
+        t = zep_theta(k)
+        rr = r * (1.0 - ZEP_SAG * slack * (0.6 + 0.4 * math.cos(t)))
+        p = zep_at(s, t, rr)
+        p.z -= r * ZEP_SAG * 0.4 * slack
+        verts.append(bm.verts.new(p))
+    return verts
+
+
+def zep_skin(bm, slack):
+    """The envelope's canvas from the nose cap's rim to the tail cap's: rings at the hoops and between them, slack at
+    the in-between ones by `slack`. Returns its faces."""
+    stations = sorted([(ZEP_NOSE_RING, 0.0)] + [(s, 0.0) for s in ZEP_HOOPS] + [(s, slack) for s in ZEP_BETWEEN] +
+                      [(ZEP_LENGTH - 0.25, 0.0)])
+    rings = [(s, zep_ring(bm, s, zep_radius(s) + 0.012, k)) for s, k in stations]
+    faces = []
+    for (s0, a), (s1, b) in zip(rings, rings[1:]):
+        for k in range(ZEP_SIDES):
+            out = zep_at(0.5 * (s0 + s1), zep_theta(k), 1.0) - zep_at(0.5 * (s0 + s1), zep_theta(k), 0.0)
+            faces.append(outward(bm.faces.new((a[k], a[(k + 1) % ZEP_SIDES], b[(k + 1) % ZEP_SIDES], b[k])), out))
+    colour_by_facing(bm, faces, PAL_CANVAS, PAL_CANVAS, PAL_CANVAS_DARK, up=0.30, down=-0.45)
+    return faces
+
+
+def zep_band(bm, s, r_in, r_out, width, inner=True):
+    """A ring of timber round the axis at `s`, `width` along it, from `r_in` to `r_out`: a hoop of the frame, or a girth
+    over the canvas (no inner face, which the canvas hides). Returns (outer, edges, inner)."""
+    def ring(ds, r):
+        return [bm.verts.new(zep_at(s + ds, zep_theta(k), r)) for k in range(ZEP_SIDES)]
+    fo, bo = ring(-width / 2, r_out), ring(width / 2, r_out)
+    fi, bi = ring(-width / 2, r_in), ring(width / 2, r_in)
+    outer, edges, inside = [], [], []
+    nose = Vector((0, 1, 0))
+    for k in range(ZEP_SIDES):
+        j = (k + 1) % ZEP_SIDES
+        radial = zep_at(s, zep_theta(k + 0.5), 1.0) - zep_at(s, 0.0, 0.0)
+        outer.append(outward(bm.faces.new((fo[k], fo[j], bo[j], bo[k])), radial))
+        edges.append(outward(bm.faces.new((fo[k], fo[j], fi[j], fi[k])), nose))
+        edges.append(outward(bm.faces.new((bo[k], bo[j], bi[j], bi[k])), -nose))
+        if inner:
+            inside.append(outward(bm.faces.new((fi[k], fi[j], bi[j], bi[k])), -radial))
+    return outer, edges, inside
+
+
+def zep_frame(bm):
+    """The envelope's timber frame: a hoop at the nose ring and at every ZEP_HOOPS, and ZEP_STRINGERS long timbers
+    over them from the nose's point to the tail's, the one underneath a heavier keel."""
+    for s in (ZEP_NOSE_RING,) + ZEP_HOOPS:
+        r = zep_radius(s) - 0.02
+        outer, edges, inside = zep_band(bm, s, r - 0.10, r, 0.12)
+        colour(bm, outer, PAL_TIMBER)
+        colour(bm, edges + inside, PAL_BARK)
+    stations = [(0.0, 0.0)] + [(s, zep_radius(s) - 0.07) for s in (ZEP_NOSE_RING,) + ZEP_HOOPS] + \
+               [(ZEP_LENGTH, ZEP_TAIL_R)]
+    for i in range(ZEP_STRINGERS):
+        theta = 2 * math.pi * i / ZEP_STRINGERS
+        keel = abs(math.cos(theta) + 1.0) < 1e-6
+        pts = [zep_at(s, theta, r) for s, r in stations]
+        for a, b in zip(pts, pts[1:]):
+            side, _ = rod(bm, a, b, 0.075 if keel else 0.05, 4, rot=theta, caps=(False, False))
+            colour(bm, side, PAL_BARK if keel else PAL_TIMBER)
+
+
+#The four fins at the tail, top, right, bottom and left: in each one's plane, (s back from the nose, out from the
+#axis) - root forward, root aft, tip aft, tip forward. Out is from the axis, so the root sinks into the canvas.
+ZEP_FIN_S = (10.8, 13.75, 13.75, 12.3)
+ZEP_FIN_TIP = 2.05
+
+
+def zep_fin_points(theta):
+    roots = [zep_radius(ZEP_FIN_S[0]) - 0.1, zep_radius(ZEP_FIN_S[1]) - 0.05]
+    return [zep_at(ZEP_FIN_S[0], theta, roots[0]), zep_at(ZEP_FIN_S[1], theta, roots[1]),
+            zep_at(ZEP_FIN_S[2], theta, ZEP_FIN_TIP), zep_at(ZEP_FIN_S[3], theta, ZEP_FIN_TIP)]
+
+
+def zep_fins(bm, covered):
+    """Each fin's timber edges - leading, tip and trailing - and a rib down its middle; `covered`, canvas between."""
+    for i in range(4):
+        theta = i * math.pi / 2
+        p = zep_fin_points(theta)
+        mid_root = zep_at(0.5 * (ZEP_FIN_S[0] + ZEP_FIN_S[1]), theta, zep_radius(0.5 * (ZEP_FIN_S[0] + ZEP_FIN_S[1])))
+        mid_tip = (p[2] + p[3]) * 0.5
+        for a, b in ((p[0], p[3]), (p[3], p[2]), (p[2], p[1])) + (() if covered else ((mid_root, mid_tip),)):
+            side, ends = rod(bm, a, b, 0.045, 4, caps=(False, True))
+            colour(bm, side + ends, PAL_TIMBER)
+        if covered:
+            normal = Vector((math.cos(theta), 0.0, -math.sin(theta))) * 0.03
+            front = [bm.verts.new(q + normal) for q in p]
+            back = [bm.verts.new(q - normal) for q in p]
+            faces = [outward(bm.faces.new(front), normal), outward(bm.faces.new(back), -normal)]
+            colour(bm, faces, PAL_CANVAS)
+
+
+def zep_gondola_z(y):
+    """The keel's bottom and the deck's height at `y`: level amidships, both sweeping up into the bow."""
+    lift = max(0.0, (y - 1.6) / 1.7) ** 1.5
+    return ZEP_KEEL_Z + 0.30 * lift, ZEP_DECK_Z + 0.35 * lift
+
+
+def zep_section(y, w):
+    """One side's hull outline at a station, keel to deck, for x > 0: the keel, the bilge, the wale and the deck's
+    edge."""
+    keel, deck = zep_gondola_z(y)
+    return [Vector((min(0.16, w), y, keel)), Vector((0.86 * w, y, keel + 0.42 * (deck - keel))),
+            Vector((0.98 * w, y, deck - 0.12)), Vector((w, y, deck))]
+
+
+def mirror_x(p):
+    return Vector((-p.x, p.y, p.z))
+
+
+def zep_gondola_frame(bm):
+    """The gondola as it is first laid down: a keel along its bottom, a U of ribs at every station but the bow's point,
+    a deck beam across each, a gunwale along each side and the stem up the bow."""
+    sections = [zep_section(y, w) for y, w in ZEP_GONDOLA]
+    keel = [Vector((0.0, s[0].y, s[0].z + 0.04)) for s in sections]
+    for a, b in zip(keel, keel[1:]):
+        side, _ = rod(bm, a, b, 0.07, 4, caps=(False, False))
+        colour(bm, side, PAL_BARK_DARK)
+    for sec in sections[:-1]:
+        for flip in (False, True):
+            pts = [mirror_x(p) if flip else p for p in sec]
+            for a, b in zip(pts, pts[1:]):
+                side, _ = rod(bm, a, b, 0.045, 4, caps=(False, False))
+                colour(bm, side, PAL_TIMBER)
+        for a, b in ((mirror_x(sec[0]), sec[0]), (mirror_x(sec[3]), sec[3])):
+            side, ends = rod(bm, a, b, 0.04, 4)
+            colour(bm, side + ends, PAL_TIMBER)
+    for flip in (False, True):
+        edge = [mirror_x(s[3]) if flip else s[3] for s in sections]
+        for a, b in zip(edge, edge[1:]):
+            side, _ = rod(bm, a, b, 0.05, 4, caps=(False, False))
+            colour(bm, side, PAL_BARK)
+    side, ends = rod(bm, keel[-1], sections[-1][3] + Vector((0, 0.06, 0.12)), 0.06, 4)
+    colour(bm, side + ends, PAL_BARK_DARK)
+
+
+def zep_gondola_hull(bm, rng):
+    """The gondola planked: its bottom and lower strakes FLOATSTONE (what makes it float - the hull a site of it
+    is built with), the strakes above it timber, a dark wale under the deck's edge, a square transom; the deck;
+    floatstone growing out at the keel; rails, and the cabin aft."""
+    sections = [zep_section(y, w) for y, w in ZEP_GONDOLA]
+    hull = []
+    for a, b in zip(sections, sections[1:]):
+        for flip in (False, True):
+            f = mirror_x if flip else (lambda p: p)
+            out = Vector((-1 if flip else 1, 0, 0))
+            #The lower strake in crystal: each panel a low point of four facets, so the light breaks on it.
+            quad = [f(q) for q in (a[0], b[0], b[1], a[1])]
+            middle = sum(quad, Vector()) / 4 + (out * 0.8 + Vector((0, 0, -0.6))) * 0.07
+            peak = bm.verts.new(middle)
+            facets = [outward(bm.faces.new((bm.verts.new(quad[k]), bm.verts.new(quad[(k + 1) % 4]), peak)),
+                              out + Vector((0, 0, -0.6))) for k in range(4)]
+            crystal_colour(bm, facets)
+            for i, col in ((1, PAL_BARK), (2, PAL_BARK_DARK)):
+                face = outward(bm.faces.new([bm.verts.new(f(q)) for q in (a[i], b[i], b[i + 1], a[i + 1])]), out)
+                colour(bm, [face], col)
+        bottom = outward(bm.faces.new([bm.verts.new(q) for q in (a[0], mirror_x(a[0]), mirror_x(b[0]), b[0])]),
+                         Vector((0, 0, -1)))
+        crystal_colour(bm, [bottom])
+        deck = outward(bm.faces.new([bm.verts.new(q) for q in (a[3], mirror_x(a[3]), mirror_x(b[3]), b[3])]),
+                       Vector((0, 0, 1)))
+        colour(bm, [deck], PAL_TIMBER)
+    stern = sections[0]
+    outline = [mirror_x(p) for p in reversed(stern)] + stern
+    colour(bm, [outward(bm.faces.new([bm.verts.new(p) for p in outline]), Vector((0, -1, 0)))], PAL_BARK)
+    #Floatstone growing out of the hull at the keel at every rib: a big crystal straight down, a pair pointing out.
+    for y, w in ZEP_GONDOLA[1:-2]:
+        keel, deck = zep_gondola_z(y)
+        shard(bm, Vector((0.0, y, keel + 0.1)), Vector((rng.uniform(-0.15, 0.15), rng.uniform(-0.15, 0.15), -1.0)), 0.26,
+              0.11, 6, rng.uniform(0, 2 * math.pi), 0.18)
+        for sx in (-1, 1):
+            base = Vector((sx * 0.45 * w, y, keel + 0.12))
+            shard(bm, base, Vector((0.55 * sx, rng.uniform(-0.2, 0.2), -0.85)), 0.22, 0.08, 5,
+                  rng.uniform(0, 2 * math.pi), 0.16)
+    #The rails: a post at every station, a rail along their tops.
+    rail = []
+    for y, w in ZEP_GONDOLA[:-1]:
+        keel, deck = zep_gondola_z(y)
+        rail.append(Vector((w - 0.04, y, deck)))
+        for sx in (-1, 1):
+            f = block(bm, Vector((sx * (w - 0.04), y, deck - 0.02)), (0.06, 0.06, ZEP_RAIL))
+            colour(bm, f["ends"] + f["sides"] + f["top"], PAL_TIMBER)
+    for flip in (False, True):
+        tops = [(mirror_x(p) if flip else p) + Vector((0, 0, ZEP_RAIL)) for p in rail]
+        tops.append(Vector((0.0, ZEP_GONDOLA[-1][0], zep_gondola_z(ZEP_GONDOLA[-1][0])[1] + ZEP_RAIL)))
+        for a, b in zip(tops, tops[1:]):
+            side, _ = rod(bm, a, b, 0.035, 4, caps=(False, False))
+            colour(bm, side, PAL_BARK)
+    zep_cabin(bm)
+
+
+def zep_cabin(bm):
+    """A little house on the deck aft: plaster under red tile, two dark windows a side and a door forward."""
+    back, front, half, tall = ZEP_CABIN
+    deck = ZEP_DECK_Z
+    eave = deck + tall
+    f = block(bm, Vector((0.0, 0.5 * (back + front), deck - 0.02)), (2 * half, front - back, tall + 0.02))
+    colour(bm, f["ends"] + f["sides"], PAL_WALL)
+    bm.faces.remove(f["top"][0])
+    ridge = eave + 0.55
+    over = 0.12
+    b0, f0 = back - over, front + over
+    for sx in (-1, 1):
+        roof = [Vector((sx * (half + over), b0, eave - 0.06)), Vector((sx * (half + over), f0, eave - 0.06)),
+                Vector((0.0, f0, ridge)), Vector((0.0, b0, ridge))]
+        colour(bm, [outward(bm.faces.new([bm.verts.new(p) for p in roof]), Vector((sx, 0, 1)))], PAL_ROOF)
+        under = [Vector((sx * (half + over), b0, eave - 0.06)), Vector((0.0, b0, ridge)), Vector((0.0, f0, ridge)),
+                 Vector((sx * (half + over), f0, eave - 0.06))]
+        colour(bm, [outward(bm.faces.new([bm.verts.new(p - Vector((0, 0, 0.04))) for p in under]),
+                            Vector((0, 0, -1)))], PAL_BARK_DARK)
+    for y, normal in ((back, -1), (front, 1)):
+        gable = [Vector((-half, y, eave)), Vector((half, y, eave)), Vector((0.0, y, ridge - 0.05))]
+        colour(bm, [outward(bm.faces.new([bm.verts.new(p) for p in gable]), Vector((0, normal, 0)))], PAL_WALL)
+    pane = 0.13
+    for sx in (-1, 1):
+        for y in (back + 0.45, front - 0.45):
+            x = sx * (half + 0.012)
+            q = [Vector((x, y - pane, deck + 0.42)), Vector((x, y + pane, deck + 0.42)),
+                 Vector((x, y + pane, deck + 0.42 + 2 * pane)), Vector((x, y - pane, deck + 0.42 + 2 * pane))]
+            colour(bm, [outward(bm.faces.new([bm.verts.new(p) for p in q]), Vector((sx, 0, 0)))], PAL_BARK_DARK)
+    y = front + 0.012
+    door = [Vector((-0.16, y, deck)), Vector((0.16, y, deck)), Vector((0.16, y, deck + 0.64)), Vector((-0.16, y, deck + 0.64))]
+    colour(bm, [outward(bm.faces.new([bm.verts.new(p) for p in door]), Vector((0, 1, 0)))], PAL_BARK_DARK)
+
+
+def zep_blade(bm, hub, out, along, length, width, thick, col):
+    """A flat blade from `hub` out along `out`, `width` across it, `thick` along `along` (the shaft)."""
+    across = out.cross(along).normalized() * (width / 2)
+    t = along.normalized() * (thick / 2)
+    root, tip = hub + out * 0.06, hub + out * length
+    c = [root - across - t, root + across - t, tip + across * 0.8 - t, tip - across * 0.8 - t]
+    d = [p + t * 2 for p in c]
+    vc, vd = [bm.verts.new(p) for p in c], [bm.verts.new(p) for p in d]
+    faces = [outward(bm.faces.new(vc), -t), outward(bm.faces.new(vd), t)]
+    for k in range(4):
+        j = (k + 1) % 4
+        mid = (c[k] + c[j]) * 0.5 - (root + tip) * 0.5
+        faces.append(outward(bm.faces.new((vc[k], vc[j], vd[j], vd[k])), mid))
+    colour(bm, faces, col)
+
+
+def zep_rigging(bm):
+    """The gondola hung from the frame: from every rail post's top a line straight up to the envelope's flank and one
+    slanting forward to the next; the steam pipe from the cabin's roof up into its belly; two propellers on booms
+    off the stern; and the brass caps at the nose and the tail."""
+    posts = [(y, w) for y, w in ZEP_GONDOLA[1:-1]]
+    for i, (y, w) in enumerate(posts):
+        deck = zep_gondola_z(y)[1]
+        for sx in (-1, 1):
+            low = Vector((sx * (w - 0.04), y, deck + ZEP_RAIL))
+            ends = [y] + ([posts[i + 1][0]] if i + 1 < len(posts) else [])
+            for y2 in ends:
+                s = ZEP_LENGTH / 2 - y2
+                high = zep_at(s, math.pi - sx * 0.5, zep_radius(s) - 0.02)
+                side, _ = rod(bm, low, high, 0.022, 3, caps=(False, False))
+                colour(bm, side, PAL_ROPE)
+    #The steam pipe: brass, a collar where it meets the envelope.
+    y = 0.5 * (ZEP_CABIN[0] + ZEP_CABIN[1])
+    s = ZEP_LENGTH / 2 - y
+    belly = ZEP_AXIS_Z - zep_radius(s)
+    side, _ = rod(bm, Vector((0.0, y, ZEP_DECK_Z + ZEP_CABIN[3] + 0.4)), Vector((0.0, y, belly + 0.3)), 0.07, 6,
+                  caps=(False, False))
+    colour_by_facing(bm, side, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+    side, ends = rod(bm, Vector((0.0, y, belly - 0.12)), Vector((0.0, y, belly + 0.15)), 0.16, 8)
+    colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+    #The propellers, on booms off the stern quarters, their blades aft of a brass hub.
+    y0 = ZEP_GONDOLA[0][0] + 0.35
+    for sx in (-1, 1):
+        root = Vector((sx * 0.85, y0, ZEP_DECK_Z + 0.25))
+        hub = Vector((sx * 1.95, y0 - 0.15, ZEP_DECK_Z + 0.65))
+        side, ends = rod(bm, root, hub, 0.05, 4)
+        colour(bm, side + ends, PAL_TIMBER)
+        side, ends = rod(bm, hub + Vector((0, 0.12, 0)), hub - Vector((0, 0.18, 0)), 0.09, 6)
+        colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+        for k in range(4):
+            a = math.pi / 4 + k * math.pi / 2 + (0.2 if sx > 0 else -0.2)
+            out = Vector((math.cos(a), 0.0, math.sin(a)))
+            zep_blade(bm, hub - Vector((0, 0.15, 0)), out, Vector((0, 1, 0)), 0.62, 0.16, 0.03, PAL_TIMBER)
+    #Brass at the ends: a cone over the nose's point, a cap over the tail's.
+    for s0, s1 in ((ZEP_NOSE_RING, -0.12), (ZEP_LENGTH - 0.3, ZEP_LENGTH + 0.12)):
+        r = zep_radius(s0) + 0.03
+        ring = [bm.verts.new(zep_at(s0, zep_theta(k), r)) for k in range(ZEP_SIDES)]
+        tip = bm.verts.new(zep_at(s1, 0.0, 0.0))
+        faces = []
+        for k in range(ZEP_SIDES):
+            out = zep_at(s0, zep_theta(k), 1.0) - zep_at(s0, 0.0, 0.0) + Vector((0, 1 if s1 < s0 else -1, 0))
+            faces.append(outward(bm.faces.new((ring[k], ring[(k + 1) % ZEP_SIDES], tip)), out))
+        colour_by_facing(bm, faces, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+
+
+def zep_valve(bm):
+    """On top amidships, the brass valve that lets steam out to come down: a collar on the canvas, a domed cap."""
+    s = ZEP_WIDEST + 0.6
+    top = zep_at(s, 0.0, zep_radius(s))
+    side, ends = rod(bm, top - Vector((0, 0, 0.12)), top + Vector((0, 0, 0.16)), 0.28, 8, rot=0.0)
+    colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+    side, ends = rod(bm, top + Vector((0, 0, 0.16)), top + Vector((0, 0, 0.30)), 0.18, 8, rot=0.0)
+    colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+
+
+def zep_finish(bm):
+    """Filled: timber girths over the canvas at the hoops, and a red pennant from a staff on the stern."""
+    for s in ZEP_HOOPS[1:-1]:
+        r = zep_radius(s) + 0.012
+        outer, edges, _ = zep_band(bm, s, r - 0.02, r + 0.05, 0.16, inner=False)
+        colour(bm, outer + edges, PAL_TIMBER)
+    y = ZEP_GONDOLA[0][0] + 0.12
+    foot, top = Vector((0.0, y, ZEP_DECK_Z)), Vector((0.0, y - 0.05, ZEP_DECK_Z + 1.35))
+    side, ends = rod(bm, foot, top, 0.03, 4)
+    colour(bm, side + ends, PAL_BARK_DARK)
+    flag = [top - Vector((0, 0, 0.04)), top - Vector((0, 0, 0.36)), top + Vector((0.0, -0.75, -0.24))]
+    for sx in (-1, 1):          #a face each way, a hair apart so the two are not welded into one
+        side = Vector((sx * 0.006, 0, 0))
+        colour(bm, [outward(bm.faces.new([bm.verts.new(p + side) for p in flag]), side)], PAL_ACCENT)
+
+
+def flatten(bm):
+    """Splits every face that is not flat into triangles, so each corner keeps its own face's normal: the gondola's
+    strakes bend into the bow between two stations, and the exporter gives a bent quad one normal for both halves."""
+    bent = []
+    for f in bm.faces:
+        if len(f.verts) > 3:
+            f.normal_update()
+            c = f.calc_center_median()
+            if max(abs((v.co - c).dot(f.normal)) for v in f.verts) > 1e-4:
+                bent.append(f)
+    if bent:
+        bmesh.ops.triangulate(bm, faces=bent)
+
+
+def zeppelin(stage):
+    """Stage `stage` (1-5) of the zeppelin, each the one before and more; the frame goes inside the canvas at 4."""
+    def build(bm, rng):
+        if stage < 4:
+            zep_frame(bm)
+        zep_fins(bm, covered=stage >= 4)
+        if stage < 2:
+            zep_gondola_frame(bm)
+        else:
+            zep_gondola_hull(bm, random.Random(1402))
+        if stage >= 3:
+            zep_rigging(bm)
+        if stage >= 4:
+            zep_skin(bm, slack=1.0 if stage == 4 else 0.0)
+            zep_valve(bm)
+        if stage >= 5:
+            zep_finish(bm)
+        flatten(bm)
+    build.keep_origin = True
+    return build
+
+
+def zeppelin_scaffold(bm, rng):
+    """What holds a zeppelin up on its dock while it is built: three trestles under the gondola's keel, and three
+    timber frames under the envelope - two posts and a cradle beam its frame rests on, the end ones braced
+    crossways, a ladder up the front one."""
+    for y in (-2.3, -0.3, 2.1):
+        top = zep_gondola_z(y)[0]
+        f = block(bm, Vector((0.0, y, top - 0.08)), (1.10, 0.12, 0.08))
+        colour(bm, f["top"], PAL_TIMBER)
+        colour(bm, f["ends"] + f["sides"], PAL_BARK)
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                side, ends = rod(bm, Vector((sx * 0.45, y, top - 0.06)), Vector((sx * 0.58, y + sy * 0.22, -0.04)),
+                                 0.03, 4)
+                colour(bm, side + ends, PAL_BARK)
+    #Clear of the fins aft and of the rigging's lines over the gondola.
+    for y in ZEP_SCAFFOLD_FRAMES:
+        s = ZEP_LENGTH / 2 - y
+        r = zep_radius(s)
+        cradle = ZEP_AXIS_Z - r - 0.01
+        half = r + 0.35
+        for sx in (-1, 1):
+            f = block(bm, Vector((sx * half, y, -0.06)), (0.12, 0.12, ZEP_AXIS_Z + 0.06))
+            colour(bm, f["ends"] + f["sides"], PAL_TIMBER)
+            colour(bm, f["top"], PAL_PATH)
+            side, ends = rod(bm, Vector((sx * half, y, cradle - 0.5)), Vector((sx * (r * 0.45), y, cradle - 0.04)),
+                             0.035, 4)
+            colour(bm, side + ends, PAL_BARK)
+        f = block(bm, Vector((0.0, y, cradle - 0.14)), (2 * half + 0.1, 0.14, 0.14))
+        colour(bm, f["top"], PAL_TIMBER)
+        colour(bm, f["ends"] + f["sides"], PAL_BARK)
+        if y != ZEP_SCAFFOLD_FRAMES[1]:
+            for sx in (-1, 1):
+                side, ends = rod(bm, Vector((sx * half, y, 0.1)), Vector((-sx * half, y, cradle - 0.6)), 0.035, 4)
+                colour(bm, side + ends, PAL_BARK)
+    #The ladder: two stiles up the front frame's right post, rungs between.
+    y = ZEP_SCAFFOLD_FRAMES[2] + 0.14
+    x = zep_radius(ZEP_LENGTH / 2 - ZEP_SCAFFOLD_FRAMES[2]) + 0.35
+    for dx in (-0.16, 0.16):
+        side, ends = rod(bm, Vector((x + dx, y, -0.04)), Vector((x + dx, y, ZEP_AXIS_Z - 0.2)), 0.025, 4)
+        colour(bm, side + ends, PAL_BARK_DARK)
+    z = 0.3
+    while z < ZEP_AXIS_Z - 0.3:
+        side, _ = rod(bm, Vector((x - 0.16, y, z)), Vector((x + 0.16, y, z)), 0.018, 4, caps=(False, False))
+        colour(bm, side, PAL_BARK_DARK)
+        z += 0.35
+
+
+zeppelin_scaffold.keep_origin = True
+zeppelin_scaffold.place_at = "zeppelin_1"
+
+
+ZEP_MAST_Y = ZEP_LENGTH / 2 + 0.85     #the dock's mooring mast, just past the zeppelin's nose
+ZEP_MAST_FOOT = 0.55                    #its legs' feet out from its middle, square...
+ZEP_MAST_HEAD = 0.20                    #...and at its head, ZEP_AXIS_Z + ZEP_MAST_OVER up
+ZEP_MAST_OVER = 0.45
+
+
+def dock_mast(bm, rng):
+    """The dock's MOORING MAST (steam_plan.md step 5), in the zeppelin's frame - past its nose, at +Y: four timber legs
+    tapering to a head a little over the nose, tied and braced in bays, a ladder up the face to the side, a deck at the
+    top with a rail, and the brass cup the nose is moored into, facing it."""
+    top = ZEP_AXIS_Z + ZEP_MAST_OVER
+
+    def leg_at(sx, sy, z):
+        k = z / top
+        half = ZEP_MAST_FOOT + (ZEP_MAST_HEAD - ZEP_MAST_FOOT) * k
+        return Vector((sx * half, ZEP_MAST_Y + sy * half, z))
+    corners = ((-1, -1), (1, -1), (1, 1), (-1, 1))
+    for sx, sy in corners:
+        side, ends = rod(bm, leg_at(sx, sy, -0.06), leg_at(sx, sy, top), 0.06, 4)
+        colour(bm, side + ends, PAL_TIMBER)
+    bays = (0.0, 1.35, 2.7, 4.05, top - 0.05)
+    for i in range(1, len(bays)):
+        z0, z1 = bays[i - 1], bays[i]
+        for k in range(4):
+            a, b = corners[k], corners[(k + 1) % 4]
+            side, _ = rod(bm, leg_at(*a, z1), leg_at(*b, z1), 0.035, 4, caps=(False, False))
+            colour(bm, side, PAL_BARK)
+            #One diagonal a face a bay, turning the other way each bay up.
+            lo, hi = (a, b) if i % 2 else (b, a)
+            side, _ = rod(bm, leg_at(*lo, z0 + 0.05), leg_at(*hi, z1 - 0.05), 0.025, 4, caps=(False, False))
+            colour(bm, side, PAL_BARK)
+    #The deck at its head, a rail round it.
+    f = block(bm, Vector((0.0, ZEP_MAST_Y, top - 0.05)), (0.9, 0.9, 0.08), bottom=True)
+    colour(bm, f["top"], PAL_TIMBER)
+    colour(bm, f["ends"] + f["sides"] + f["bottom"], PAL_BARK_DARK)
+    rail = [Vector((sx * 0.42, ZEP_MAST_Y + sy * 0.42, top + 0.38)) for sx, sy in corners]
+    for k in range(4):
+        side, _ = rod(bm, rail[k], rail[(k + 1) % 4], 0.025, 4, caps=(False, False))
+        colour(bm, side, PAL_BARK_DARK)
+        side, ends = rod(bm, rail[k] - Vector((0, 0, 0.38)), rail[k], 0.025, 4)
+        colour(bm, side + ends, PAL_BARK_DARK)
+    #The cup: a brass drum on a short boom, open toward the nose.
+    side, ends = rod(bm, Vector((0.0, ZEP_MAST_Y - 0.2, ZEP_AXIS_Z)), Vector((0.0, ZEP_MAST_Y - 0.62, ZEP_AXIS_Z)), 0.07, 6)
+    colour(bm, side + ends, PAL_TIMBER)
+    side, ends = rod(bm, Vector((0.0, ZEP_MAST_Y - 0.62, ZEP_AXIS_Z)), Vector((0.0, ZEP_MAST_Y - 0.80, ZEP_AXIS_Z)), 0.2, 8,
+                     rot=0.0)
+    colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+    #The ladder up the face to +x: stiles off the legs, rungs between.
+    x = ZEP_MAST_FOOT + 0.08
+    for dy in (-0.17, 0.17):
+        side, ends = rod(bm, Vector((x, ZEP_MAST_Y + dy, -0.04)), Vector((ZEP_MAST_HEAD + 0.08, ZEP_MAST_Y + dy, top)),
+                         0.022, 4)
+        colour(bm, side + ends, PAL_BARK_DARK)
+    z = 0.3
+    while z < top - 0.2:
+        k = z / top
+        xx = x + (ZEP_MAST_HEAD + 0.08 - x) * k
+        side, _ = rod(bm, Vector((xx, ZEP_MAST_Y - 0.17, z)), Vector((xx, ZEP_MAST_Y + 0.17, z)), 0.016, 4,
+                      caps=(False, False))
+        colour(bm, side, PAL_BARK_DARK)
+        z += 0.35
+
+
+dock_mast.keep_origin = True
+dock_mast.place_at = "zeppelin_1"
+
+
+def dock_mooring(bm, rng):
+    """A finished zeppelin's MOORING (steam_plan.md step 5), in its frame: its nose's line into the mast's cup, and four
+    lines from its belly - two forward, two aft - down to stakes in the dock's ground, holding it there filled."""
+    nose = zep_at(-0.12, 0.0, 0.0)
+    side, _ = rod(bm, nose, Vector((0.0, ZEP_MAST_Y - 0.62, ZEP_AXIS_Z)), 0.03, 4, caps=(False, False))
+    colour(bm, side, PAL_ROPE)
+    for s, out in ((3.0, 3.2), (10.8, 2.6)):
+        r = zep_radius(s)
+        for sx in (-1, 1):
+            hold = zep_at(s, math.pi - sx * 0.75, r)
+            stake = Vector((sx * out, zep_y(s) + (0.8 if s < ZEP_WIDEST else -0.8), 0.0))
+            side, _ = rod(bm, hold, stake + Vector((0, 0, 0.22)), 0.022, 3, caps=(False, False))
+            colour(bm, side, PAL_ROPE)
+            f = block(bm, stake + Vector((0, 0, -0.06)), (0.08, 0.08, 0.3), rng.uniform(-0.3, 0.3))
+            colour(bm, f["ends"] + f["sides"], PAL_TIMBER)
+            colour(bm, f["top"], PAL_PATH)
+
+
+dock_mooring.keep_origin = True
+dock_mooring.place_at = "zeppelin_5"
+
+
 ASSETS = [
     ("tree_pine_a", 11, lambda bm, r: conifer(bm, r, 4.0, 3, 1.90, 7, 0.40, (0.05, 0.0)), (0, 0)),
     ("tree_pine_b", 12, lambda bm, r: conifer(bm, r, 5.0, 4, 1.80, 7, 0.45, (0.18, 0.10)), (1, 0)),
@@ -1525,6 +2089,16 @@ ASSETS = [
     ("outcrop", 120, outcrop, (9, 7)),
     #Creatures (birds_plan.md, 2026-10-17).
     ("bird", 131, bird, (0, 8)),
+    #The zeppelin's stages and its scaffold (steam_plan.md step 5, 2026-10-23), side by side; the scaffold on stage 1.
+    ("zeppelin_1", 141, zeppelin(1), (0, 11)),
+    ("zeppelin_2", 142, zeppelin(2), (2, 11)),
+    ("zeppelin_3", 143, zeppelin(3), (4, 11)),
+    ("zeppelin_4", 144, zeppelin(4), (6, 11)),
+    ("zeppelin_5", 145, zeppelin(5), (8, 11)),
+    ("zeppelin_scaffold", 146, zeppelin_scaffold, (0, 11)),
+    #The dock's mast and a finished zeppelin's mooring (steam_plan.md step 5, 2026-10-23), in the same frame.
+    ("dock_mast", 147, dock_mast, (0, 11)),
+    ("dock_mooring", 148, dock_mooring, (8, 11)),
 ]
 
 SPACING = 5.0

@@ -101,7 +101,7 @@
 - [Chasm goods plan](chasm_goods_plan.md) — all 6 steps built: food/water/materials/inputs, hemp, ropewalk rope; kept stock + make-more orders
 - [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs; Walking/Idle/Shoot crossfaded; bone props via IntoBone; zombie skinned too (by id)
 - [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations, no "old saves?" questions
-- [Ramparts plan](ramparts_plan.md) — walk nodes are plot+layer; tower decks + debug castle built; WalkJoin is the shared rule
+- [Ramparts plan](ramparts_plan.md) — walk nodes are plot+layer; tower decks + debug castle built; castle on whole-storey levels like terraces (2026-10-23); WalkJoin compares absolute heights
 - [Chasm person picking](chasm_person_picking.md) — G-buffer readback + 8 px fallback; skinned outlines; multi-select all 3 steps built
 - [Minimised app took keystrokes](minimized_focus_leak.md) — FIXED 2026-10-18: HasFocus asks GetForegroundWindow + !IsIconic
 - [Chasm settlements](chasm_settlements.md) — part one in docs/done/; part two step 1 (per colony: number, kept, bar, stats) BUILT 2026-10-22; porters next
@@ -134,6 +134,7 @@
 - [Chasm ranks plan](chasm_ranks_plan.md) — BOTH STEPS BUILT 2026-10-19: kills + ranks (a kill each for now, rank_kills table), pace + one-shot; chasm_kills_test.py
 - [Farside space game concept](farside_space_game_concept.md) — apps/farside: waterline, sensors for player+AI, continuous altitude DECIDED; scale bench BUILT (port 8770)
 - [Chasm lifelines plan](chasm_lifelines_plan.md) — steps 1-4 + crowding BUILT (old age 2026-10-21); widows pairing (woman can still have a child) NEXT; saves/old_age_test.json + chasm_old_age_test.py
-- [Chasm steam plan](chasm_steam_plan.md) — steps 1-3 BUILT 2026-10-21 (temperature readout; steam collector P; condenser L; brass row 12); sail loft next; casm_edge.json for terrace tests
+- [Chasm steam plan](chasm_steam_plan.md) — steps 1-5 BUILT (readout; collector P; condenser L; sail loft I; zeppelin dock, no key, 2026-10-23); flight next; no letter keys left
 - [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; track one-at-a-time, tells only; step 0 (GOALS panel honours switches) built 2026-10-19
-- [Chasm terraces plan](chasm_terraces_plan.md) — foundations + terraces BUILT 2026-10-22 (stage 3 next); ZoneGroundAt/BuildingFootHalves/ZoneTerraceStep are the single rules
+- [Chasm terraces plan](chasm_terraces_plan.md) — foundations, terraces, upper doors (stage 3) BUILT by 2026-10-23; ZoneGroundAt/BuildingFootHalves/ZoneTerraceStep/ZoneUpperDoor are the single rules
+- [Chasm rainbow plan](chasm_rainbow_plan.md) — step 1 BUILT 2026-10-23: angle-coloured light in a box per fall's spray; sunlit-only next; solve the view to see it

@@ -305,6 +305,93 @@ quat TurnZTo(const vec3& d, const vec3& up){
 }
 
 /*
+    THROUGH AN UPPER DOOR (terraces_plan.md stage 3): whether leg `seg` of his route crosses the wall between a building's
+    plot and the terrace its upper door opens onto. The rules walk him straight from plot to plot, over the wall where the
+    two plots' edge crosses it; he is DRAWN through the door (BuildingUpperDoorAt) instead: up the building's stairs on its
+    own side to the door's floor, out of it, straight down its steps (DoorSteps) and on over the terrace - or back. Four
+    points down the leg, `f` of the way along it: the leg's ends, the door, and the steps' foot.
+*/
+struct DoorLeg{
+    float f[4];
+    vec2 at[4];
+    float y[4];
+};
+
+static bool RouteDoorLeg(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, int seg, DoorLeg& out){
+    if (!z || z->world.get() != &w || seg < 0 || seg + 1 >= (int)k.route.size()
+        || EconomyRouteLayer(k,seg) != WALK_GROUND || EconomyRouteLayer(k,seg + 1) != WALK_GROUND){
+        return false;
+    }
+    GridPick a = w.picker->Pick(k.route[seg]);
+    GridPick b = w.picker->Pick(k.route[seg + 1]);
+    if (!a.f_hit || !b.f_hit || a.plot == b.plot || ZoneTerraceStep(w,*z,a.plot,b.plot) != ZONE_STEP_DOOR){
+        return false;
+    }
+    bool f_out = ZoneUpperDoor(w,*z,a.plot,b.plot) >= 0;     //from the building out onto the terrace
+    int house = f_out ? a.plot : b.plot;
+    int terrace = f_out ? b.plot : a.plot;
+    int quad = -1;
+    vec2 door;
+    if (!BuildingUpperDoorAt(w,*z,house,terrace,quad,door)){
+        return false;
+    }
+    vec2 p_house = f_out ? k.route[seg] : k.route[seg + 1];
+    vec2 p_terrace = f_out ? k.route[seg + 1] : k.route[seg];
+    float floor = (BuildingFootHalves(w,*z,z->KindOf(house),house) + 2 * ZoneUpperDoor(w,*z,house,terrace))
+                  * ZONE_STOREY_HEIGHT * 0.5f;
+    float top = ZoneGroundAt(w,*z,terrace);
+    //Out square to the door's piece of wall, as its steps are built.
+    vec2 along = w.grid->FineQuadCentre(quad) - BuildingWallCrossing(w,house,terrace);
+    vec2 outward(-along.y,along.x);
+    outward = outward * (1.0f / std::max(1e-6f,outward.length()));
+    if (outward.dot(p_terrace - door) < 0.0f){
+        outward = outward * -1.0f;
+    }
+    vec2 foot = door + outward * BuildingDoorStepsRun(floor - top);
+    //By distance walked: house, door, steps' foot, terrace - the other way round going in.
+    float d_door = (door - p_house).length();
+    float d_foot = d_door + (foot - door).length();
+    float d_all = d_foot + (p_terrace - foot).length();
+    if (d_all < 1e-4f){
+        return false;
+    }
+    float f_door = d_door / d_all;
+    float f_foot = d_foot / d_all;
+    vec2 pts[4] = {p_house,door,foot,p_terrace};
+    float ys[4] = {ZoneGroundHeight(w,*z,house,p_house),floor,top,top};
+    float fs[4] = {0.0f,f_door,f_foot,1.0f};
+    for (int i = 0; i < 4; i++){
+        int j = f_out ? i : 3 - i;
+        out.at[i] = pts[j];
+        out.y[i] = ys[j];
+        out.f[i] = f_out ? fs[j] : 1.0f - fs[j];
+    }
+    return true;
+}
+
+//Where along that leg he is drawn, `f` of the way down it, and how high.
+static vec2 DoorLegAt(const DoorLeg& leg, float f, float& y){
+    int i = (f < leg.f[1]) ? 0 : (f < leg.f[2]) ? 1 : 2;
+    float span = leg.f[i + 1] - leg.f[i];
+    float t = (span > 1e-6f) ? std::max(0.0f,std::min(1.0f,(f - leg.f[i]) / span)) : 1.0f;
+    y = leg.y[i] + (leg.y[i + 1] - leg.y[i]) * t;
+    return leg.at[i] + (leg.at[i + 1] - leg.at[i]) * t;
+}
+
+//How far off his route he is drawn going through an upper door (RouteDoorLeg).
+static vec2 RouteDoorDetour(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    DoorLeg leg;
+    if (!RouteDoorLeg(w,z,k,k.seg,leg)){
+        return vec2(0.0f,0.0f);
+    }
+    vec2 d = k.route[k.seg + 1] - k.route[k.seg];
+    float len = d.length();
+    float f = (len > 1e-4f) ? std::max(0.0f,std::min(1.0f,k.along / len)) : 0.0f;
+    float y;
+    return DoorLegAt(leg,f,y) - (k.route[k.seg] + d * f);
+}
+
+/*
     How high his route is (ramparts_plan.md) at `along` down leg `seg`: each of its points says which layer it is on.
     On the ground, the ground's relief there; on a deck, its height. Between two plots, from the one's height straight
     to where their layers meet - at the edge between them - and on to the other's, so a stair is walked as a ramp and a
@@ -346,6 +433,13 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         if (pa >= 0 && pb >= 0 && pa != pb && (ZoneTerraceStands(*z,pa) || ZoneTerraceStands(*z,pb))){
             float ha = ground_at(k.route[s]);
             float hb = ground_at(k.route[s + 1]);
+            //Through an upper door (stage 3): up to its floor at the wall, and on down its steps, if any - or back.
+            DoorLeg leg;
+            if (RouteDoorLeg(w,z,k,s,leg)){
+                float y;
+                DoorLegAt(leg,f,y);
+                return y;
+            }
             if (ha >= hb){
                 return (f < 0.5f) ? ha : ha + (hb - ha) * ((f - 0.5f) * 2.0f);
             }
@@ -378,8 +472,8 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
     if (pa == pb){
         return at_point(pos,pa,(f < 0.5f) ? la : lb);
     }
-    int meet = WalkLayersMeet(la,lb);
-    if (meet < 0){
+    int meet = WalkJoin(w,*z,pa,la,pb,lb);
+    if (meet == WALK_NO_JOIN){
         bool f_on_b = f >= 0.5f;
         if (lb != WALK_GROUND && z->KindOf(pb) == ZONE_KIND_TOWER){
             f_on_b = BuildingOnTower(w,pb,pos);
@@ -389,8 +483,7 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         return f_on_b ? at_point(pos,pb,lb) : at_point(pos,pa,la);
     }
     vec2 mid = (a + b) * 0.5f;
-    float hm = (meet == WALK_GROUND) ? ground_at(mid)
-                                     : (t.ground[pa] + t.ground[pb]) * 0.5f + (float)meet * 0.5f * ZONE_STOREY_HEIGHT;
+    float hm = BuildingMeetHeight(w,*z,pa,la,pb,lb,meet,mid);
     if (f < 0.5f){
         float ha = at_point(a,pa,la);
         return ha + (hm - ha) * (f * 2.0f);
@@ -872,7 +965,8 @@ void ApplicationChasm::UploadWorkers(){
         //Along his route, or at the zombie he shoots at (zombies_plan.md, step 3) - the Shoot clip turns him side-on by
         //itself. The rules' rule, which his fall goes by too.
         vec2 facing = EconomyWorkerLooks(*e,k);
-        vec2 body = EconomyBody(k);     //SPACING: where he stands, off his route
+        vec2 body = EconomyBody(k) + RouteDoorDetour(*w,z.get(),k);     //SPACING: where he stands, off his route - and
+                                                                         //through an upper door, not the wall beside it
         shown->SetPosition(vec3(body.x,y,body.y),false);
         shown->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
         shown->SetVisibility(true);

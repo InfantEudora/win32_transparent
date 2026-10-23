@@ -407,7 +407,7 @@ bool ApplicationChasm::PlanDrag(int tool, const std::vector<int>& chain, const s
             }
         }
     }else if (ChasmCellTool(tool)){
-        int paint = (tool == CHASM_TOOL_RANGE) ? ZONE_OP_RANGE_PAINT : ZONE_OP_FIELD_PAINT;
+        int paint = ChasmCellToolOp(tool);
         for (int c : chain){
             if (once(c) && c < (int)z->field.size() && (!f_erase || z->field[c])){
                 add(f_erase ? ZONE_OP_FIELD_ERASE : paint,c,0,0);
@@ -502,7 +502,7 @@ void ApplicationChasm::PlaceDrag(){
     if (!f_moved && tool != CHASM_TOOL_ERASE){
         int at = chain[0];
         if (ChasmCellTool(tool)){
-            SubmitZone(f_erase ? ZONE_OP_FIELD_ERASE : (tool == CHASM_TOOL_RANGE) ? ZONE_OP_RANGE_PAINT : ZONE_OP_FIELD_PAINT,at,0,
+            SubmitZone(f_erase ? ZONE_OP_FIELD_ERASE : ChasmCellToolOp(tool),at,0,
                        paint_stroke);
         }else if (tool == CHASM_TOOL_TERRACE){
             //A square of terrace: its nine plots, the commands PlanDrag makes for a drag of one square.

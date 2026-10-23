@@ -1,6 +1,7 @@
 #include "TerraceMesh.h"
 #include "MeshBuild.h"
 #include "Palette.h"
+#include "Walkers.h"
 
 #include <algorithm>
 
@@ -79,6 +80,18 @@ void BuildTerraceCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, st
             vec3 outward(side.x,0.0f,side.y);
             float head = top + TERRACE_COPING_H;
             MeshQuad(out,vec3(a.x,foot(a),a.y),vec3(b.x,foot(b),b.y),vec3(b.x,head,b.y),vec3(a.x,head,a.y),outward,PAL_STONE);
+            //Against a building standing over the top the wall is the building's from there up: no coping along its foot,
+            //where its upper door may open onto the terrace (terraces_plan.md stage 3).
+            int kind = z.KindOf(u);
+            if (!f_terrace && z.standing[u] > 0 && ZoneKindHasBody(kind)
+                && (BuildingFootHalves(w,z,kind,u) + 2 * z.standing[u]) * ZONE_STOREY_HEIGHT * 0.5f > top){
+                continue;
+            }
+            //...and against a castle piece standing to the top: its deck goes on onto the terrace (ramparts_plan.md).
+            if (ZoneCastleShape(z,u) != ZONE_CASTLE_NONE
+                && WalkNodeHalves(w,z,u,ZoneCastleLayer(z,u)) * ZONE_STOREY_HEIGHT * 0.5f >= top - TERRACE_LIFT - 1e-3f){
+                continue;
+            }
             //The coping: its head, and its face over the top.
             vec2 ai = a - side * TERRACE_COPING_W;
             vec2 bi = b - side * TERRACE_COPING_W;

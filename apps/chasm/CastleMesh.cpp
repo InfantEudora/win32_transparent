@@ -123,10 +123,11 @@ QuarterTop PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const Zon
                         const vec2* p, int k, int shape, int layer, const QuarterTop* under, bool f_covered){
     const Terrain& t = *w.terrain;
     const vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
-    const float half = 0.5f * ZONE_STOREY_HEIGHT;
     int v = quad.v[k];
     float level = t.Height(v);
-    float top_v = t.ground[v] + (float)layer * half;
+    //Its top over its level, whole storeys (ZoneCastleBase): flat across a hill, as a terrace's (terraces_plan.md).
+    float top_v = BuildingLayerHeight(w,z,v,layer);
+    int me = WalkNodeHalves(w,z,v,layer);
     //Toward this cell's two other plots beside it: the edge's midpoint, and the top's height there.
     int nb[2] = {quad.v[(k + 1) % 4],quad.v[(k + 3) % 4]};
     vec2 mid[2] = {(p[k] + p[(k + 1) % 4]) * 0.5f,(p[k] + p[(k + 3) % 4]) * 0.5f};
@@ -134,16 +135,12 @@ QuarterTop PieceQuarter(std::vector<vertex>& out, const ChasmWorld& w, const Zon
     bool f_open[2];
     bool f_climbs[2];       //a stair's top: the side it climbs to
     for (int i = 0; i < 2; i++){
-        int meet = WalkJoinAny(w,z,v,layer,nb[i]);     //where the walkers step across, the tops meet
-        f_open[i] = meet < 0;
-        f_climbs[i] = meet == layer + 1;
-        if (meet < 0){
-            top_m[i] = top_v;
-        }else if (meet == 0){
-            top_m[i] = t.GroundHeight(mid[i],level);
-        }else{
-            top_m[i] = (t.ground[v] + t.ground[nb[i]]) * 0.5f + (float)meet * half;
-        }
+        //Where the walkers step across, the tops meet: a deck at its height, the ground - a terrace's top, the hill - at its.
+        int across = WALK_GROUND;
+        int meet = WalkJoinAny(w,z,v,layer,nb[i],&across);
+        f_open[i] = meet == WALK_NO_JOIN;
+        f_climbs[i] = meet == me + 1;
+        top_m[i] = f_open[i] ? top_v : BuildingMeetHeight(w,z,v,layer,nb[i],across,meet,mid[i]);
     }
     float top_c = (top_m[0] + top_m[1]) * 0.5f;
     bool f_stair = shape == ZONE_CASTLE_STAIR;

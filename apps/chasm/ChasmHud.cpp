@@ -47,8 +47,10 @@ uint32_t HudGoodColour(int good){
         //Materials browns and greys, inputs a family of their own (goods_plan.md): rope a greyer tan than wood,
         //hemp a sage green, apart from the greens' yellow-green. Stone a cool grey; floatstone the purple-blue of its
         //crystal (stone_plan.md, the user's), nothing like the stone it is dug from. Steam a warm white, the
-        //canisters' cloud (steam_plan.md), paler than any food.
+        //canisters' cloud (steam_plan.md), paler than any food; canvas the grey-buff of undyed sailcloth, between
+        //rope's tan and steam's white.
         case GOOD_ROPE:         return UIColor(176,160,128);
+        case GOOD_CANVAS:       return UIColor(214,200,164);
         case GOOD_STONE:        return UIColor(176,182,190);
         case GOOD_FLOATSTONE:   return UIColor(146,128,236);
         case GOOD_HEMP:         return UIColor(108,170,150);

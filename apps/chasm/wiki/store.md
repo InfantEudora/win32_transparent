@@ -6,16 +6,18 @@ status: built
 summary: Holds goods for the whole colony. Beside a workplace it takes only that workplace's goods; on its own, whatever the player allows.
 plans: economy_plan.md > As built: the simulation; economy_plan.md > Decided; goods_plan.md > Step 5: the view by category
 code: Economy.cpp: Derive FindStore; Zones.h: ZoneBuilding; ChasmHud.h: HudGoodsGroup HUD_GROUP_COUNT
-verified: 2026-10-18
+verified: 2026-10-23
 ---
 
 ## What it takes
 
 - **Beside a workplace**, a store takes only that workplace's goods: [[Wood|wood]] beside a
   [[Woodcutter|woodcutter's hut]], [[Water|water]] beside a [[Water collector]], every [[Food|food]] and
-  [[Hemp|hemp]] beside a [[Field]] (one plot away from the field is as close as a store can get), and hemp
-  and [[Rope|rope]] beside a [[Ropewalk]]. This holds for as long as they touch, and the player can't
-  change it.
+  [[Hemp|hemp]] beside a [[Field]] (one plot away from the field is as close as a store can get), hemp
+  and [[Rope|rope]] beside a [[Ropewalk]] and hemp and [[Canvas|canvas]] beside a [[Sail loft|sail loft]],
+  [[Stone|stone]] beside a [[Stonecutter|stonecutter's hut]] and stone and [[Floatstone|floatstone]] beside a
+  [[Mine|mine]], [[Steam|steam]] beside a [[Steam collector|steam collector]] and steam and water beside a
+  [[Condenser|condenser]]. This holds for as long as they touch, and the player can't change it.
 - **On its own**, a store takes whatever the player allows on its card, which is every good to start with,
   [[Provisions|provisions]] included.
 

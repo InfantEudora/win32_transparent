@@ -260,6 +260,11 @@ json ChasmSaveToJson(const ChasmSave& s){
         for (const auto& gc : e.guards){
             guards.push_back(json::array({gc.first,gc.second}));
         }
+        //The docks' zeppelins (steam_plan.md step 5): [building, stages standing].
+        json zeppelins = json::array();
+        for (const auto& zp : e.zeppelins){
+            zeppelins.push_back(json::array({zp.first,zp.second}));
+        }
         //What each colony keeps of its made goods, and the orders for more (goods_plan.md; settlements_plan.md step 2):
         //by colony number, then the good's name.
         json kept = json::object();
@@ -272,7 +277,7 @@ json ChasmSaveToJson(const ChasmSave& s){
         }
         economy = json{{"stocks",stocks},{"pantries",pantries},{"felled",props},{"people",workers},{"fields",fields},
                        {"sites",sites},{"ground_sites",ground_sites},{"heat",heats},{"crates",crates},
-                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},
+                       {"next_crate",e.next_crate},{"next_person",e.next_person},{"dead",dead},{"guards",guards},{"zeppelins",zeppelins},
                        {"kept",kept},{"ordered",ordered},{"plants",plants}};
         //The COLONY NUMBERS (settlements_plan.md, step 1): [home, number], and the next to be given - once one is.
         if (e.next_colony > 1){
@@ -413,10 +418,10 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
         }
     }
-    //The debug castle (ramparts_plan.md): plot and piece - only with some, so a save without one is as before.
+    //The debug castle (ramparts_plan.md): plot, piece and level - only with some, so a save without one is as before.
     json castle = json::array();
-    for (const auto& pc : s.castle){
-        castle.push_back(json::array({pc.first,pc.second}));
+    for (const ZoneSavedCastle& pc : s.castle){
+        castle.push_back(json::array({pc.plot,pc.piece,pc.base}));
     }
     //Terraces (terraces_plan.md stage 2): plot, top, built - only with some.
     json terraces = json::array();
@@ -1064,6 +1069,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& gc : e.value("guards",json::array())){
             out.economy.guards.push_back(std::make_pair(gc[0].get<uint32_t>(),gc[1].get<int>()));
         }
+        for (const json& zp : e.value("zeppelins",json::array())){
+            out.economy.zeppelins.push_back(std::make_pair(zp[0].get<uint32_t>(),zp[1].get<int>()));
+        }
         for (const json& id : e.value("endless_wells",json::array())){
             out.economy.endless.push_back(id.get<uint32_t>());
         }
@@ -1122,7 +1130,11 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     }
     for (const json& pc : j.value("castle",json::array())){
         if (pc.is_array() && pc.size() >= 2){
-            out.castle.push_back(std::make_pair(pc[0].get<int>(),pc[1].get<int>()));
+            ZoneSavedCastle c;
+            c.plot = pc[0].get<int>();
+            c.piece = pc[1].get<int>();
+            c.base = (pc.size() >= 3 && pc[2].is_number_integer()) ? pc[2].get<int>() : ZONE_CASTLE_NO_BASE;     //an older save's: none
+            out.castle.push_back(c);
         }
     }
     for (const json& tr : j.value("terraces",json::array())){

@@ -74,6 +74,7 @@ int PersonFigure(const EconomyWorker& k, uint64_t tick);
 #define SHOOT_RELEASE           ARROW_RELEASE   //...and leaves the bow: the rules' beat, as an arrow at a zombie is theirs
 //The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
 extern const char* range_asset_names[];
+extern const char* dock_asset_names[];
 //An arrow, as the range's props draw it - and a zombie's (ApplicationChasmZombies.cpp).
 #define RANGE_ARROW_HALF        0.16f   //half a stuck arrow's length: chasm_props.glb's `arrow` is centred on its origin
 #define RANGE_ARROW_FULL        0.46f   //a whole arrow, nock to point: `arrow_full`, its origin at the nock, pointing +z
@@ -316,6 +317,7 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define INPUT_CHASM_TOOL_STEAM     INPUT_LAST+39     //P, for plume: the steam collector (steam_plan.md)
 #define INPUT_CHASM_TOOL_CONDENSER INPUT_LAST+40     //L, for liquid: the condenser (steam_plan.md step 3)
 #define INPUT_CHASM_TOOL_TERRACE   INPUT_LAST+41     //Y, the last letter free: the terrace (terraces_plan.md stage 2)
+#define INPUT_CHASM_TOOL_SAIL_LOFT INPUT_LAST+42     //I, the very last: the sail loft (steam_plan.md step 4)
 
 //The app's simulation commands, past core's.
 #define CHASM_CMD_ZONE              SIM_CMD_LAST+0      //subtype: plot or coarse cell; value[0]: ZoneOp;
@@ -393,6 +395,8 @@ enum ChasmTool{
     CHASM_TOOL_STEAM,       //steam_plan.md: a steam collector, a drag along a drop into the chasm
     CHASM_TOOL_CONDENSER,   //steam_plan.md step 3: a condenser, a drag - beside a steam collector, to draw from it
     CHASM_TOOL_TERRACE,     //terraces_plan.md stage 2: a terrace, dragged over plots as a lot is
+    CHASM_TOOL_SAIL_LOFT,   //steam_plan.md step 4: a sail loft, a drag of up to four plots
+    CHASM_TOOL_DOCK,        //steam_plan.md step 5: a zeppelin dock, painted on cells as a field is - no key (the user's)
     CHASM_TOOL_COUNT
 };
 
@@ -401,9 +405,16 @@ inline bool ChasmMapTool(int tool){
     return tool == CHASM_TOOL_RIVER || tool == CHASM_TOOL_POND || tool == CHASM_TOOL_HEIGHT || tool == CHASM_TOOL_CLIFF;
 }
 
-//The tools that paint COARSE CELLS rather than plots: the field, and the range painted like one.
+//The tools that paint COARSE CELLS rather than plots: the field, and the range and the dock painted like one - and the
+//kind each paints, and the op.
 inline bool ChasmCellTool(int tool){
-    return tool == CHASM_TOOL_FIELD || tool == CHASM_TOOL_RANGE;
+    return tool == CHASM_TOOL_FIELD || tool == CHASM_TOOL_RANGE || tool == CHASM_TOOL_DOCK;
+}
+inline int ChasmCellToolKind(int tool){
+    return (tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : (tool == CHASM_TOOL_DOCK) ? ZONE_KIND_DOCK : ZONE_KIND_FIELD;
+}
+inline int ChasmCellToolOp(int tool){
+    return (tool == CHASM_TOOL_RANGE) ? ZONE_OP_RANGE_PAINT : (tool == CHASM_TOOL_DOCK) ? ZONE_OP_DOCK_PAINT : ZONE_OP_FIELD_PAINT;
 }
 
 //The tools that draw a LINE and place it on release (UpdateLineDrag), and the ground each lays.
@@ -1319,6 +1330,18 @@ private:
     uint32_t ropewalk_built_zones = 0xFFFFFFFFu;    //the zones' version, as last drawn
     std::vector<std::array<uint32_t,3>> ropewalk_built;     //ropewalk, coils, sheaves - as last drawn
     void UploadRopewalks();                         //from PreRender
+    /*
+        The zeppelin docks (ApplicationChasmDock.cpp, steam_plan.md step 5): each of the zeppelin's stages, its scaffold,
+        the dock's mast and its mooring lines - an instance set each, chasm_props.glb's prop by its name in dock_asset_names.
+    */
+    #define DOCK_PROPS          8
+    Object* dock_set[DOCK_PROPS] = {};
+    Mesh* dock_mesh[DOCK_PROPS] = {};
+    std::shared_ptr<const ChasmWorld> dock_built_world;
+    uint32_t dock_built_zones = 0xFFFFFFFFu;        //the zones' version, as last drawn...
+    uint32_t dock_built_economy = 0xFFFFFFFFu;      //...and the economy's: a zeppelin's stage
+    void BuildDockScene();                          //from LoadProps
+    void UploadDocks();                             //from PreRender
     //SETTLEMENTS, drawn (docs/settlements_plan.md, ApplicationChasmBorders.cpp): the territories' border posts, and
     //with a person selected, the walk to the plot under the cursor - the render thread's own route search for it.
     Object* border_object = NULL;
@@ -1494,6 +1517,35 @@ private:
     void SetWaterSheetUniforms();
     void SetWaterFlatUniforms();
     double SimSeconds();
+
+    /*
+        --- The rainbow (docs/rainbow_plan.md, ApplicationChasmRainbow.cpp) ------------------------------------
+        Light in the falls' spray: a box over each sheet's spray, one instance set, drawn by chasm_rainbow.frag
+        from the view ray's angle to the point opposite the sun. Render thread, posed every frame with the foam;
+        the knobs are the Rainbow panel's and chasm_time's.
+    */
+#define RAINBOW_STRENGTH    0.45f   //the bow's light against the sun's
+#define RAINBOW_WIDTH       2.0f    //its bands' spread, 1 a real bow's: softer, as the flat-shaded world is
+    Shader* rainbow_shader = NULL;
+    int rainbow_shader_index = -1;
+    Object* rainbow_set = NULL;
+    std::atomic<float> rainbow_strength{RAINBOW_STRENGTH};
+    std::atomic<float> rainbow_width{RAINBOW_WIDTH};
+    std::atomic<int> rainbow_debug{0};              //1 the spray's cloud in white, 2 the bow as if all of it were spray
+    //Each box drawn last frame: its middle, and the view ray's angle there from the point opposite the sun (the
+    //bow is at about 41.5) - for chasm_time, to aim a view at one.
+    std::mutex rainbow_mutex;
+    std::vector<vec4> rainbow_seen;
+    void BuildRainbowScene();       //from BuildWaterScene
+    void UpdateRainbow();           //from UpdateMist
+    void SetRainbowUniforms();
+#ifdef USE_IMGUI
+    void RenderRainbowPanel();      //from RenderWeatherPanel, above it
+#endif
+#ifdef USE_MCP
+    json RainbowStatusJson();       //in chasm_time's `weather`...
+    void SteerRainbow(const json& rainbow);     //...and its `rainbow` argument
+#endif
 
     std::vector<Object*> zone_chunks;
     std::vector<uint32_t> zone_chunk_built;     //render thread: chunk_version each was built at

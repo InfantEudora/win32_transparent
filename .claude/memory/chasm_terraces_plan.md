@@ -1,11 +1,11 @@
 ---
 name: chasm-terraces-plan
-description: apps/chasm/docs/terraces_plan.md - foundations (stage 1) and terraces (stage 2) BUILT 2026-10-22; ZoneGroundAt + ZoneTerraceStep are the single rules
+description: apps/chasm/docs/terraces_plan.md - foundations, terraces (2026-10-22) and upper doors (stage 3, 2026-10-23) BUILT; ZoneGroundAt + ZoneTerraceStep + ZoneUpperDoor are the single rules
 metadata:
   node_type: memory
   type: project
   originSessionId: 69bfd5e2-d3af-47c9-869a-da8e0eaa395a
-  modified: 2026-10-22T08:43:53.470Z
+  modified: 2026-10-23T12:24:36.534Z
 ---
 
 Terraced hill towns for Chasm, `apps/chasm/docs/terraces_plan.md`.
@@ -32,16 +32,22 @@ Stage 2 BUILT 2026-10-22:
 - the tool (key Y), unlocked with the stonecutter;
 - unbuilt terraces are ground sites whose good is stone.
 
-I changed one decision myself and the user may overrule it: terraces are painted **by coarse square** (`ZoneCellPlots`) so fields fit. `saves/terraces_test.json` is the test save.
+I changed one decision myself and the user may overrule it: terraces are painted **by coarse square** (`ZoneCellPlots`) so fields fit. `saves/terraces_test.json` is the test save; its three terraces are walled all round (no stair saved), so nothing walks onto them without a road stair or an upper door.
+
+Stage 3 BUILT 2026-10-23 (user: own people walk through, onto open terrace ground, upper doors only - flat roofs and view appeal wait):
+- `ZoneUpperDoor` + `ZONE_STEP_DOOR`; one door a level per plot;
+- a building is walked inside by a walk to or from it (any of its plots) - a general change in `Walkers::EdgeOpen`;
+- upper doors always drawn (`BuildingUpperDoorAt`); figures drawn through them via `RouteDoorLeg` (view only).
 
 **Single definitions, use them in new code:**
 - `ZoneGroundAt` / `ZoneGroundHeight`: the ground a plot has (a terrace's top, or the terrain). Anything placing something on a plot must ask these, not `Terrain::GroundHeight` or `ground[]`.
-- `BuildingFootHalves`: a building's floor.
-- `ZoneTerraceStep`: open / wall / stair, asked by the walkers' edges and by straight walks.
+- `BuildingFootHalves`: a building's floor - now in Zones.cpp/.h (with `BuildingWallCrossing`), since the walkers ask it.
+- `ZoneTerraceStep`: open / wall / stair / door, asked by the walkers' edges and by straight walks.
+- `WallDoor` (BuildingMesh.cpp): whether a wall has a drawn door and on which storey. Never across a WALL, into a building, or off a terrace's edge. `BuildingSureDoor` gives every building that isn't shut in at the ground a ground-floor door (2026-10-23, after the user saw a door inside a terrace).
 
 **Why:** the user wants Greek-style terraced cities on the hilly chasm side.
 
 **How to apply:**
 - Open items for the user: a road over a wall taller than a storey reads as broken; whole storeys mean almost a storey of fill on flat ground.
 - Not yet terrace-aware: picking a terrace site's card, `CrateMiddle`, sight lines.
-- Stage 3 (an upper-storey door onto the terrace above) is next.
+- Left for later: flat roofs as the terrace above, appeal for a view.

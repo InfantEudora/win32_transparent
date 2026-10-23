@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5bac1302-f1b1-4435-8b32-339b4416d1b9
-  modified: 2026-10-22T08:56:01.236Z
+  modified: 2026-10-23T10:11:33.573Z
 ---
 
 Talked through with the user 2026-10-11 after a far tent was built by a villager from the camp (no task limit).
@@ -89,6 +89,9 @@ EconomyDayLevels + Event (EconomyEvent::colony; EconomyPersonLand = whose a pers
 hashed only with a colony > 1; ChasmColonyHistory/ChasmStatsColonies/NowOf(colony); check: colonies add up; page chips
 OVERLAY_HIT_STATS_COLONY (chasm_select op press now works on the stats page); chasm_stats `colony`. Test save
 saves/stats_by_colony_test.json. ALL of step 1 (per colony) is BUILT. Next: porters/depot - the user thinks routes over.
+2026-10-23 (the user's): the JOBS overview (bottom left) follows the colony in view too, titled "JOBS, COLONY N" /
+"JOBS"; EconomyJobCounts takes a settlement; chasm_economy `jobs_shown` = the panel's, `jobs` stays all (the Void).
+MOST IN NEED is the only bottom-left panel still every colony's (on purpose).
 
 **Why:** the colony must grow as separate bases supplied deliberately, not one map-wide labour pool.
 **How to apply:** any new errand or "nearest X" search for a person must filter by Ours(k,id); kept stock,

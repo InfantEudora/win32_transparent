@@ -159,6 +159,12 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Add(((uint64_t)d << 32) | (uint32_t)e.dug[d] | 0x4D00000000000000ull);
         }
     }
+    //The docks' zeppelins (steam_plan.md step 5) - only once one is begun, so a colony without hashes as before.
+    for (size_t id = 0; id < e.zeppelin.size(); id++){
+        if (e.zeppelin[id] > 0){
+            h.Add(((uint64_t)id << 32) | (uint32_t)e.zeppelin[id] | 0x2E00000000000000ull);
+        }
+    }
     //The plants' fruit and their growing back (foraging_plan.md), by prop like the felled trees.
     h.Bytes(e.fruit.data(),e.fruit.size());
     h.Bytes(e.regrow.data(),e.regrow.size());
@@ -475,8 +481,9 @@ void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_STOCK,
         [this](const SimCommand& cmd) -> objectid_t {
             //value[3]: a WELL made endless (water_tools_plan.md) - 0 in recordings from before.
-            if (economy.SetStock(zones.State(),cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],cmd.value[2] != 0.0f,
-                                 cmd.value[3] != 0.0f)){
+            //value[2]: 1 a camp's pantry, 2 a site's goods brought (steam_plan.md step 5) - 0 the stock.
+            if (economy.SetStock(zones.State(),cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],cmd.value[2] == 1.0f,
+                                 cmd.value[3] != 0.0f,cmd.value[2] == 2.0f)){
                 PublishEconomy();
             }
             stock_commands_done++;
@@ -1131,6 +1138,24 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
                                  {"needed",needed},{"brought",brought},
                                  {"carriers",carriers},{"priority",info.f_priority}};
     }
+    //A ZEPPELIN DOCK (steam_plan.md step 5): where its zeppelin lies, whether it fits, its stages standing and what the
+    //next takes, and what has been brought for them.
+    if (z->buildings[id].kind == ZONE_KIND_DOCK && e->world){
+        ZoneDockLie lie;
+        ZoneDockFrame(*e->world,*z,id,lie);
+        int stage = EconomyZeppelinStage(*e,id);
+        json brought = json::object();
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (EconomySiteBrought(*e,id,g) > 0){
+                brought[GoodName(g)] = EconomySiteBrought(*e,id,g);
+            }
+        }
+        j["zeppelin"] = json{{"fits",lie.f_fits},{"x",lie.centre.x},{"z",lie.centre.y},{"nose",{lie.nose.x,lie.nose.y}},
+                             {"stages",stage},{"of",ZEPPELIN_STAGES},
+                             {"next",(stage < ZEPPELIN_STAGES) ? EconomyZeppelinStageName(stage + 1) : "finished"},
+                             {"next_good",(stage < ZEPPELIN_STAGES) ? GoodName(EconomyZeppelinGood(stage + 1)) : ""},
+                             {"next_takes",EconomyZeppelinCost(stage + 1)},{"brought",brought}};
+    }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
         GoodsMask takes = EconomyAccepts(*e,id);
         j["takes"] = GoodsJson(takes);
@@ -1621,7 +1646,7 @@ void ApplicationChasm::RegisterEconomyTools(){
         "fraction, from 0 at its first dawn - and of what), the DISCOVERIES (docs/demo_plan.md step 6: river, chasm, "
         "boulder, floatstone, builders_hut, winch, balcony - each made or not, its tick and person, the build tools it "
         "brings) and tools_locked (what play mode's build bar still hides; none in debug mode). op store_allow: "
-        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope, fruit, stone, floatstone, steam) - "
+        "the store at x,z (or plot) takes the goods named in `goods` (wood, water, wheat, greens, beans, provisions, hemp, rope, fruit, stone, floatstone, steam, canvas) - "
         "a RECORDED zone command, applied before this returns; a store next to a workplace keeps taking "
         "that workplace's goods whatever it is set to. op site_priority: the construction site at x,z (or "
         "plot) goes first (`on`, default true) or back in the queue - recorded the same way; a site's "
@@ -1667,12 +1692,13 @@ void ApplicationChasm::RegisterEconomyTools(){
         "seams, balconies and outcrops. "
         "op set_stock: the stock of building `building` (or the one at x,z; a camp's supplies) set to "
         "`contents` (goods by name and amount, e.g. {\"provisions\":6,\"wheat\":0}) - RECORDED debug edits "
-        "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead. A WELL (docs/water_tools_plan.md) "
+        "(CHASM_CMD_STOCK), a good at a time; `pantry` true sets a camp's pantry instead; `site` true what has been brought "
+        "to its site, which then builds what that pays for - a dock's zeppelin's stages too (steam_plan.md step 5). A WELL (docs/water_tools_plan.md) "
         "holds water alone, as much as the seed gives it when placed: `endless` true keeps it full for good, and its water "
         "set, or `endless` false, makes it finite again; its stock shows `endless`. `provisions` reports PROVISIONS (docs/defence_plan.md): how many "
         "are still lacking beyond what is made, by colony, and what each builders' hut holds and for which colony. STOCK KEPT "
         "(docs/goods_plan.md), BY COLONY (docs/settlements_plan.md, step 2): op keep - colony `colony` (its number, default "
-        "the oldest standing) keeps `count` of made good `good` (provisions, rope) in its stores; op order_more - an order for "
+        "the oldest standing) keeps `count` of made good `good` (provisions, rope, canvas) in its stores; op order_more - an order for "
         "`count` more of it, 0 cancelling the one running. Both RECORDED (CHASM_CMD_KEEP). `kept` reports, for each colony, "
         "each made good's kept number, its order's level (0 none), the level they make, and what its stores hold. "
         "SCOUTING (docs/defence_plan.md): "
@@ -1743,7 +1769,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"kills",{{"type","integer"},{"description","add_person: zombies he has killed, by bow, 0-31 - his rank (ranks_plan.md)"}}},
                 {"post",{{"type","boolean"},{"description","add_person: ordered to stand where put down, out of the staffing; "
                                                          "with archery, a posted archer"}}},
-                {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions or rope"}}},
+                {"good",{{"type","string"},{"description","keep, order_more: the made good, provisions, rope or canvas"}}},
                 {"colony",{{"type","integer"},{"description","keep, order_more: the colony's number (COLONY N), default the oldest standing"}}},
                 {"health_days",{{"type","number"}}},
                 {"water_days",{{"type","number"}}},
@@ -1908,7 +1934,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                     cmd.subtype = id;
                     cmd.value[0] = (float)s[0];
                     cmd.value[1] = (float)s[1];
-                    cmd.value[2] = args.value("pantry",false) ? 1.0f : 0.0f;
+                    cmd.value[2] = args.value("pantry",false) ? 1.0f : args.value("site",false) ? 2.0f : 0.0f;
                     cmd.value[3] = (float)s[2];
                     SubmitCommandAndWait(cmd);
                 }
@@ -2322,7 +2348,7 @@ void ApplicationChasm::RegisterEconomyTools(){
                 //STOCK KEPT (goods_plan.md): a made good's kept number, or an order for more of it.
                 int good = GoodByName(args.value("good",std::string()));
                 if (good < 0 || !(GOODS_MADE & GOOD_BIT(good))){
-                    return json{{"error",op + ": give `good`, a made good - provisions or rope"}};
+                    return json{{"error",op + ": give `good`, a made good - provisions, rope or canvas"}};
                 }
                 SimCommand cmd;
                 cmd.type = CHASM_CMD_KEEP;
@@ -2834,16 +2860,22 @@ void ApplicationChasm::RegisterEconomyTools(){
                                         {"water_days",std::round(k->water * 100.0 / CALENDAR_DAY_TICKS) / 100.0}});
             }
             result["neediest"] = neediest;
-            //Per job, who works it and its places - the overview's figures (builders_plan.md).
-            EconomyJobCount counts[WORKER_JOB_COUNT];
-            int jobless = 0;
-            EconomyJobCounts(*e,*z,counts,&jobless);
-            json jobs = json::object();
-            for (int j = 0; j < WORKER_JOB_COUNT; j++){
-                jobs[EconomyJobName(j)] = json{{"working",counts[j].working},{"places",counts[j].places}};
-            }
-            jobs["none"] = jobless;
-            result["jobs"] = jobs;
+            //Per job, who works it and its places, every colony's (the Void reads them beside `people`); `jobs_shown` the
+            //overview's figures (builders_plan.md), the colony in view's as drawn, with `colony` - 0 the whole.
+            auto jobs_of = [&](uint32_t settlement){
+                EconomyJobCount counts[WORKER_JOB_COUNT];
+                int jobless = 0;
+                EconomyJobCounts(*e,*z,counts,&jobless,settlement);
+                json jobs = json::object();
+                for (int j = 0; j < WORKER_JOB_COUNT; j++){
+                    jobs[EconomyJobName(j)] = json{{"working",counts[j].working},{"places",counts[j].places}};
+                }
+                jobs["none"] = jobless;
+                return jobs;
+            };
+            result["jobs"] = jobs_of(ECONOMY_EVERY_SETTLEMENT);
+            result["jobs_shown"] = jobs_of(view);
+            result["jobs_shown"]["colony"] = view_number;
             //The dead (needs_plan.md), in the order they died, with the day of the colony each died on.
             json dead = json::array();
             for (const EconomyDeath& d : e->dead){

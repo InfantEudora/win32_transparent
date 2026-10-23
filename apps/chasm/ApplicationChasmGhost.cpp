@@ -122,6 +122,8 @@ const char* KindPlural(int kind){
         case ZONE_KIND_FIELD:       return "FIELDS";
         case ZONE_KIND_RANGE:       return "RANGES";
         case ZONE_KIND_ROPEWALK:    return "ROPEWALKS";
+        case ZONE_KIND_SAIL_LOFT:   return "SAIL LOFTS";
+        case ZONE_KIND_DOCK:        return "DOCKS";
         case ZONE_KIND_CAMP:        return "CAMPS";
         case ZONE_KIND_WOODCUTTER:
         case ZONE_KIND_BUILDERS:
@@ -382,7 +384,7 @@ void ApplicationChasm::UpdateGhost(){
             float floor_more = 0.0f;
             int made_kind = ZONE_KIND_NONE;
             if (f_cells){
-                made_kind = (plan->tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
+                made_kind = ChasmCellToolKind(plan->tool);
                 std::vector<int> fresh;
                 for (size_t c = 0; c < a.field.size(); c++){
                     if (a.field[c] && a.field[c] != z.field[c]){
@@ -677,11 +679,11 @@ void ApplicationChasm::UpdateGhost(){
             trees = ZoneEnclosesGround(ground) ? trees_on(plot,-1) : 0;
         }
     }else if (f_field){
-        f_ok = (z.field[hover.coarse_quad] || ZoneCanField(cw,z,hover.coarse_quad,NULL))
-               && !crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0);
+        bool f_can = (tool == CHASM_TOOL_DOCK) ? ZoneCanDock(cw,z,hover.coarse_quad,NULL) : ZoneCanField(cw,z,hover.coarse_quad,NULL);
+        f_ok = (z.field[hover.coarse_quad] || f_can) && !crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0);
         GhostCellTile(cw,z,hover.coarse_quad,verts);
         if (!z.field[hover.coarse_quad]){
-            int cell_kind = (tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
+            int cell_kind = ChasmCellToolKind(tool);
             for (int g = 0; g < GOOD_COUNT; g++){
                 cost[g] = EconomyCellCost(cell_kind,g);
             }
@@ -776,8 +778,9 @@ static const vec3 SLOPE_FOUNDATION(1.0f,0.72f,0.22f);
 
 #define SLOPE_RULE_NONE     -1
 #define SLOPE_RULE_PLOT     0           //ZoneLandSays: a building's, a garden's or a lot's
-#define SLOPE_RULE_ROAD     1           //...a road's or a wall's
+#define SLOPE_RULE_ROAD     1           //...a road's
 #define SLOPE_RULE_CELL     2           //ZoneCanField: a field's or a range's cell
+#define SLOPE_RULE_WALL     3           //ZoneLandSays: a wall's - a road's, and at a cliff's edge too
 
 namespace {
 
@@ -845,7 +848,8 @@ void ApplicationChasm::UpdateSlopeGrid(){
     }
     int tool = paint_tool;
     int kind = ToolKind(tool);
-    int rule = ChasmCellTool(tool) ? SLOPE_RULE_CELL : ChasmLineTool(tool) ? SLOPE_RULE_ROAD
+    int rule = ChasmCellTool(tool) ? SLOPE_RULE_CELL : (tool == CHASM_TOOL_WALL) ? SLOPE_RULE_WALL
+             : ChasmLineTool(tool) ? SLOPE_RULE_ROAD
              : (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT) ? SLOPE_RULE_PLOT
              : (kind == ZONE_KIND_NONE || kind == ZONE_KIND_WATER || kind == ZONE_KIND_WINCH || kind == ZONE_KIND_MINE
                 || kind == ZONE_KIND_BRIDGE || kind == ZONE_KIND_STEAM) ? SLOPE_RULE_NONE : SLOPE_RULE_PLOT;
@@ -900,7 +904,7 @@ void ApplicationChasm::UpdateSlopeGrid(){
                 if (!open(cell.middle)){
                     continue;
                 }
-                bool f_ok = ZoneCanField(cw,none,c,NULL);
+                bool f_ok = (tool == CHASM_TOOL_DOCK) ? ZoneCanDock(cw,none,c,NULL) : ZoneCanField(cw,none,c,NULL);
                 counts[f_ok ? ZONE_LAND_ALLOWED : ZONE_LAND_REFUSED]++;
                 float s = strength(d);
                 vec2 uv(f_ok ? 0.0f : -1.0f,s);
@@ -936,7 +940,8 @@ void ApplicationChasm::UpdateSlopeGrid(){
                 if (d > SLOPE_GRID_RADIUS || !open(v)){
                     continue;
                 }
-                int says = ZoneLandSays(cw,z,v,key.kind,rule == SLOPE_RULE_ROAD,NULL);
+                int says = ZoneLandSays(cw,z,v,key.kind,rule == SLOPE_RULE_ROAD || rule == SLOPE_RULE_WALL,NULL,
+                                        rule == SLOPE_RULE_WALL);
                 counts[says]++;
                 float s = strength(d);
                 //chasm_slope.frag: u 0 green, past 1 amber, under 0 red.
@@ -1014,7 +1019,7 @@ std::string ApplicationChasm::ToolCostTip(int tool){
     std::array<int,GOOD_COUNT> cost{};
     if (ChasmCellTool(tool)){
         for (int g = 0; g < GOOD_COUNT; g++){
-            cost[g] = EconomyCellCost((tool == CHASM_TOOL_RANGE) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD,g);
+            cost[g] = EconomyCellCost(ChasmCellToolKind(tool),g);
         }
         return CostWords(cost) + " A CELL";
     }

@@ -206,3 +206,27 @@ play command's arch losses, `arch_notices`; `chasm_paint` reports `arch_floors_l
     that one down, and the run broken, 27689 got an arch planned as a site (0 of 1 built) - the rule as it stands;
   - a save and load of that: the same arches; two replays of the 30-tick recording: identical.
 - **Not checked by a run**: a store's or builders' hut's arch as a site (unchanged from step 3).
+
+## As built: bends and heights (2026-10-23)
+
+Two things the user found building on the terraces (`terraces_plan.md`):
+
+- **An arch over an open corner.** Two-storey houses either side of a road's corner, on its outside, bridged the
+  corner plot, with walls missing where the road turned (the user: nothing should be built there). Bends stay - a
+  road stepping through a block of houses turns round plots that are built - but round a bend the cell the two roads
+  turn round must have a building of the kind on its fourth corner too (`ArchCandidate`, `Zones.cpp`).
+- **Heights by the sides, not the road.** An arch's floor was the road's ground plus a storey, and its sides had to
+  stand two storeys each, counted from their own floors. So a one-storey house on a terrace a storey up never bridged
+  (its ground floor is just where the floor goes), and where the road's ground rounded half a storey off the houses'
+  the bridge stood half a storey off them. Now the floor is its **owner's storey** standing a storey over the road (a
+  storey and a half at most, `ZONE_ARCH_PASSAGE_MOST`) - another side's, if the owner's leaves no room - and the arch
+  rises to the **lowest side's eaves**; every side stands down to the floor and a storey of floor fits under the eaves.
+  The floor is worked out with the rest (`ZoneState::arch_floor`, `ArchFloorOf`) and drawn, scaffolded and picked from
+  (`BuildHouseCell`, `BuildArchSite`, `ShapeTop`); `chasm_pick`'s `zone_arch` gives it as `floor_y`.
+- **Checked** on `saves/terraces_test.json`: a road along the foot of the top-5 terrace between a two-storey house below
+  and a one-storey house on the terrace - bridged at 6.5, the terrace's top, the terrace house's ground floor (the house
+  below, on a foundation half a storey off, meets it with a half step); a road round a corner with two-storey houses on
+  its outside - no arch, until a house went on the inside corner; a straight road with the road half a storey over one
+  side - no arch with two storeys there (its eaves under the bridge's), one at three.
+- On a slope, a side whose floors stand half a storey off the bridge's needs a storey more than before - the bridge never
+  rises past its eaves. An arch in an older save that no longer qualifies comes down on load, as any does.

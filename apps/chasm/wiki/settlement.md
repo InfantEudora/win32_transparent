@@ -64,7 +64,7 @@ settlement of either end, so the far bank may lie outside. Erasing is never refu
 Its border is marked on the land the way The Settlers marks one: a slim post with a small terracotta flag at every
 edge of land where one settlement ends or two meet, the flag turned toward the territory - not along a cliff's edge.
 With anything selected, the top left names its colony, a person's by their home: COLONY 1, 2, 3, kept for good.
-With two or more, the top bar and NEEDS ATTENTION show the colony in view, and NEEDS ATTENTION the others' dangers.
+With two or more, the top bar, NEEDS ATTENTION and JOBS show the colony in view, and NEEDS ATTENTION the others' dangers.
 
 With a person selected, the cursor says how far it is to walk to the land under it ("37 units to walk"), amber when
 it is in another settlement or none, "No way there" if it can't be reached, and "Hidden under the clouds" under them.

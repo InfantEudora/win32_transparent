@@ -218,3 +218,34 @@ selected person is going.
 - **A stair with nothing above it** still takes every side - a mound.
 - **Not refused**: a field painted over a piece afterwards (fields do not know the castle).
 - The panel's controls were checked by a scripted click, not by eye: the app ran minimised.
+
+## As built: levels, as a terrace's (2026-10-23)
+
+The user, with the terraces built (`terraces_plan.md`): on a hill a castle wall showed steps - each plot's deck its own
+ground plus its storeys - and a castle at the height of a terrace beside it had no way onto it, its deck tilting
+toward it. Asked: the castle's height as a terrace's.
+
+- **A level per piece** (`ZoneState::castle_base`, `ZoneCastleBase`): whole storeys, as a terrace's top, its storeys
+  counted from it - its ground built up to it. A drag is one level (`ZoneCastleLevelFor`): its first piece takes the
+  level of the piece it is painted on, else the highest ground under its plot rounded up; every piece after takes the
+  same. A piece over a piece stands on its level.
+- **Up a hill**: a piece stands a storey over all the ground under it, an arch two (`ZoneCanCastle`) - so a level drag
+  uphill stops where the hill rises past it ("the ground rises past this level - start a new drag up there, or a
+  stair"); a two-storey wall climbs a storey further. Downhill it grows taller.
+- **Heights as heights** (`WalkNodeHalves`): a node's height in half storeys - a castle deck's over its level, a
+  tower's over its ground, the ground's own, a terrace's top exactly. `WalkJoin` compares those (`SpansMeet`) and
+  returns where they meet; a deck level with a terrace's top or the hill joins it, a stair's foot comes down to ground
+  as much as a storey under it, a tower's platform is still got onto by its ladder alone. `BuildingLayerHeight` and
+  `BuildingMeetHeight` draw and walk them (`CastleMesh.cpp`, `RouteHeight`): flat decks over a hill, and flat onto a
+  terrace, with no parapet on that edge and no coping on the terrace's wall there (`TerraceMesh.cpp`).
+- **Saved** as `[plot, piece, level]` (an older save's pieces take the level a piece painted there now would) and
+  hashed; `chasm_pick`'s `zone_castle` gives `level` and `top_y`.
+- **Checked** on `saves/terraces_test.json`: two one-storey blocks in the notch under the top-4 terrace, at level 3 -
+  their top 5.2, the terrace's - a posted walk from the terrace onto them (`[32711, 32729, 32731]`, layers
+  `[0, 2, 2]`), none for a villager; drawn flat onto the terrace, parapets on the other sides. A one-storey drag up the
+  west hill: two blocks at level 5, the third refused as the ground rose; a two-storey drag beside it climbed all
+  three at one level. On screen both walls flat.
+- Also (`ApplicationChasm.cpp`): the debug view's outlines - hover, selection, a drag's plan - lie on a terrace's top,
+  not the ground under it, as the castle's hover lay on its deck.
+- **Changed for the prototype's walls and towers**: a tower's platform and a wall now join where their decks are level,
+  not where their storeys count the same - a wall built up to a level may meet a tower a storey off.

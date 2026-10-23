@@ -6,7 +6,7 @@ status: built
 summary: Drawn as lines, cleared by woodcutters and built by people without a job. Roads cost only work and double walking speed; walls cost wood too; a road through a wall is a gate whose door can be shut.
 plans: line_works_plan.md > As built; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4d, the look; woodcutting_plan.md > Decided (the user, 2026-10-11); defence_plan.md > As built: step 3, gate doors; arches_plan.md > As built: step 1, the owner; arches_plan.md > As built: step 2, the floor; arches_plan.md > As built: step 3, built as a site; arches_plan.md > As built: step 4, losing it
 code: Economy.cpp: FindRoadWork LineJobs RoadTrees RaiseWall; Walkers.h: WALKER_SPEED_ROAD; Zones.h: ZoneShutToWalkers ZoneArchStoreys ZoneArchOwner ZoneKindHasBody; RoadMesh.cpp: RoadCellFilled EdgeDressing EdgeBesideFill CellInTown BuildCobbles HarmedLog BuildGate; ZoneMesh.h: ZoneHarmLook
-verified: 2026-10-19
+verified: 2026-10-23
 ---
 
 Roads and walls are drawn as a line in play, and each plot of the line is a site until it's built. A
@@ -46,11 +46,11 @@ clear they walk straight; otherwise they follow the grid, choosing the quickest 
 
 ## Arches
 
-A road running between two-storey buildings of the **same kind** is built over: their upper storeys bridge
-it, over a passage one storey high, where at most three such road plots run in a row. The arch is part of
-one of them: the building on both sides if it is one, otherwise the one with the most plots beside it (the
-older on a tie). It is drawn in that building's look, and clicking it selects that building. A house never
-bridges into a store, nothing bridges to a guard tower, and no arch goes over a gate.
+A road between buildings of the **same kind** is built over: their upper storeys bridge it over a passage a storey high,
+at most three such road plots in a row, never round an open corner. Its floor is its owner's storey over the passage -
+one on a [[Terrace|terrace]] a storey up bridges it with its ground floor - up to the lowest side's eaves. The owner is the
+building on both sides, else the one with most plots beside it (the older on a tie): drawn in its look, selected with
+it. A house never bridges into a store, nothing bridges to a guard tower, and no arch goes over a gate.
 
 Its storeys over the passage are that building's **floor**: a [[House|house]]'s places, pantry room and
 firewood, a [[Store|store]]'s room, a builders' hut's builders. They are **built** like the building's own

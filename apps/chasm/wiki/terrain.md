@@ -5,7 +5,7 @@ kind: world
 status: partial
 summary: Ground at heights in steps (the plateau, balconies on the chasm's walls, islands in it, and the floor under the clouds), framed by biomes, with slope and water limiting what goes where.
 plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; terraces_plan.md > Stage 1: foundations under buildings; water_tools_plan.md > Height painted by hand; water_tools_plan.md > Cliffs painted by hand
-code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable TerrainCliffPlots; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE ZONE_RISE_FOUNDATION ZoneLandSays ZoneNeedsFoundation; Zones.h: ZoneKindTakesFoundation; BuildingMesh.cpp: BuildingFootHalves FOOTING_DEPTH; ApplicationChasmGhost.cpp: UpdateSlopeGrid SLOPE_GRID_RADIUS; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief GRID_CLIFF_DEEPEST ChasmPlaceCliffs
+code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable TerrainCliffPlots; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE ZONE_RISE_FOUNDATION ZoneLandSays ZoneNeedsFoundation BuildingFootHalves; Zones.h: ZoneKindTakesFoundation; BuildingMesh.cpp: FOOTING_DEPTH; ApplicationChasmGhost.cpp: UpdateSlopeGrid SLOPE_GRID_RADIUS; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief GRID_CLIFF_DEEPEST ChasmPlaceCliffs
 verified: 2026-10-22
 ---
 

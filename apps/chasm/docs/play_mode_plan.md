@@ -104,7 +104,10 @@ placement carries a flag saying so), set by whoever issued it.
     along a rim does not bob; another level is glided to (`CHASM_CAM_LEVEL_GLIDE`), the relief followed as before.
   - *Clearance* (`ClearPitch`, play mode): the camera tilts up over the player's pitch, as little as it must, so the
     line from the point to it keeps `CHASM_CAM_CLEAR` over the ground - not inside the cliff behind a balcony, and
-    seeing the point past the rim. Eased; the player's own pitch (`cam_pitch`) is untouched.
+    seeing the point past the rim. Eased; the player's own pitch (`cam_pitch`) is untouched. The line starts on the
+    ground, so the clearance ramps in over `CHASM_CAM_CLEAR_RAMP` (3) from the point: flat ground never tilts the
+    view, at any zoom (2026-10-23 - asked in full of any ground above the point, zoomed in, the plateau's ripples
+    flicked it between 54 and 69 degrees while panning).
   - *The shadow* (`FollowSun`): the sun's box fitted to the ground in view - where the view's corners meet the heights
     shadows fall on, `SUN_FIT_BELOW` under the point to `SUN_FIT_ABOVE` over it or the plateau - square, at most
     `SUN_FIT_MOST` camera distances, its size in steps of `SUN_FIT_STEP` so it seldom changes, still snapped to texels.

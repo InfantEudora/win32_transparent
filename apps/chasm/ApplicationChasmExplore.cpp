@@ -216,7 +216,8 @@ const char* ChasmDiscoveryName(int discovery){
 
 /*
     WHAT UNLOCKS WHAT (the user's, 2026-10-16): a river found brings the water collector and the bridge; the chasm,
-    the winch, the steam collector and the condenser (steam_plan.md); a boulder the stonecutter can break, his hut and the
+    the winch, the steam collector, the condenser, the sail loft, whose canvas is a zeppelin's, and the dock it is built on
+    (steam_plan.md); a boulder the stonecutter can break, his hut and the
     terrace, which is built of stone (terraces_plan.md); floatstone seen, the mine; and a builders' hut standing,
     the wall, the range and the tower. Everything else is there from the landing.
 */
@@ -226,7 +227,9 @@ int ChasmToolNeeds(int tool){
         case CHASM_TOOL_BRIDGE:         return DISCOVERY_RIVER;
         case CHASM_TOOL_WINCH:
         case CHASM_TOOL_STEAM:
-        case CHASM_TOOL_CONDENSER:      return DISCOVERY_CHASM;
+        case CHASM_TOOL_CONDENSER:
+        case CHASM_TOOL_SAIL_LOFT:
+        case CHASM_TOOL_DOCK:           return DISCOVERY_CHASM;
         case CHASM_TOOL_STONECUTTER:
         case CHASM_TOOL_TERRACE:        return DISCOVERY_BOULDER;      //it is built of stone (terraces_plan.md)
         case CHASM_TOOL_MINE:           return DISCOVERY_FLOATSTONE;
@@ -239,7 +242,7 @@ int ChasmToolNeeds(int tool){
 
 std::string ChasmDiscoveryTools(int discovery){
     static const std::pair<int,const char*> names[] = {
-        {CHASM_TOOL_WATER,"WATER"},{CHASM_TOOL_BRIDGE,"BRIDGE"},{CHASM_TOOL_WINCH,"WINCH"},{CHASM_TOOL_STEAM,"STEAM"},{CHASM_TOOL_CONDENSER,"CONDENSER"},{CHASM_TOOL_STONECUTTER,"STONECUTTER"},{CHASM_TOOL_TERRACE,"TERRACE"},
+        {CHASM_TOOL_WATER,"WATER"},{CHASM_TOOL_BRIDGE,"BRIDGE"},{CHASM_TOOL_WINCH,"WINCH"},{CHASM_TOOL_STEAM,"STEAM"},{CHASM_TOOL_CONDENSER,"CONDENSER"},{CHASM_TOOL_SAIL_LOFT,"SAIL LOFT"},{CHASM_TOOL_DOCK,"DOCK"},{CHASM_TOOL_STONECUTTER,"STONECUTTER"},{CHASM_TOOL_TERRACE,"TERRACE"},
         {CHASM_TOOL_MINE,"MINE"},{CHASM_TOOL_WALL,"WALL"},{CHASM_TOOL_RANGE,"RANGE"},{CHASM_TOOL_TOWER,"TOWER"}};
     std::string out;
     for (const auto& n : names){
@@ -356,7 +359,7 @@ void ApplicationChasm::UpdateDiscoveries(const ChasmWorld& w){
     }
     /*
         And whatever a building STANDING WHOLE shows was found - a collector or a bridge, a river; a winch, a steam
-        collector or a condenser, the chasm; a stonecutter's hut, a boulder; a mine, floatstone; a builders' hut, a range or a tower, the
+        collector, a condenser or a sail loft, the chasm; a stonecutter's hut, a boulder; a mine, floatstone; a builders' hut, a range or a tower, the
         builders - finished by the builders or not: one put down in debug mode is never a site, and a save from before
         the history has none of its buildings in the journal. A colony that has one can build another.
     */
@@ -366,7 +369,9 @@ void ApplicationChasm::UpdateDiscoveries(const ChasmWorld& w){
             case ZONE_KIND_BRIDGE:          return DISCOVERY_RIVER;
             case ZONE_KIND_WINCH:
             case ZONE_KIND_STEAM:
-            case ZONE_KIND_CONDENSER:       return DISCOVERY_CHASM;
+            case ZONE_KIND_CONDENSER:
+            case ZONE_KIND_SAIL_LOFT:
+            case ZONE_KIND_DOCK:            return DISCOVERY_CHASM;
             case ZONE_KIND_STONECUTTER:     return DISCOVERY_BOULDER;
             case ZONE_KIND_MINE:            return DISCOVERY_FLOATSTONE;
             case ZONE_KIND_BUILDERS:

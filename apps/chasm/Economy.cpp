@@ -23,6 +23,7 @@ const char* GoodName(int good){
         case GOOD_STONE:    return "stone";
         case GOOD_FLOATSTONE: return "floatstone";
         case GOOD_STEAM:    return "steam";
+        case GOOD_CANVAS:   return "canvas";
         default:            return "?";
     }
 }
@@ -89,6 +90,7 @@ const char* EconomyJobName(int job){
         case WORKER_JOB_MINER:      return "miner";
         case WORKER_JOB_STEAM:      return "steam_carrier";
         case WORKER_JOB_CONDENSER:  return "condenser_hand";
+        case WORKER_JOB_SAILMAKER:  return "sailmaker";
         case WORKER_JOB_NONE:       return "none";
         case WORKER_JOB_PLAYING:    return "playing";
         case WORKER_JOB_BABY:       return "baby";
@@ -122,6 +124,7 @@ int EconomyJobOf(int kind){
         case ZONE_KIND_MINE:        return WORKER_JOB_MINER;       //stone_plan.md step 5
         case ZONE_KIND_STEAM:       return WORKER_JOB_STEAM;       //steam_plan.md
         case ZONE_KIND_CONDENSER:   return WORKER_JOB_CONDENSER;   //steam_plan.md step 3
+        case ZONE_KIND_SAIL_LOFT:   return WORKER_JOB_SAILMAKER;   //steam_plan.md step 4
         default:                    return WORKER_JOB_NONE;
     }
 }
@@ -140,6 +143,44 @@ int EconomyRopewalkPlots(const ZoneState& z, uint32_t id){
 float EconomyRopewalkPace(const ZoneState& z, uint32_t id){
     int plots = EconomyRopewalkPlots(z,id);
     return (plots >= ECONOMY_ROPEWALK_MIN_PLOTS) ? (float)plots / (float)ECONOMY_ROPEWALK_MIN_PLOTS : 0.0f;
+}
+
+static const EconomyHempWork hemp_works[] = {
+    {ZONE_KIND_ROPEWALK,WORKER_JOB_ROPEMAKER,GOOD_ROPE,ECONOMY_ROPE_HEMP,ECONOMY_ROPE_SECONDS,ECONOMY_ROPEWALK_PILE},
+    {ZONE_KIND_SAIL_LOFT,WORKER_JOB_SAILMAKER,GOOD_CANVAS,ECONOMY_CANVAS_HEMP,ECONOMY_CANVAS_SECONDS,ECONOMY_SAIL_LOFT_PILE},
+};
+
+const EconomyHempWork* EconomyHempWorkOf(int job){
+    for (const EconomyHempWork& h : hemp_works){
+        if (h.job == job){
+            return &h;
+        }
+    }
+    return NULL;
+}
+
+const EconomyHempWork* EconomyHempWorkAt(int kind){
+    for (const EconomyHempWork& h : hemp_works){
+        if (h.kind == kind){
+            return &h;
+        }
+    }
+    return NULL;
+}
+
+float EconomyHempPace(const ZoneState& z, uint32_t id){
+    if (id >= z.buildings.size() || z.buildings[id].size <= 0){
+        return 0.0f;
+    }
+    if (z.buildings[id].kind != ZONE_KIND_SAIL_LOFT){
+        return EconomyRopewalkPace(z,id);
+    }
+    for (size_t v = 0; v < z.building.size(); v++){
+        if (z.building[v] == id && z.standing[v] > 0){
+            return 1.0f;
+        }
+    }
+    return 0.0f;
 }
 
 int EconomyGoodHeld(const EconomyState& e, int good){
@@ -191,6 +232,7 @@ const char* EconomyEventName(int kind){
         case EVENT_ZOMBIE_FELLED:       return "zombie_felled";
         case EVENT_RANKED:              return "ranked";
         case EVENT_GREW_OLD:            return "grew_old";
+        case EVENT_ZEPPELIN_STAGE:      return "zeppelin_stage";
         default:                        return "unknown";
     }
 }
@@ -215,7 +257,7 @@ bool EconomyJournaled(int kind){
            || kind == EVENT_BALCONY_REACHED || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED
            || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST
            || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED || kind == EVENT_RANKED
-           || kind == EVENT_GREW_OLD;
+           || kind == EVENT_GREW_OLD || kind == EVENT_ZEPPELIN_STAGE;
 }
 
 //--- Kills and ranks (Economy.h, KILLS and RANKS; ranks_plan.md) ----------------------------------------------------
@@ -487,12 +529,17 @@ int EconomyRopeChain(const EconomyState& e, const ZoneState& z){
     return !f_hemp ? ECONOMY_ROPE_NO_HEMP : !f_ropewalk ? ECONOMY_ROPE_NO_ROPEWALK : ECONOMY_ROPE_MAKING;
 }
 
-void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount out[WORKER_JOB_COUNT], int* jobless){
+void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount out[WORKER_JOB_COUNT], int* jobless,
+                      uint32_t settlement){
     for (int j = 0; j < WORKER_JOB_COUNT; j++){
         out[j] = EconomyJobCount();
     }
+    bool f_all = settlement == ECONOMY_EVERY_SETTLEMENT;
     size_t n = std::min(z.buildings.size(),e.places.size());
     for (size_t id = 1; id < n; id++){
+        if (!f_all && EconomySettlementOf(e,(uint32_t)id) != settlement){
+            continue;
+        }
         int job = EconomyJobOf(z.buildings[id].kind);
         if (job >= 0 && job < WORKER_JOB_COUNT){
             out[job].places += e.places[id];
@@ -505,6 +552,9 @@ void EconomyJobCounts(const EconomyState& e, const ZoneState& z, EconomyJobCount
     }
     int none = 0;
     for (const EconomyWorker& k : e.workers){
+        if (!f_all && EconomyPersonLand(e,k) != settlement){
+            continue;
+        }
         if (k.job >= 0 && k.job < WORKER_JOB_COUNT){
             out[k.job].working++;
         }else if (k.job == WORKER_JOB_NONE){
@@ -529,6 +579,7 @@ int EconomyJobSkill(int job){
         case WORKER_JOB_MINER:      return SKILL_STRENGTH;      //...and mining
         case WORKER_JOB_STEAM:      return SKILL_INGENUITY;     //"machines and steam" (gameplay_plan.md's table)
         case WORKER_JOB_CONDENSER:  return SKILL_INGENUITY;     //...which names the condenser too
+        case WORKER_JOB_SAILMAKER:  return SKILL_PRECISION;     //a craft, as the ropemaker's (steam_plan.md step 4)
         default:                    return SKILL_STRENGTH;      //a woodcutter, a builder, and anyone carrying
     }
 }
@@ -1024,11 +1075,12 @@ int JobOf(int kind){
     return EconomyJobOf(kind);
 }
 
-//What a worker carries off from his workplace (FetchFromWorkplace): whatever it holds - but a ropemaker the rope,
-//never the hemp waiting there to be made into it (goods_plan.md), a condenser's hand the water, never its steam
-//(steam_plan.md), and a woodcutter wood: the camp's (woodcutting_plan.md) holds its supplies too.
+//What a worker carries off from his workplace (FetchFromWorkplace): whatever it holds - but a ropemaker the rope and a
+//sailmaker the canvas, never the hemp waiting there to be made into it (EconomyHempWork), a condenser's hand the water,
+//never its steam (steam_plan.md), and a woodcutter wood: the camp's (woodcutting_plan.md) holds its supplies too.
 GoodsMask WorkplaceMakes(int job){
-    return (job == WORKER_JOB_ROPEMAKER) ? GOOD_BIT(GOOD_ROPE) : (job == WORKER_JOB_WOODCUTTER) ? GOOD_BIT(GOOD_WOOD)
+    const EconomyHempWork* work = EconomyHempWorkOf(job);
+    return work ? GOOD_BIT(work->made) : (job == WORKER_JOB_WOODCUTTER) ? GOOD_BIT(GOOD_WOOD)
          : (job == WORKER_JOB_CONDENSER) ? GOOD_BIT(GOOD_WATER)
          : (job == WORKER_JOB_STONECUTTER) ? GOOD_BIT(GOOD_STONE)
          : (job == WORKER_JOB_MINER) ? (GOOD_BIT(GOOD_STONE) | GOOD_BIT(GOOD_FLOATSTONE)) : GOODS_ALL;
@@ -2700,7 +2752,8 @@ float Economy::CrowdPace(const EconomyWorker& k) const{
 /*
     From his house to his workplace to fetch what it has made - the hut's pile, the collector's water - when a
     store will take a load of it. True if he set off. A farmer's harvest is FetchHarvest's: his land is fields.
-    A MADE good (STOCK KEPT) - a ropemaker's rope - only while the stores lack some of its level, and no more than that.
+    A MADE good (STOCK KEPT) - a ropemaker's rope, a sailmaker's canvas - only while the stores lack some of its level, and
+    no more than that.
 */
 bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     if (!k.building || home_plot[k.building] < 0){
@@ -2735,12 +2788,15 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
         }
     }
     int load = std::min(per_load,there);
-    //Water, steam and rope only by the load: they come a unit at a time, and a trip for one is a waste - but a made
-    //good's last few for its level all the same.
+    //Water, steam, rope and canvas only by the load: they come a unit at a time, and a trip for one is a waste - but a
+    //made good's last few for its level all the same.
     int least = (k.job == WORKER_JOB_WATER || k.job == WORKER_JOB_STEAM || k.job == WORKER_JOB_CONDENSER
-                 || k.job == WORKER_JOB_ROPEMAKER) ? ECONOMY_LOAD : 1;
+                 || EconomyHempWorkOf(k.job)) ? ECONOMY_LOAD : 1;
     if (GOODS_MADE & GOOD_BIT(good)){
-        int short_by = KeptShort(z,good,EconomySettlementOf(state,k.building));     //his workplace's colony's level
+        //His workplace's colony's level, less the loads those others are coming for: what they take there is not on
+        //its way to a store yet, so KeptShort cannot count it - and two sailmakers walked for one load (steam_plan.md
+        //step 4).
+        int short_by = KeptShort(z,good,EconomySettlementOf(state,k.building)) - (own[good] - there);
         load = std::min(load,short_by);
         least = std::min(least,short_by);
     }
@@ -2823,6 +2879,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     state.pantry.resize(n,std::array<int,GOOD_COUNT>{});    //a camp's; split, it stays with the piece keeping the id
     state.heat.resize(std::max<size_t>(n,1),HEAT_NONE);
     state.guards.resize(n,-1);
+    state.zeppelin.resize(n,0);
     state.endless.resize(n,0);
     /*
         Where each site with something brought stood at the last Derive: one taken off - cancelled, or its last plot
@@ -2878,6 +2935,18 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
         }
         cells_of[id].push_back((int)c);
         site_cells[id] += z.field_built[c] ? 0 : 1;
+    }
+    /*
+        THE ZEPPELIN DOCKS (steam_plan.md step 5): where each one's zeppelin lies and whether it fits - and none built on
+        an id that is no dock now, so a dock placed on it later starts afresh.
+    */
+    dock_lie.assign(n,ZoneDockLie());
+    for (size_t id = 1; id < n; id++){
+        if (z.buildings[id].kind == ZONE_KIND_DOCK && z.buildings[id].size > 0){
+            ZoneDockFrame(w,z,(uint32_t)id,dock_lie[id]);
+        }else{
+            state.zeppelin[id] = 0;
+        }
     }
     for (size_t id = 1; id < n; id++){
         if (z.buildings[id].size <= 0){
@@ -3122,8 +3191,9 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
             }
             state.places[id] = (standing >= ECONOMY_ROPEWALK_MIN_PLOTS) ? 1 : 0;
         }else if (b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_STONECUTTER
-                  || b.kind == ZONE_KIND_STEAM || b.kind == ZONE_KIND_CONDENSER){
+                  || b.kind == ZONE_KIND_STEAM || b.kind == ZONE_KIND_CONDENSER || b.kind == ZONE_KIND_SAIL_LOFT){
             //WORKERS BY PLOTS (building_size_plan.md): a worker for every ECONOMY_PLOTS_PER_WORKER plots standing, rounded up.
+            //A sail loft too (steam_plan.md step 4): unlike the ropewalk, its floor is hands, not speed.
             int standing = 0;
             for (int v : plots_of[id]){
                 standing += (z.standing[v] > 0) ? 1 : 0;
@@ -3212,9 +3282,10 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
                 }else if (kind == ZONE_KIND_CONDENSER){
                     //What it makes and what it is made from, as a ropewalk's (steam_plan.md step 3).
                     attached |= GOOD_BIT(GOOD_STEAM) | GOOD_BIT(GOOD_WATER);
-                }else if (kind == ZONE_KIND_ROPEWALK){
-                    //What it makes and what it is made from (goods_plan.md): the hemp brought there, the rope taken.
-                    attached |= GOOD_BIT(GOOD_HEMP) | GOOD_BIT(GOOD_ROPE);
+                }else if (EconomyHempWorkAt(kind)){
+                    //What it makes and what it is made from (goods_plan.md): the hemp brought there, the rope taken - or
+                    //at a sail loft the canvas (steam_plan.md step 4).
+                    attached |= GOOD_BIT(GOOD_HEMP) | GOOD_BIT(EconomyHempWorkAt(kind)->made);
                 }else if (kind == ZONE_KIND_STONECUTTER){
                     attached |= GOOD_BIT(GOOD_STONE);       //stone_plan.md
                 }else if (kind == ZONE_KIND_MINE){
@@ -5003,11 +5074,11 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 GoTrain(k,z,walkers);
                 break;
             }
-            //A ropemaker (goods_plan.md): a load of rope waiting at the ropewalk to a store first, then rope made of
-            //the hemp there, or hemp fetched for it (MakeRope).
-            if (k.job == WORKER_JOB_ROPEMAKER){
+            //A ropemaker or a sailmaker (EconomyHempWork): a load of what his workshop made to a store first, then more
+            //made of the hemp there, or hemp fetched for it (MakeOfHemp).
+            if (EconomyHempWorkOf(k.job)){
                 if (!FetchFromWorkplace(k,z,walkers)){
-                    MakeRope(k,z,walkers);
+                    MakeOfHemp(k,z,walkers);
                 }
                 break;
             }
@@ -5461,8 +5532,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         case WORKER_TO_WORKSHOP:
             Walk(k,dt);
             if (Arrived(k)){
-                if (k.job == WORKER_JOB_ROPEMAKER){
-                    AtRopewalk(k,z,walkers,pace);       //goods_plan.md: the same errand, at a ropewalk
+                if (EconomyHempWorkOf(k.job)){
+                    AtHempWorkshop(k,z,walkers,pace);   //goods_plan.md: the same errand, at a ropewalk or a sail loft
                 }else if (k.job == WORKER_JOB_CONDENSER){
                     AtCondenser(k,z,walkers);           //steam_plan.md step 3: steam brought to a condenser
                 }else{
@@ -5470,21 +5541,22 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
             }
             break;
-        case WORKER_MAKING:
+        case WORKER_MAKING:{
             if (--k.timer > 0){
                 break;
             }
-            //A rope (goods_plan.md: `carry_good` names it, nothing carried) into the ropewalk's stock - the ropewalk
-            //gone or too short meanwhile, its hemp went with it - and on (AtRopewalk).
-            if (k.carry_good == GOOD_ROPE){
-                if (k.job == WORKER_JOB_ROPEMAKER && EconomyRopewalkPace(z,k.building) > 0.0f){
-                    state.stock[k.building][GOOD_ROPE]++;
+            //A rope or a canvas (EconomyHempWork: `carry_good` names it, nothing carried) into the workshop's stock - the
+            //workshop gone, or too short, meanwhile, its hemp went with it - and on (AtHempWorkshop).
+            const EconomyHempWork* work = EconomyHempWorkOf(k.job);
+            if (work && k.carry_good == work->made){
+                if (EconomyHempPace(z,k.building) > 0.0f){
+                    state.stock[k.building][work->made]++;
                     state.version++;
                 }
                 k.carry_good = -1;
                 k.stint++;
                 k.state = WORKER_TO_WORKSHOP;
-                AtRopewalk(k,z,walkers,pace);
+                AtHempWorkshop(k,z,walkers,pace);
                 break;
             }
             //One made, into the hut's stock - the hut gone meanwhile, it went with it - and on (AtWorkshop).
@@ -5496,6 +5568,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
             k.state = WORKER_TO_WORKSHOP;   //not MAKING while AtWorkshop counts what is being made
             AtWorkshop(k,z,walkers,pace);
             break;
+        }
         case WORKER_TO_FETCH:
             //His site gone while he walks - cancelled, erased: he sees it at his next look rather than at the wood.
             if (f_look && !SiteAlive(z,k.site)){
@@ -6551,9 +6624,18 @@ void Economy::MealTick(EconomyWorker& k){
     }
 }
 
-bool Economy::SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry, bool f_endless){
+bool Economy::SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry, bool f_endless, bool f_site){
     if (!id || id >= state.stock.size() || id >= state.pantry.size() || good < 0 || good >= GOOD_COUNT || amount < 0){
         return false;
+    }
+    if (f_site){
+        if (id >= state.site.size() || !SiteAlive(z,id)){
+            return false;
+        }
+        state.site[id][good] = amount;
+        state.version++;
+        Build(z,id);
+        return true;
     }
     //A WELL holds water alone. It is endless only when told so, and any amount set without that makes it finite again.
     bool f_well = id < z.buildings.size() && z.buildings[id].kind == ZONE_KIND_WELL && id < state.endless.size();
@@ -8335,6 +8417,8 @@ int EconomyCellCost(int kind, int good){
         //An archery range (range_plan.md): wood for the stands, wheat for the bales.
         case ZONE_KIND_RANGE:   return (good == GOOD_WOOD) ? ECONOMY_RANGE_WOOD_PER_CELL
                                      : (good == GOOD_WHEAT) ? ECONOMY_RANGE_WHEAT_PER_CELL : 0;
+        //A zeppelin dock (steam_plan.md step 5): its cradle's footings and its mast. Its zeppelin is a site of its own.
+        case ZONE_KIND_DOCK:    return (good == GOOD_WOOD) ? ECONOMY_DOCK_WOOD_PER_CELL : 0;
         default:                return 0;
     }
 }
@@ -8476,6 +8560,13 @@ std::array<int,GOOD_COUNT> Economy::SiteNeed(const ZoneState& z, uint32_t id) co
         }
         return need;
     }
+    //A DOCK that stands (steam_plan.md step 5): its zeppelin's stages still to stand, a good each.
+    if (ZeppelinSite(z,id)){
+        for (int s = state.zeppelin[id] + 1; s <= ZEPPELIN_STAGES; s++){
+            need[EconomyZeppelinGood(s)] += EconomyZeppelinCost(s);
+        }
+        return need;
+    }
     //Its storeys still to build, and its arches' floors (arches_plan.md step 3) - each by its level.
     for (const std::vector<int>* list : {&plots_of[id],&arches_of[id]}){
         for (int v : *list){
@@ -8500,6 +8591,13 @@ std::array<int,GOOD_COUNT> Economy::SiteLeft(const ZoneState& z, uint32_t id, co
         left[g] -= brought[g] + coming[g];
     }
     return left;
+}
+
+bool Economy::ZeppelinSite(const ZoneState& z, uint32_t id) const{
+    return id && id < z.buildings.size() && z.buildings[id].kind == ZONE_KIND_DOCK && z.buildings[id].size > 0
+           && id < site_cells.size() && site_cells[id] == 0 && id < cells_of.size() && !cells_of[id].empty()
+           && id < dock_lie.size() && dock_lie[id].f_fits && id < state.zeppelin.size()
+           && state.zeppelin[id] < ZEPPELIN_STAGES;
 }
 
 bool Economy::TowerWhole(const ZoneState& z, uint32_t id) const{
@@ -8634,8 +8732,8 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
         if (!Ours(k,(uint32_t)id)){
             continue;
         }
-        //A building's storeys still to stand, or a field's cells still a site (fields_plan.md).
-        if (site_storeys[id] > 0 || site_cells[id] > 0){
+        //A building's storeys still to stand, or a field's cells still a site (fields_plan.md) - or a dock's zeppelin.
+        if (site_storeys[id] > 0 || site_cells[id] > 0 || ZeppelinSite(z,(uint32_t)id)){
             Wanting s{(uint32_t)id,SiteLeft(z,(uint32_t)id,&k)};
             if (wants(s.left)){
                 sites.push_back(s);
@@ -8643,15 +8741,15 @@ bool Economy::FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walker
         }
         //A camp's supplies are the colony's; a house's stock only once nobody lives there (WHOSE IT IS, Economy.h).
         //A builders' hut's PROVISIONS too, made for the sites - never its wheat and beans (defence_plan.md); and a
-        //ropewalk's ROPE, as a woodpile's wood - never its hemp (goods_plan.md).
+        //ropewalk's ROPE or a sail loft's CANVAS, as a woodpile's wood - never their hemp (EconomyHempWork).
         bool f_hut = b.kind == ZONE_KIND_BUILDERS;
-        bool f_ropewalk = b.kind == ZONE_KIND_ROPEWALK;
+        const EconomyHempWork* work = EconomyHempWorkAt(b.kind);
         bool f_holds = b.kind == ZONE_KIND_STORE || b.kind == ZONE_KIND_CAMP || b.kind == ZONE_KIND_WOODCUTTER || f_hut
-                       || f_ropewalk || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
+                       || work || (b.kind == ZONE_KIND_HOUSE && !PrivateStock(z,(uint32_t)id));
         if (f_holds && stands[id]){
             Holding h{(uint32_t)id,{}};
             for (int g = 0; g < GOOD_COUNT; g++){
-                bool f_offered = f_hut ? g == GOOD_PROVISIONS : f_ropewalk ? g == GOOD_ROPE : true;
+                bool f_offered = f_hut ? g == GOOD_PROVISIONS : work ? g == work->made : true;
                 h.free[g] = f_offered ? GoodFree((uint32_t)id,g) : 0;
             }
             if (wants(h.free)){
@@ -8865,6 +8963,24 @@ void Economy::Build(const ZoneState& z, uint32_t id){
                 }
             }
             state.version++;
+        }
+        return;
+    }
+    /*
+        A DOCK's zeppelin (steam_plan.md step 5): each stage once those before it stand and all of its one good is
+        there - so its steam goes in last, and it is never left half-filled for want of canvas. Told, every one.
+    */
+    if (ZeppelinSite(z,id)){
+        while (state.zeppelin[id] < ZEPPELIN_STAGES){
+            int stage = state.zeppelin[id] + 1;
+            int good = EconomyZeppelinGood(stage);
+            if (state.site[id][good] < EconomyZeppelinCost(stage)){
+                break;
+            }
+            state.site[id][good] -= EconomyZeppelinCost(stage);
+            state.zeppelin[id] = stage;
+            state.version++;
+            Event(EVENT_ZEPPELIN_STAGE,0,id,home_plot[id],dock_lie[id].centre,stage,GOOD_BIT(good));
         }
         return;
     }
@@ -9827,8 +9943,8 @@ int Economy::ProvisionsLacking(const ZoneState& z, uint32_t settlement, int* spa
         }
     }
     for (const EconomyWorker& o : state.workers){
-        //Not a ropemaker's rope; a builder makes them at his hut.
-        held += (o.state == WORKER_MAKING && o.carry_good != GOOD_ROPE && EconomySettlementOf(state,o.building) == settlement) ? 1 : 0;
+        //Not a ropemaker's rope or a sailmaker's canvas; a builder makes them at his hut.
+        held += (o.state == WORKER_MAKING && !EconomyHempWorkOf(o.job) && EconomySettlementOf(state,o.building) == settlement) ? 1 : 0;
         held += (o.state == WORKER_TO_STORE && o.store && o.carry_good == GOOD_PROVISIONS && SettlementOfPlace(o.store) == settlement)
                 ? o.carry : 0;
     }
@@ -10100,24 +10216,38 @@ void Economy::AtWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
 }
 
 /*
-    A ropemaker's errand from home (goods_plan.md), after a load of rope to a store (FetchFromWorkplace): with
-    ECONOMY_ROPE_HEMP hemp at his ropewalk and room in its pile, there to make rope; else, with room left, a load of
-    hemp - as much as makes what the pile still has room for, less what lies there - from the nearest store, camp's
-    supplies, house nobody lives in or crate with some to spare. No count of what is wanted, unlike provisions:
-    hemp has no other use. False if neither is to do, or he can get to none of it.
+    A ropemaker's or a sailmaker's errand from home (EconomyHempWork; goods_plan.md, steam_plan.md step 4), after a load
+    of what his workshop makes to a store (FetchFromWorkplace): with the hemp for one at it and room in its pile, there
+    to make it; else, with room left, a load of hemp - as much as makes what the pile still has room for, less what
+    lies there - from the nearest store, camp's supplies, house nobody lives in or crate with some to spare.
+    The others of his workshop count first - a sail loft's several (WORKERS BY PLOTS): what they are making and are
+    on their way to make takes room in the pile, those on their way the hemp lying there, and what they are bringing
+    the hemp still wanted. A ropewalk's one ropemaker has none. No count of what is wanted, unlike provisions: the
+    pile is the bound. False if neither is to do, or he can get to none of it.
 */
-bool Economy::MakeRope(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
+bool Economy::MakeOfHemp(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     const ChasmWorld& w = *state.world;
     uint32_t h = k.building;
-    if (k.job != WORKER_JOB_ROPEMAKER || EconomyRopewalkPace(z,h) <= 0.0f || h >= state.stock.size()){
+    const EconomyHempWork* work = EconomyHempWorkOf(k.job);
+    if (!work || EconomyHempPace(z,h) <= 0.0f || h >= state.stock.size()){
         return false;
     }
+    int going = 0;
+    int coming = 0;
+    for (const EconomyWorker& o : state.workers){
+        if (&o == &k || o.building != h || o.job != k.job){
+            continue;
+        }
+        going += (o.state == WORKER_TO_WORKSHOP && o.carry <= 0) ? 1 : 0;
+        coming += (o.state == WORKER_TO_INPUT || o.state == WORKER_TAKING_INPUT) ? o.stint
+                : (o.state == WORKER_TO_WORKSHOP) ? std::max(0,o.carry) : 0;
+    }
     const std::array<int,GOOD_COUNT>& own = state.stock[h];
-    int room = ECONOMY_ROPEWALK_PILE - own[GOOD_ROPE];
+    int room = work->pile - own[work->made] - OthersMaking(k) - going;
     if (room <= 0){
         return false;
     }
-    if (own[GOOD_HEMP] >= ECONOMY_ROPE_HEMP){
+    if (own[GOOD_HEMP] - going * work->hemp >= work->hemp){
         int plot = NearestPlot(h,k.pos);
         if (plot < 0 || !RouteTo(k,z,walkers,plot,w.grid->fine.pos[plot])){
             return false;
@@ -10129,7 +10259,7 @@ bool Economy::MakeRope(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         k.state = WORKER_TO_WORKSHOP;
         return true;
     }
-    int want = std::min(ECONOMY_LOAD,room * ECONOMY_ROPE_HEMP - own[GOOD_HEMP]);
+    int want = std::min(ECONOMY_LOAD,room * work->hemp - own[GOOD_HEMP] - coming);
     if (want <= 0){
         return false;
     }
@@ -10170,15 +10300,16 @@ bool Economy::MakeRope(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
 }
 
 /*
-    At his ropewalk (goods_plan.md; WORKER_TO_WORKSHOP arrived, or a rope made): the hemp he brought into its stock;
-    then, with ECONOMY_ROPE_HEMP of it there and room in the pile, a rope made - the hemp taken at the start - at his
-    pace and the ropewalk's (EconomyRopewalkPace), up to a load a round; else home. The ropewalk gone, too short now,
-    or no longer his: what he holds to a store.
+    At his ropewalk or sail loft (EconomyHempWork; WORKER_TO_WORKSHOP arrived, or one made): the hemp he brought into its
+    stock; then, with the hemp for one there and room in the pile past what the others are making, one made - the hemp
+    taken at the start - at his pace and the workshop's (EconomyHempPace), up to a load a round; else home. The workshop
+    gone, too short now, or no longer his: what he holds to a store.
 */
-void Economy::AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace){
+void Economy::AtHempWorkshop(EconomyWorker& k, const ZoneState& z, Walkers& walkers, float pace){
     uint32_t h = k.building;
-    float length = (k.job == WORKER_JOB_ROPEMAKER) ? EconomyRopewalkPace(z,h) : 0.0f;
-    if (length <= 0.0f || h >= state.stock.size()){
+    const EconomyHempWork* work = EconomyHempWorkOf(k.job);
+    float speed = work ? EconomyHempPace(z,h) : 0.0f;
+    if (speed <= 0.0f || h >= state.stock.size()){
         if (k.carry > 0 && FindStore(k,z,walkers)){
             return;
         }
@@ -10196,21 +10327,29 @@ void Economy::AtRopewalk(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
         k.stint = 0;
         state.version++;
     }
-    if (own[GOOD_HEMP] >= ECONOMY_ROPE_HEMP && own[GOOD_ROPE] < ECONOMY_ROPEWALK_PILE && k.stint < ECONOMY_LOAD){
-        own[GOOD_HEMP] -= ECONOMY_ROPE_HEMP;
-        k.carry_good = GOOD_ROPE;       //what he is making (WORKER_MAKING) - nothing carried
+    if (own[GOOD_HEMP] >= work->hemp && own[work->made] + OthersMaking(k) < work->pile && k.stint < ECONOMY_LOAD){
+        own[GOOD_HEMP] -= work->hemp;
+        k.carry_good = work->made;      //what he is making (WORKER_MAKING) - nothing carried
         k.state = WORKER_MAKING;
-        EconomyStartTimer(k,SecondsToTicks(ECONOMY_ROPE_SECONDS / (pace * length)));
+        EconomyStartTimer(k,SecondsToTicks(work->seconds / (pace * speed)));
         state.version++;
         return;
     }
     GoHome(k,z,walkers);
 }
 
+int Economy::OthersMaking(const EconomyWorker& k) const{
+    int n = 0;
+    for (const EconomyWorker& o : state.workers){
+        n += (&o != &k && o.building == k.building && o.job == k.job && o.state == WORKER_MAKING) ? 1 : 0;
+    }
+    return n;
+}
+
 /*
     A condenser's hand from home (steam_plan.md step 3), after a load of its water to a store (FetchFromWorkplace): with no
     steam collector beside it, its steam run out and room for more water, a load of steam from the nearest store, camp's
-    supplies, house nobody lives in or crate with some to spare - as a ropemaker fetches hemp (MakeRope) - unless another
+    supplies, house nobody lives in or crate with some to spare - as a ropemaker fetches hemp (MakeOfHemp) - unless another
     of its hands is on his way with some. Beside a collector he brings none: it waits on the collector, which is how the
     player sees a pairing that is wrong. False if there is nothing to do, or none he can get to.
 */
@@ -10359,6 +10498,11 @@ EconomySaved EconomySaveState(const EconomyState& state){
             s.guards.push_back(std::make_pair((uint32_t)id,state.guards[id]));
         }
     }
+    for (size_t id = 1; id < state.zeppelin.size(); id++){
+        if (state.zeppelin[id] > 0){
+            s.zeppelins.push_back(std::make_pair((uint32_t)id,state.zeppelin[id]));
+        }
+    }
     for (size_t id = 1; id < state.endless.size(); id++){
         if (state.endless[id]){
             s.endless.push_back((uint32_t)id);
@@ -10486,6 +10630,12 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     }
     //GUARD COUNTS (step 8) as set. A save from before them, with towers, has none: its towers keep every place, as
     //they had (-2, which Derive reads).
+    state.zeppelin.assign(z.buildings.size(),0);
+    for (const auto& zp : saved.zeppelins){
+        if (zp.first < state.zeppelin.size()){
+            state.zeppelin[zp.first] = std::max(0,std::min(ZEPPELIN_STAGES,zp.second));
+        }
+    }
     state.guards.assign(z.buildings.size(),-1);
     for (const auto& gc : saved.guards){
         if (gc.first < state.guards.size()){

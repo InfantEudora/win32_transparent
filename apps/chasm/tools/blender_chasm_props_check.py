@@ -42,15 +42,22 @@ PALETTE = os.path.join(REPO, "apps", "chasm", "assets", "textures", "palette.png
 PALETTE_COLS = 32
 PALETTE_ROWS = 16
 TRI_BUDGET = {"tree_pine": 100, "tree_oak": 120, "tree_palm": 120, "tree_willow": 120,
-              "grass": 12, "fern": 24, "shrub": 24, "reeds": 24, "bird": 80}
+              "grass": 12, "fern": 24, "shrub": 24, "reeds": 24, "bird": 80, "zeppelin_": 2200}
 COVER = ("grass", "flowers", "fern", "shrub", "mushrooms", "twig", "reeds")
 #(row, column) cells off row 0 that a prop may use - the same in every biome and season (Palette.h): the
-#crops row's rope, the minerals row's floatstone, the creatures row's bird colours, the effects row's black.
-OFF_ROW = {(9, 2), (10, 0), (10, 1), (10, 2), (10, 3), (11, 0), (11, 1), (11, 2), (11, 3), (15, 5)}
+#crops row's rope and canvas, the minerals row's floatstone, the creatures row's bird colours, the metals row's
+#brass, the effects row's black.
+OFF_ROW = {(9, 2), (9, 3), (9, 4), (10, 0), (10, 1), (10, 2), (10, 3), (11, 0), (11, 1), (11, 2), (11, 3),
+           (12, 0), (12, 1), (12, 2), (15, 5)}
 #Props whose origin is not their base's middle on purpose: the mine portal's is the mouth's sill, the bird's
 #is between its feet, and those that fill a plot have theirs in the middle of their footprint
 #(blender_chasm_props.py, build_object).
 OWN_ORIGIN = ("mine_portal", "bird")
+#The zeppelin's stages and its scaffold share one origin, the dock's ground under the middle: nothing of them below
+#it, and every one centred on x = 0 (but for the scaffold's ladder, up one post) - the gondola rests up on the
+#scaffold's trestles, not on the ground.
+DOCK_ORIGIN = ("zeppelin_1", "zeppelin_2", "zeppelin_3", "zeppelin_4", "zeppelin_5", "zeppelin_scaffold", "dock_mast",
+               "dock_mooring")
 #The engine's shape key slots (NUM_MORPH_FACTOR_SLOTS, core/Object.h).
 MORPH_SLOTS = 4
 FOOTPRINT_ORIGIN = ("boulder", "outcrop")
@@ -83,7 +90,10 @@ def verify():
         base = [v.co for v in mesh.vertices if v.co.z < lo.z + 0.3]
         bx = sum(c.x for c in base) / len(base)
         by = sum(c.y for c in base) / len(base)
-        if obj.name in OWN_ORIGIN:
+        if obj.name in DOCK_ORIGIN:
+            if lo.z < -0.15 or abs(lo.x + hi.x) > 0.3:
+                failures.append("%s: not on the dock's origin (min z %.3f, x %.2f to %.2f)" % (obj.name, lo.z, lo.x, hi.x))
+        elif obj.name in OWN_ORIGIN:
             if not -0.15 <= lo.z <= 0.0:
                 failures.append("%s: its ground is not z = 0 (min z %.3f)" % (obj.name, lo.z))
         elif obj.name in FOOTPRINT_ORIGIN:

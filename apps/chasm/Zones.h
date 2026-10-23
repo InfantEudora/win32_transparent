@@ -1,6 +1,7 @@
 #ifndef _CHASM_ZONES_H_
 #define _CHASM_ZONES_H_
 
+#include <climits>
 #include <memory>
 #include <stdint.h>
 #include <string>
@@ -131,6 +132,7 @@
 #define ZONE_STORE_MAX_PLOTS    6
 #define ZONE_FIELD_MAX_CELLS    8       //coarse cells
 #define ZONE_RANGE_MAX_CELLS    4
+#define ZONE_DOCK_MAX_CELLS     8       //steam_plan.md step 5: 2 x 4 of them hold a zeppelin, the long way along the 4
 
 //What a building is. Never renumber - saves and recordings name these by value.
 #define ZONE_KIND_NONE          0       //an id no longer in use
@@ -151,7 +153,9 @@
 #define ZONE_KIND_WELL          15      //a debug well: one plot of water anyone may take, never a player's (water_tools_plan.md)
 #define ZONE_KIND_STEAM         16      //a steam collector: at a drop into the chasm, catching its steam (steam_plan.md)
 #define ZONE_KIND_CONDENSER     17      //steam into water: beside a steam collector, or fed from a store (steam_plan.md)
-#define ZONE_KIND_COUNT         18
+#define ZONE_KIND_SAIL_LOFT     18      //a long loft: sailmakers sew hemp into canvas for a zeppelin (steam_plan.md step 4)
+#define ZONE_KIND_DOCK          19      //a zeppelin dock, on coarse cells at the chasm's edge: a zeppelin is built on it (step 5)
+#define ZONE_KIND_COUNT         20
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 //The most plots a building of `kind` may have - a field's or range's cells - 0 for no limit: a camp, a bridge.
@@ -163,6 +167,7 @@ inline int ZoneKindMaxPlots(int kind){
         case ZONE_KIND_STORE:       return ZONE_STORE_MAX_PLOTS;
         case ZONE_KIND_FIELD:       return ZONE_FIELD_MAX_CELLS;
         case ZONE_KIND_RANGE:       return ZONE_RANGE_MAX_CELLS;
+        case ZONE_KIND_DOCK:        return ZONE_DOCK_MAX_CELLS;
         case ZONE_KIND_WINCH:
         case ZONE_KIND_TOWER:
         case ZONE_KIND_MINE:
@@ -176,23 +181,25 @@ inline int ZoneKindMaxPlots(int kind){
 inline bool ZoneKindOnePlot(int kind){
     return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL;
 }
-//A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range painted like one.
+//A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range or a dock painted like one.
 inline bool ZoneKindOnCells(int kind){
-    return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE;
+    return kind == ZONE_KIND_FIELD || kind == ZONE_KIND_RANGE || kind == ZONE_KIND_DOCK;
 }
 //A workplace the player may STOP (stopping_work_plan.md, the user's 2026-10-12): its places go while it is, so its
 //people are free for other work. Not a field (a family's land), a guard tower (its guard count) nor a camp.
 inline bool ZoneKindStoppable(int kind){
     return kind == ZONE_KIND_WATER || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_ROPEWALK
            || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_RANGE || kind == ZONE_KIND_STONECUTTER
-           || kind == ZONE_KIND_MINE || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER;
+           || kind == ZONE_KIND_MINE || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER
+           || kind == ZONE_KIND_SAIL_LOFT;
 }
 //A kind drawn as a HOUSE BODY (BuildingMesh.cpp, BuildHouseCell): walls and a roof, storeys high - not a winch, a
 //camp, a bridge, a guard tower, a mine or a well, each drawn apart, nor a kind on cells. Only these are bridged by an ARCH.
 inline bool ZoneKindHasBody(int kind){
     return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER
            || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK
-           || kind == ZONE_KIND_STONECUTTER || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER;
+           || kind == ZONE_KIND_STONECUTTER || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER
+           || kind == ZONE_KIND_SAIL_LOFT;
 }
 //A kind that stands on a FOUNDATION where its ground is too steep for a footing (terraces_plan.md): a house body, but
 //not the collectors - a water collector's ground is a bank's and a steam collector's a drop's, by rules of their own.
@@ -280,15 +287,18 @@ bool ZoneGateBetween(const ChasmWorld& w, const ZoneState& z, int a, int b);
 int ZoneGateOf(const ChasmWorld& w, const ZoneState& z, int road);
 
 /*
-    ARCHES (docs/roads_plan.md, Townscaper's; docs/arches_plan.md): a road plot running between buildings of two
-    storeys or more - two road neighbours, and every other neighbour such a building, ALL OF ONE KIND and a kind with
-    a house body (ZoneKindHasBody: never a guard tower) - is built over: their upper storeys bridge it, up to the
-    lower of them, over a passage one storey high - where such plots run at most three in a row, a hole through a
-    row of houses rather than a covered street; an arch with a floor built (ZoneState::arch_built) stays whatever its
-    run grows to (step 4). Never over a gate: its posts and door are taller than the passage.
-    The plot stays a road, walked like any other. 0 if `plot` is no arch.
+    ARCHES (docs/roads_plan.md, Townscaper's; docs/arches_plan.md): a road plot running between buildings - two road
+    neighbours, and every other neighbour such a building, ALL OF ONE KIND and a kind with a house body
+    (ZoneKindHasBody: never a guard tower) - is built over: their upper storeys bridge it, up to the lowest of their
+    eaves, over a passage a storey high or a storey and a half - where such plots run at most three in a row, a hole
+    through a row of houses rather than a covered street; an arch with a floor built (ZoneState::arch_built) stays
+    whatever its run grows to (step 4). Round a bend, the cell the two roads turn round is a building of the kind too:
+    never an arch over an open corner. Its floor is its owner's storey over the passage - so a building on a terrace a
+    storey up bridges it with its ground floor - and every side stands down to it. Never over a gate: its posts and door
+    are taller than the passage. The plot stays a road, walked like any other. The storeys it rises to, the passage
+    counted, or 0 if `plot` is no arch; its floor, in half storeys (BuildingFootHalves'), in `floor_halves`.
 */
-int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot);
+int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot, int* floor_halves = NULL);
 /*
     The building an arch is PART OF (arches_plan.md, the user's): the one beside it on both sides if it is one;
     otherwise the one with the most plots beside it, the older (lower id) on a tie. Drawn in its look, picked and
@@ -340,13 +350,14 @@ enum ZoneOp{
     ZONE_OP_TERRACE,        //plot: a terrace, its top value[1] storeys up (terraces_plan.md stage 2)
     ZONE_OP_TERRACE_ERASE,  //plot: its terrace taken off - with nothing on it
     ZONE_OP_TERRACE_RAISE,  //plot: its terrace site is built - the builders'
+    ZONE_OP_DOCK_PAINT,     //coarse cell: join the stroke's zeppelin dock, or start one (steam_plan.md step 5) - erased as a field
     ZONE_OP_COUNT
 };
-//Whether an op names a coarse cell (a field's or a range's) rather than a plot.
+//Whether an op names a coarse cell (a field's, a range's or a dock's) rather than a plot.
 inline bool ZoneOpOnCell(int op){
     return op == ZONE_OP_FIELD_PAINT || op == ZONE_OP_FIELD_ERASE || op == ZONE_OP_FIELD_CROP || op == ZONE_OP_FIELD_NEXT
         || op == ZONE_OP_FIELD_RAISE || op == ZONE_OP_FIELD_LAND || op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_RANGE_PAINT
-        || op == ZONE_OP_RANGE_STOP || op == ZONE_OP_FIELD_CANCEL;
+        || op == ZONE_OP_RANGE_STOP || op == ZONE_OP_FIELD_CANCEL || op == ZONE_OP_DOCK_PAINT;
 }
 const char* ZoneOpName(int op);
 int ZoneOpByName(const std::string& name);  //the names above, and the old house_* ones; -1 if none
@@ -410,17 +421,19 @@ struct ZoneState{
     std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
     /*
         ARCHES (arches_plan.md), per fine vertex. Worked out from the above after every change (Zones::RefreshArches),
-        never saved: the storeys an arch may rise to (ZoneArchStoreys, 0 none) and the building it is part of
-        (ZoneArchOwner). Kept, saved and hashed (step 3): its floors BUILT over the passage - up to one less than it
-        may rise to; what is planned and not built is its owner's site, with scaffolding over the road. Apart from
-        `storeys` and `standing`, which say what is built on the ground. Empty in a state made for drawing one
-        building alone - no arches there but what it is given.
+        never saved: the storeys an arch may rise to (ZoneArchStoreys, 0 none), the building it is part of
+        (ZoneArchOwner) and its floor over the passage, in half storeys. Kept, saved and hashed (step 3): its floors
+        BUILT over the passage - up to one less than it may rise to; what is planned and not built is its owner's site,
+        with scaffolding over the road. Apart from `storeys` and `standing`, which say what is built on the ground.
+        Empty in a state made for drawing one building alone - no arches there but what it is given.
     */
     std::vector<uint8_t> arch;
     std::vector<uint32_t> arch_owner;
+    std::vector<int16_t> arch_floor;
     std::vector<uint8_t> arch_built;
     std::vector<uint8_t> castle;                //per fine vertex: the DEBUG CASTLE's piece on it (ZoneCastlePiece), 0 none
     std::vector<uint8_t> castle_over;           //...and the piece over that one (ZoneCastlePiece): an arch, or a stair on an arch
+    std::vector<int8_t> castle_base;            //...and the LEVEL both stand on, in whole storeys (ZoneCastleBase)
     std::vector<int8_t> terrace;                //per fine vertex: a TERRACE's top in storeys (ZoneTerraceTop), ZONE_NO_TERRACE none
     std::vector<uint8_t> terrace_built;         //...0 while it is a site (terraces_plan.md stage 2)
     //The drag in progress: its stroke number and the building it is making (0: none yet).
@@ -432,6 +445,9 @@ struct ZoneState{
     */
     uint32_t line_stroke = 0;
     uint32_t line_id = 0;
+    //The castle drag in progress (ZoneCastleLevelFor): its stroke and the level its first piece took - not saved.
+    uint32_t castle_stroke = 0;
+    int castle_stroke_base = 0;
     std::vector<uint32_t> chunk_version;        //per terrain chunk: bumped when its zones change
     uint32_t version = 0;
     int built_plots = 0;
@@ -452,6 +468,10 @@ struct ZoneState{
     }
     uint32_t ArchOwnerOf(int plot) const{
         return (plot >= 0 && plot < (int)arch_owner.size()) ? arch_owner[plot] : 0;
+    }
+    //Its floor over the passage, in half storeys (BuildingFootHalves'), or `otherwise` with none worked out.
+    int ArchFloorOf(int plot, int otherwise) const{
+        return (ArchOf(plot) > 0 && plot < (int)arch_floor.size()) ? arch_floor[plot] : otherwise;
     }
     //Its floors built, and the storeys that built part rises to - the passage and those floors, 0 with none built.
     int ArchBuiltOf(int plot) const{
@@ -496,6 +516,14 @@ struct ZoneSavedTerrace{
     bool f_built = true;
 };
 
+//A debug castle piece as a save holds it (ramparts_plan.md): its plot, ZoneCastlePiece, and its level.
+#define ZONE_CASTLE_NO_BASE     INT_MIN         //an older save's: the level a piece painted there now takes
+struct ZoneSavedCastle{
+    int plot = 0;
+    int piece = 0;
+    int base = ZONE_CASTLE_NO_BASE;             //storeys (ZoneCastleBase)
+};
+
 class Zones{
 public:
     //Empty zones for `world`. Physics thread.
@@ -530,9 +558,9 @@ public:
                 uint32_t next_id, const std::vector<ZoneSavedGround>& grounds,
                 uint32_t stroke, uint32_t stroke_building,
                 const std::vector<ZoneSavedTerrace>& terraces = std::vector<ZoneSavedTerrace>());
-    //The debug castle's pieces back (ramparts_plan.md), as (plot, piece) painted in order - an arch over a piece
-    //after it - through the rules; after Restore. Returns how many were refused.
-    int RestoreCastle(const std::vector<std::pair<int,int>>& pieces);
+    //The debug castle's pieces back (ramparts_plan.md), painted in order - an arch over a piece after it - at their
+    //levels, through the rules; after Restore. Returns how many were refused.
+    int RestoreCastle(const std::vector<ZoneSavedCastle>& pieces);
     std::string last_refusal;
     //The arch floors that came down with the last command (arches_plan.md step 4): a player's is told so.
     int last_arch_lost = 0;
@@ -600,6 +628,38 @@ inline bool ZoneGroundStands(const ZoneState& z, int v){
     return ZoneEnclosesGround(z.ground[v]) && z.ground_built[v];
 }
 bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why);
+/*
+    THE ZEPPELIN DOCK (steam_plan.md step 5; the user's, 2026-10-23: the size of a field, at the chasm's edge). A cell
+    of one: a field's rules, but on a balcony or an island too, and its middle within ZONE_DOCK_REACH of the chasm's
+    edge - a zeppelin floats only over the chasm, and will leave over it.
+*/
+#define ZONE_DOCK_REACH         13.0f   //world units in from the chasm's edge a dock's cell may lie: three and a half cells -
+                                        //the rim's first cells are often bare rock or cliff, and a dock is two cells wide
+bool ZoneCanDock(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why);
+/*
+    Where dock `id`'s zeppelin lies: the middle of its cells, the long way across them its NOSE - toward the chasm,
+    from whichever end is nearer it - and whether it FITS there: what of it stands on the ground, a ZONE_DOCK_FIT_LENGTH
+    by ZONE_DOCK_FIT_WIDTH rectangle round the middle along the nose, wholly on the dock's cells; its envelope
+    overhangs in the air, so the grid's crooked parts still take one in 8 cells. Tried along its long way and then turned,
+    ZONE_DOCK_FIT_STEP at a time, up to ZONE_DOCK_FIT_TURNS each way; the first that fits is where it lies. The same
+    for the rules (whether its zeppelin is begun) and the view (where it is drawn). False for anything not a dock.
+*/
+#define ZONE_DOCK_FIT_LENGTH    10.5f   //its scaffold's frames and the gondola's trestles, end to end and a margin...
+#define ZONE_DOCK_FIT_WIDTH     5.0f    //...and the frames' posts across it
+#define ZONE_DOCK_FIT_STEP      0.2618f //15 degrees
+#define ZONE_DOCK_FIT_TURNS     3
+struct ZoneDockLie{
+    vec2 centre;
+    vec2 nose = vec2(1.0f,0.0f);    //unit: the way its nose points
+    float ground = 0.0f;            //the dock's ground under its middle
+    bool f_fits = false;
+};
+bool ZoneDockFrame(const ChasmWorld& w, const ZoneState& z, uint32_t id, ZoneDockLie& out);
+//The kind a cell op paints: a field, a range or a dock; ZONE_KIND_NONE for any other op.
+inline int ZoneCellOpKind(int op){
+    return (op == ZONE_OP_FIELD_PAINT) ? ZONE_KIND_FIELD : (op == ZONE_OP_RANGE_PAINT) ? ZONE_KIND_RANGE
+         : (op == ZONE_OP_DOCK_PAINT) ? ZONE_KIND_DOCK : ZONE_KIND_NONE;
+}
 //`kind` is the ground to be painted: a road has one rule more than a garden, and a wall a road's rules.
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why,
                    int kind = ZONE_GROUND_GARDEN);
@@ -607,13 +667,14 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
     THE LAND'S OWN SAY (the slope grid round the ghost, ApplicationChasmGhost.cpp): what the ground itself asks of a
     plot before any building or ground's own rules - one ground all round it, dry, off the mountain, not too steep -
     as on a new map, nothing built or laid. For a building of `kind` (ZONE_KIND_NONE for ground: `f_road` for a
-    road's or wall's, steeper and beside the wet), ZONE_LAND_FOUNDATION where it stands only on a foundation. A
-    field's cell has ZoneCanField, which asks only the land of an empty ZoneState.
+    road's or wall's, steeper and beside the wet - and `f_wall` a wall's, at a cliff's edge too), ZONE_LAND_FOUNDATION
+    where it stands only on a foundation. A field's cell has ZoneCanField, which asks only the land of an empty ZoneState.
 */
 #define ZONE_LAND_REFUSED       0
 #define ZONE_LAND_ALLOWED       1
 #define ZONE_LAND_FOUNDATION    2
-int ZoneLandSays(const ChasmWorld& w, const ZoneState& z, int plot, int kind, bool f_road, const char** why);
+int ZoneLandSays(const ChasmWorld& w, const ZoneState& z, int plot, int kind, bool f_road, const char** why,
+                 bool f_wall = false);
 /*
     FOUNDATIONS (terraces_plan.md): how far the ground rises across plot v - every corner of every cell round it, as
     the slope rules measure it - and whether a building of `kind` there stands on a foundation: a kind that takes one,
@@ -662,15 +723,51 @@ void ZoneCellPlots(const ChasmWorld& w, int coarse, std::vector<int>& out);
 //A terrace with its top `top` storeys up on `plot`; `top` ZONE_NO_TERRACE asks only whether one could go there at all.
 bool ZoneCanTerrace(const ChasmWorld& w, const ZoneState& z, int plot, int top, const char** why);
 /*
+    WHERE A BUILDING'S WALL CROSSES the fine edge between neighbouring plots a and b, either way round (the user's,
+    2026-10-18). A plot's ground is the quarters of the cells round it, in to each edge's midpoint and out to each
+    cell's centre - and round a point of five or six cells that is a STAR, the midpoints drawn in past the line
+    between the centres, while a site's frame (BuildSite) stands on the centres and is straight. So on an edge with
+    such a point at either end a wall runs straight from centre to centre, crossing the edge where that line does,
+    and the house stands in its frame's shape. Elsewhere at the midpoint: round a point of three cells the
+    midpoints stand OUT past the centres' line, and straightened the house would be a small sharp triangle; on the
+    fours that are most of the grid the two all but agree.
+
+    Worked the same from either side, so the cells either side of an edge agree on its point to the bit and the
+    houses either side of it meet.
+*/
+vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b);
+
+/*
+    THE FLOOR a building on `plot` stands on, in half storeys from y = 0 (BuildHouseCell's `foot`): its ground rounded to
+    the nearest - so a row on a gentle slope shares a roof - or on a FOUNDATION (terraces_plan.md: a `kind` that needs
+    one there) the highest ground under its walls rounded UP, so the stone plinth is built up all round and nothing is
+    dug into the hill - or on a TERRACE that stands, its top. Every height drawn or picked off a building's floor goes by
+    it. `kind` is what stands there - ZONE_KIND_NONE for an arch's road, which keeps its ground.
+*/
+int BuildingFootHalves(const ChasmWorld& w, const ZoneState& z, int kind, int plot);
+
+/*
     A STEP between neighbouring plots a and b, as far as terraces go (terraces_plan.md stage 2): open - no terrace, or one
     meeting the ground across at about its height (the hill above it); a WALL - a terrace standing more than
     ZONE_TERRACE_STEP over the ground across, its retaining wall, which no one walks; or a STAIR - such a wall, up to a
-    storey, between two roads that stand: a stepped street. The walkers' edges and their straight walks ask it alike.
+    storey, between two roads that stand: a stepped street; or a DOOR - such a wall with a building against its foot
+    whose upper door opens onto the terrace (ZoneUpperDoor). The walkers' edges and their straight walks ask it alike.
 */
 #define ZONE_STEP_OPEN          0
 #define ZONE_STEP_WALL          1
 #define ZONE_STEP_STAIR         2
+#define ZONE_STEP_DOOR          3
 int ZoneTerraceStep(const ChasmWorld& w, const ZoneState& z, int a, int b);
+/*
+    AN UPPER DOOR (terraces_plan.md stage 3, the user's 2026-10-23): a building on plot `b` standing against the wall of a
+    terrace on plot `u` opens onto it on the storey whose floor meets the terrace's top - level with it, or half a storey
+    over it with a step or two down; the ground floor itself, on a foundation built up to it. Only onto open ground there,
+    nothing built, planned or shut on `u`, and only once that storey stands - and one door a level from a plot, onto the
+    first of its neighbours that level opens onto. The storey, 0 the ground floor; -1 for none. Always drawn
+    (BuildingUpperDoorAt), and walked by the building's own people - a walk that starts or ends there
+    (Walkers::EdgeOpen) - so they come and go by either level.
+*/
+int ZoneUpperDoor(const ChasmWorld& w, const ZoneState& z, int b, int u);
 
 /*
     THE WINCH'S LANDING: the balcony vertex a winch on `plot` lowers to - of the corners of the cells
@@ -859,6 +956,14 @@ inline int ZoneCastleShape(const ZoneState& z, int v){
 inline int ZoneCastleStoreys(const ZoneState& z, int v){
     return (v >= 0 && v < (int)z.castle.size()) ? z.castle[v] & 15 : 0;
 }
+/*
+    Its LEVEL (the user's, 2026-10-23: as a terrace's top, terraces_plan.md): the whole storey its pieces' storeys count
+    from - its ground built up to it - so a wall over a hill is level, and a deck level with a terrace's top or the hill
+    is walked on onto it (Walkers.h, LAYERS).
+*/
+inline int ZoneCastleBase(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle_base.size()) ? z.castle_base[v] : 0;
+}
 //Its deck's layer (Walkers.h, LAYERS): a block's or an arch's top, a stair's middle - 0 with none.
 inline int ZoneCastleLayer(const ZoneState& z, int v){
     int shape = ZoneCastleShape(z,v);
@@ -893,11 +998,18 @@ int ZoneCastleShapeByName(const std::string& name);    //-1 for none
 //over an arch - rather than in its place.
 bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys);
 /*
-    Whether a piece may be painted on `plot`: a plot of the debug's rules for a road, nothing built on it, and no ground
-    but a road under an arch; not a tower's ladder. Over a piece, as ZoneCastleGoesOver says; in its place, only one
-    that still carries the piece over it. `why` says why not.
+    The level (ZoneCastleBase) a piece painted on `plot` as part of drag `stroke` stands on: the drag's, once its first
+    piece is down - so one drag is one level; a first piece the level of the piece it is painted on, else the highest
+    ground under its plot rounded up to a whole storey, as a terrace's top is (ZoneTerraceTopOver).
 */
-bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why);
+int ZoneCastleLevelFor(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t stroke);
+/*
+    Whether a piece may be painted on `plot` at level `base`: a plot of the debug's rules for a road, nothing built on
+    it, and no ground but a road under an arch; not a tower's ladder; and standing a storey over all the ground under
+    it - an arch its two - so a level drag up a hill stops where the hill rises past it. Over a piece, as
+    ZoneCastleGoesOver says; in its place, only one that still carries the piece over it. `why` says why not.
+*/
+bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, int base, const char** why);
 
 //A building with a DOOR, which zombies breach (zombies_plan.md step 4; the user's, 2026-10-19: every building's door):
 //every kind gone into at a door - not a camp, a winch or a bridge, which are walked through, nor a guard tower, which is
@@ -905,7 +1017,8 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
 inline bool ZoneKindHasDoor(int kind){
     return kind == ZONE_KIND_HOUSE || kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER
         || kind == ZONE_KIND_BUILDERS || kind == ZONE_KIND_ROPEWALK || kind == ZONE_KIND_STONECUTTER
-        || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER;
+        || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_CONDENSER
+        || kind == ZONE_KIND_SAIL_LOFT;
 }
 
 //Closed to walkers - never walked onto, nor through: a standing wall plot, a shut gate, or a castle's solid stone

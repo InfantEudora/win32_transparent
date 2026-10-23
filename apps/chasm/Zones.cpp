@@ -40,6 +40,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_TERRACE:       return "terrace";
         case ZONE_OP_TERRACE_ERASE: return "terrace_erase";
         case ZONE_OP_TERRACE_RAISE: return "terrace_raise";
+        case ZONE_OP_DOCK_PAINT:    return "dock_paint";
         default:                   return "none";
     }
 }
@@ -77,6 +78,8 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_WELL:        return "well";
         case ZONE_KIND_STEAM:       return "steam";
         case ZONE_KIND_CONDENSER:   return "condenser";
+        case ZONE_KIND_SAIL_LOFT:   return "sail_loft";
+        case ZONE_KIND_DOCK:        return "dock";
         default:                    return "none";
     }
 }
@@ -111,6 +114,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_WELL:        return 1;       //a ring of stone and its roof (water_tools_plan.md)
         case ZONE_KIND_STEAM:       return 1;       //a shed with its hood out over the drop (steam_plan.md)
         case ZONE_KIND_CONDENSER:   return 1;       //a shed with its brass tanks through the roof (steam_plan.md)
+        case ZONE_KIND_SAIL_LOFT:   return 1;       //one long floor to lay a canvas out on (steam_plan.md step 4)
         default:                    return 0;
     }
 }
@@ -233,10 +237,37 @@ bool ZoneGateBetween(const ChasmWorld& w, const ZoneState& z, int a, int b){
 
 namespace {
 
-//A road plot with two road neighbours and every other neighbour a building of two storeys or more, all of one
-//kind with a house body: what could be bridged. The storeys it would be bridged to, or 0. Its road neighbours
-//in `roads_out`.
-int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_out){
+//The building an arch is part of, among its plot's neighbours `nb` (ZoneArchOwner): the one with the most plots beside
+//it, the older (lower id) on a tie - one on both sides wins with all of them.
+uint32_t ArchOwnerAmong(const ZoneState& z, const int* nb, int n){
+    uint32_t best = 0;
+    int best_count = 0;
+    for (int i = 0; i < n; i++){
+        uint32_t id = z.building[nb[i]];
+        if (!id){
+            continue;
+        }
+        int count = 0;
+        for (int j = 0; j < n; j++){
+            count += (z.building[nb[j]] == id) ? 1 : 0;
+        }
+        if (count > best_count || (count == best_count && id < best)){
+            best = id;
+            best_count = count;
+        }
+    }
+    return best;
+}
+
+#define ZONE_ARCH_PASSAGE_MOST  3   //half storeys: the most a passage stands - a storey and a half
+
+/*
+    A road plot with two road neighbours and every other neighbour a building with a house body, all of one kind,
+    standing high enough to carry a storey of floor over a passage: what could be bridged. The storeys it would be
+    bridged to - the passage and the floors over it - or 0; its floor over the passage, in half storeys
+    (BuildingFootHalves' count), in `floor_out`. Its road neighbours in `roads_out`.
+*/
+int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_out, int* floor_out = NULL){
     if (!ZoneRoadLaid(z,plot)){
         return 0;       //a planned road is bridged once it is laid
     }
@@ -247,8 +278,12 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
     int roads = 0;
-    int top = ZONE_MAX_STOREYS;
     int kind = ZONE_KIND_NONE;
+    //What stands: a site's storeys bridge nothing yet. SAME KIND only (the user's): a house never bridges into a store,
+    //and a guard tower - drawn apart, with no body to carry a floor - never at all.
+    auto side = [&](int u){
+        return z.standing[u] >= 1 && ZoneKindHasBody(z.KindOf(u)) && (kind == ZONE_KIND_NONE || z.KindOf(u) == kind);
+    };
     for (int i = 0; i < n; i++){
         int u = nb[i];
         if (ZoneRoadLaid(z,u)){
@@ -256,10 +291,7 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
                 roads_out[roads] = u;
             }
             roads++;
-        }else if (z.standing[u] >= 2 && ZoneKindHasBody(z.KindOf(u)) && (kind == ZONE_KIND_NONE || z.KindOf(u) == kind)){
-            //What stands: a site's storeys bridge nothing yet. SAME KIND only (the user's): a house never bridges
-            //into a store, and a guard tower - drawn apart, with no body to carry a floor - never at all.
-            top = std::min(top,(int)z.standing[u]);
+        }else if (side(u)){
             kind = z.KindOf(u);
         }else{
             return 0;           //an open side: nothing to bridge from
@@ -267,7 +299,69 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
     }
     //Two road neighbours: the road goes through, straight or round a bend - Townscaper's passages bend
     //too. A dead end under a house would be a tunnel to nowhere, a junction a hall.
-    return (roads == 2 && n >= 4) ? top : 0;
+    if (roads != 2 || n < 4){
+        return 0;
+    }
+    /*
+        ROUND A BEND, where the two roads meet at a corner of one cell, that cell's fourth plot is the passage's inside:
+        a building of the kind too, as where a road steps through a block - or the arch stands out over an open corner,
+        its walls there missing (the user's, 2026-10-23: nothing is built there).
+    */
+    const GridPicker& picker = *w.picker;
+    for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+        int qc = picker.PlotQuadCorner(plot,i);
+        const GridQuad& q = w.grid->fine.quads[qc / 4];
+        int k = qc % 4;
+        int next = q.v[(k + 1) % 4];
+        int prev = q.v[(k + 3) % 4];
+        bool f_bend = (next == roads_out[0] && prev == roads_out[1]) || (next == roads_out[1] && prev == roads_out[0]);
+        if (f_bend && !side(q.v[(k + 2) % 4])){
+            return 0;
+        }
+    }
+    /*
+        ITS HEIGHTS, by what stands either side rather than by the road (terraces_plan.md, the user's 2026-10-23): its
+        floor is its owner's storey that stands a storey over the road at the least, a storey and a half at the most, so
+        the bridge meets its owner's floor - and a side on a terrace a storey up meets it with its ground floor. Its eaves
+        are its lowest side's. Every side reaches down to its floor, and a storey of floor fits under the eaves.
+    */
+    uint32_t owner = ArchOwnerAmong(z,nb,n);
+    int road = BuildingFootHalves(w,z,ZONE_KIND_NONE,plot);
+    int floor = INT_MIN;
+    for (int i = 0; i < n && floor == INT_MIN; i++){
+        if (z.building[nb[i]] == owner){
+            floor = BuildingFootHalves(w,z,kind,nb[i]);
+        }
+    }
+    if (floor == INT_MIN){
+        return 0;
+    }
+    while (floor < road + 2){
+        floor += 2;
+    }
+    if (floor - road > ZONE_ARCH_PASSAGE_MOST){
+        return 0;
+    }
+    int eave = INT_MAX;
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        if (ZoneRoadLaid(z,u)){
+            continue;
+        }
+        int foot = BuildingFootHalves(w,z,kind,u);
+        if (foot > floor){
+            return 0;           //standing higher than the bridge: nothing to carry it on that side
+        }
+        eave = std::min(eave,foot + 2 * (int)z.standing[u]);
+    }
+    int floors = (eave - floor) / 2;
+    if (floors < 1){
+        return 0;
+    }
+    if (floor_out){
+        *floor_out = floor;
+    }
+    return 1 + floors;
 }
 
 //Plots: through a row of houses, not down a street. Three, not two: a road crossing a row steps along
@@ -276,9 +370,9 @@ int ArchCandidate(const ChasmWorld& w, const ZoneState& z, int plot, int* roads_
 
 }
 
-int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot){
+int ZoneArchStoreys(const ChasmWorld& w, const ZoneState& z, int plot, int* floor_halves){
     int roads[2];
-    int top = ArchCandidate(w,z,plot,roads);
+    int top = ArchCandidate(w,z,plot,roads,floor_halves);
     if (top == 0){
         return 0;
     }
@@ -315,26 +409,9 @@ uint32_t ZoneArchOwner(const ChasmWorld& w, const ZoneState& z, int plot){
     if (ZoneArchStoreys(w,z,plot) == 0){
         return 0;
     }
-    //Its plots beside it by building: the most, the lower id on a tie - one on both sides wins with all of them.
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
-    uint32_t best = 0;
-    int best_count = 0;
-    for (int i = 0; i < n; i++){
-        uint32_t id = z.building[nb[i]];
-        if (!id){
-            continue;
-        }
-        int count = 0;
-        for (int j = 0; j < n; j++){
-            count += (z.building[nb[j]] == id) ? 1 : 0;
-        }
-        if (count > best_count || (count == best_count && id < best)){
-            best = id;
-            best_count = count;
-        }
-    }
-    return best;
+    return ArchOwnerAmong(z,nb,n);
 }
 
 int Zones::RefreshArches(bool f_stand){
@@ -343,6 +420,7 @@ int Zones::RefreshArches(bool f_stand){
     was.resize(n,0);
     state.arch.assign(n,0);
     state.arch_owner.assign(n,0);
+    state.arch_floor.assign(n,0);
     state.arch_built.resize(n,0);
     if (!state.world || state.ground.size() < n){
         std::fill(state.arch_built.begin(),state.arch_built.end(),0);
@@ -351,10 +429,12 @@ int Zones::RefreshArches(bool f_stand){
     const ChasmWorld& w = *state.world;
     int lost = 0;
     for (size_t v = 0; v < n; v++){
-        int s = (state.ground[v] == ZONE_GROUND_ROAD) ? ZoneArchStoreys(w,state,(int)v) : 0;
+        int floor = 0;
+        int s = (state.ground[v] == ZONE_GROUND_ROAD) ? ZoneArchStoreys(w,state,(int)v,&floor) : 0;
         if (s > 0){
             state.arch[v] = (uint8_t)s;
             state.arch_owner[v] = ZoneArchOwner(w,state,(int)v);
+            state.arch_floor[v] = (int16_t)floor;
         }
         /*
             Its floors built: a debug placement's new ones stand at once, as the building does; and none past what
@@ -417,6 +497,79 @@ float ZoneGroundHeight(const ChasmWorld& w, const ZoneState& z, int plot, const 
     return ZoneTerraceStands(z,plot) ? ZoneTerraceTop(z,plot) : w.terrain->GroundHeight(p,w.terrain->Height(plot));
 }
 
+#define WALL_STRAIGHT_FROM  5       //an edge with a point of this many cells or more at an end takes a straight wall
+#define WALL_CROSSING_REACH 0.25f   //...crossing it no further than this of the edge from its midpoint, on a cell bent badly
+
+vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b){
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    if (a > b){
+        std::swap(a,b);
+    }
+    vec2 pa = g.fine.pos[a];
+    vec2 pb = g.fine.pos[b];
+    vec2 mid = (pa + pb) * 0.5f;
+    int na = picker.PlotQuadCount(a);
+    int nb = picker.PlotQuadCount(b);
+    if ((na < WALL_STRAIGHT_FROM && nb < WALL_STRAIGHT_FROM) || na <= 3 || nb <= 3){
+        return mid;
+    }
+    //The two cells either side of the edge, in index order; none across it on the map's edge.
+    int cells[2];
+    int found = 0;
+    for (int i = 0; i < na && found < 2; i++){
+        int q = picker.PlotQuadCorner(a,i) / 4;
+        const GridQuad& gq = g.fine.quads[q];
+        if (gq.v[0] == b || gq.v[1] == b || gq.v[2] == b || gq.v[3] == b){
+            cells[found++] = q;
+        }
+    }
+    if (found < 2){
+        return mid;
+    }
+    if (cells[0] > cells[1]){
+        std::swap(cells[0],cells[1]);
+    }
+    //pa + e t on the line from one centre to the other: t = (r x d) / (e x d).
+    vec2 c0 = g.FineQuadCentre(cells[0]);
+    vec2 d = g.FineQuadCentre(cells[1]) - c0;
+    vec2 e = pb - pa;
+    vec2 r = c0 - pa;
+    float den = e.x * d.y - e.y * d.x;
+    if (std::fabs(den) < 1e-9f){
+        return mid;
+    }
+    float t = (r.x * d.y - r.y * d.x) / den;
+    t = std::max(0.5f - WALL_CROSSING_REACH,std::min(0.5f + WALL_CROSSING_REACH,t));
+    return pa + e * t;
+}
+
+int BuildingFootHalves(const ChasmWorld& w, const ZoneState& z, int kind, int plot){
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    const Terrain& t = *w.terrain;
+    //On a terrace, its top: whole storeys, so exactly a number of halves (terraces_plan.md stage 2).
+    if (ZoneTerraceStands(z,plot)){
+        return (int)std::lround(ZoneTerraceTop(z,plot) / HALF);
+    }
+    if (!ZoneNeedsFoundation(w,z,kind,plot)){
+        return (int)std::lround(t.ground[plot] / HALF);
+    }
+    //Its walls run round the quarters of the cells round it, by each edge's crossing and each cell's centre.
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    float level = t.Height(plot);
+    float highest = t.ground[plot];
+    for (int i = 0; i < picker.PlotQuadCount(plot); i++){
+        int qc = picker.PlotQuadCorner(plot,i);
+        const GridQuad& q = g.fine.quads[qc / 4];
+        int k = qc % 4;
+        highest = std::max(highest,t.GroundHeight(g.FineQuadCentre(qc / 4),level));
+        highest = std::max(highest,t.GroundHeight(BuildingWallCrossing(w,plot,q.v[(k + 1) % 4]),level));
+        highest = std::max(highest,t.GroundHeight(BuildingWallCrossing(w,plot,q.v[(k + 3) % 4]),level));
+    }
+    return (int)std::ceil(highest / HALF);
+}
+
 void ZonePlotGroundRange(const ChasmWorld& w, int plot, float& lowest, float& highest){
     const Grid& g = *w.grid;
     const Terrain& t = *w.terrain;
@@ -443,10 +596,13 @@ void ZonePlotGroundRange(const ChasmWorld& w, int plot, float& lowest, float& hi
     fine cell round the plot on the plot's level, so nothing stands half over a cliff - dry, and no
     field touching it. `f_waterside` turns the water rule round, for a water collector: some corner
     must be wet, and the plot's own vertex dry - the last dry plot before the bank's stones, which its
-    pipe reaches over (the user, 2026-10-06), and which its carrier can walk to.
+    pipe reaches over (the user, 2026-10-06), and which its carrier can walk to. `f_rim` lets a WALL stand at a
+    cliff's edge (the user's, 2026-10-23): the corners down the cliff are passed over, and its slope is its own
+    ground's - so a palisade runs right up to the chasm, with no last plot on the rim to walk round it by.
 */
 static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, const char** why,
-                            float max_rise = ZONE_RISE_HOUSE, bool f_waterside = false, bool f_path = false){
+                            float max_rise = ZONE_RISE_HOUSE, bool f_waterside = false, bool f_path = false,
+                            bool f_rim = false){
     auto refuse = [why](const char* reason){
         if (why){
             *why = reason;
@@ -474,14 +630,23 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
     }
     const GridPicker& p = *w.picker;
     bool f_water = false;
+    bool f_at_cliff = false;
+    float lowest = t.ground[plot];
+    float highest = lowest;
     for (int i = 0; i < p.PlotQuadCount(plot); i++){
         int q = p.PlotQuadCorner(plot,i) / 4;
         const GridQuad& quad = g.fine.quads[q];
         for (int k = 0; k < 4; k++){
             int v = quad.v[k];
             if (!t.SameGround(v,plot)){
-                return refuse("too close to a cliff");
+                if (!f_rim){
+                    return refuse("too close to a cliff");
+                }
+                f_at_cliff = true;
+                continue;
             }
+            lowest = std::min(lowest,t.ground[v]);
+            highest = std::max(highest,t.ground[v]);
             //A road is only a path: it may run beside the wet - along a bank, up to a bridge's end
             //(bridge_plan.md) - so long as its own plot is dry. Buildings and enclosed ground keep off.
             if (t.wet[v] && !f_waterside && !(f_path && v != plot)){
@@ -505,8 +670,9 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
         }
     }
     //Every corner on the plot's own ground, here: its rise is the one the slope grid and a foundation's stone go by - none
-    //on a terrace that stands, whose top is flat.
-    if (!ZoneTerraceStands(z,plot) && ZonePlotRise(w,plot) > max_rise){
+    //on a terrace that stands, whose top is flat. A wall at a cliff's edge: its own ground's corners only.
+    float rise = f_at_cliff ? highest - lowest : ZonePlotRise(w,plot);
+    if (!ZoneTerraceStands(z,plot) && rise > max_rise){
         return refuse((max_rise == ZONE_RISE_FOUNDATION) ? "too steep, even for a foundation" : "too steep");
     }
     return true;
@@ -1039,7 +1205,8 @@ bool ZoneBridgeChain(const ChasmWorld& w, const ZoneState& z, int from, int to, 
 //Why a building of `kind` takes no more plots (ZoneKindMaxPlots) - in words, so a number changed there is changed here.
 static const char* FullRefusal(int kind){
     static_assert(ZONE_BUILDING_MAX_PLOTS == 4 && ZONE_HOUSE_MAX_PLOTS == 4 && ZONE_ROPEWALK_MAX_PLOTS == 4
-                  && ZONE_STORE_MAX_PLOTS == 6 && ZONE_FIELD_MAX_CELLS == 8 && ZONE_RANGE_MAX_CELLS == 4,
+                  && ZONE_STORE_MAX_PLOTS == 6 && ZONE_FIELD_MAX_CELLS == 8 && ZONE_RANGE_MAX_CELLS == 4
+                  && ZONE_DOCK_MAX_CELLS == 8,
                   "the sizes in words below");
     switch (kind){
         case ZONE_KIND_HOUSE:       return "a house is at most four plots - one family";
@@ -1047,6 +1214,7 @@ static const char* FullRefusal(int kind){
         case ZONE_KIND_STORE:       return "a store is at most six plots";
         case ZONE_KIND_FIELD:       return "a field is at most eight cells";
         case ZONE_KIND_RANGE:       return "a range is at most four cells";
+        case ZONE_KIND_DOCK:        return "a dock is at most eight cells";
         case ZONE_KIND_WINCH:       return "a winch is one plot";
         case ZONE_KIND_TOWER:       return "a tower is one plot";
         case ZONE_KIND_MINE:        return "a mine is one plot";
@@ -1300,7 +1468,7 @@ uint32_t ZoneAutoOwner(const ChasmWorld& w, const ZoneState& z, int plot, int gr
 bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char** why, int kind){
     //A wall goes where a road may (the user, 2026-10-08): a line, on a road's slope, beside the wet.
     bool f_line = ZoneLineGround(kind);
-    if (!PlotIsBuildable(w,z,plot,why,f_line ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE,false,f_line)){
+    if (!PlotIsBuildable(w,z,plot,why,f_line ? ZONE_RISE_ROAD : ZONE_RISE_HOUSE,false,f_line,kind == ZONE_GROUND_WALL)){
         return false;
     }
     if (f_line && !z.storeys.empty() && z.storeys[plot] > 0){
@@ -1337,14 +1505,14 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
     return true;
 }
 
-int ZoneLandSays(const ChasmWorld& w, const ZoneState& z, int plot, int kind, bool f_road, const char** why){
+int ZoneLandSays(const ChasmWorld& w, const ZoneState& z, int plot, int kind, bool f_road, const char** why, bool f_wall){
     //A terrace that stands is level ground made of the land - the one thing built that the land's say counts.
     if (ZoneTerraceStands(z,plot)){
         return ZONE_LAND_ALLOWED;
     }
     const ZoneState none;           //a new map's: nothing built yet
     float rise = f_road ? ZONE_RISE_ROAD : ZoneKindTakesFoundation(kind) ? ZONE_RISE_FOUNDATION : ZONE_RISE_HOUSE;
-    if (!PlotIsBuildable(w,none,plot,why,rise,false,f_road)){
+    if (!PlotIsBuildable(w,none,plot,why,rise,false,f_road,f_wall)){
         return ZONE_LAND_REFUSED;
     }
     return ZoneNeedsFoundation(w,none,kind,plot) ? ZONE_LAND_FOUNDATION : ZONE_LAND_ALLOWED;
@@ -1367,7 +1535,46 @@ int ZoneTerraceStep(const ChasmWorld& w, const ZoneState& z, int a, int b){
     if (ZoneRoadStands(z,a) && ZoneRoadStands(z,b) && std::fabs(ga - gb) <= ZONE_STOREY_HEIGHT + 1e-3f){
         return ZONE_STEP_STAIR;
     }
+    if (ZoneUpperDoor(w,z,a,b) >= 0 || ZoneUpperDoor(w,z,b,a) >= 0){
+        return ZONE_STEP_DOOR;
+    }
     return ZONE_STEP_WALL;
+}
+
+//ZoneUpperDoor's storey from building plot b, its floor `floor` half storeys up, onto plot u - before the one door a level.
+static int UpperDoorStorey(const ZoneState& z, int b, int u, int floor){
+    if (u < 0 || u >= (int)z.building.size() || !ZoneTerraceStands(z,u) || z.storeys[u] > 0 || ZoneShutToWalkers(z,u)){
+        return -1;
+    }
+    //In half storeys, as floors are counted: a terrace's top is whole storeys, a floor whole or half.
+    int top = (int)std::lround(ZoneTerraceTop(z,u) / (ZONE_STOREY_HEIGHT * 0.5f));
+    //The lowest storey whose floor is at the top or over it - by at most a half.
+    int storey = (top > floor) ? (top - floor + 1) / 2 : 0;
+    if (floor + 2 * storey - top > 1 || storey >= z.standing[b]){
+        return -1;
+    }
+    return storey;
+}
+
+int ZoneUpperDoor(const ChasmWorld& w, const ZoneState& z, int b, int u){
+    if (b < 0 || b >= (int)z.building.size() || z.standing[b] == 0 || !ZoneKindHasBody(z.KindOf(b))){
+        return -1;
+    }
+    int floor = BuildingFootHalves(w,z,z.KindOf(b),b);
+    int storey = UpperDoorStorey(z,b,u,floor);
+    if (storey < 0){
+        return -1;
+    }
+    //ONE DOOR A LEVEL from a plot: onto the first of its neighbours that storey opens onto - a plot meeting a terrace
+    //along two edges gets one door onto it, not one an edge.
+    int nb[8];
+    int n = ZonePlotNeighbours(w,b,nb,8);
+    for (int i = 0; i < n && nb[i] != u; i++){
+        if (UpperDoorStorey(z,b,nb[i],floor) == storey){
+            return -1;
+        }
+    }
+    return storey;
 }
 
 void ZoneCellPlots(const ChasmWorld& w, int coarse, std::vector<int>& out){
@@ -1485,7 +1692,20 @@ bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys){
     return shape == ZONE_CASTLE_STAIR && under == ZONE_CASTLE_ARCH && storeys == ZoneCastleStoreys(z,plot) + 1;
 }
 
-bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, const char** why){
+int ZoneCastleLevelFor(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t stroke){
+    if (stroke != 0 && stroke == z.castle_stroke){
+        return z.castle_stroke_base;
+    }
+    if (ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
+        return ZoneCastleBase(z,plot);
+    }
+    float lowest = 0.0f;
+    float highest = 0.0f;
+    ZonePlotGroundRange(w,plot,lowest,highest);
+    return (int)std::ceil(highest / ZONE_STOREY_HEIGHT - 1e-4f);
+}
+
+bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, int base, const char** why){
     auto refuse = [why](const char* reason){
         if (why){
             *why = reason;
@@ -1498,7 +1718,8 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
     if (storeys < 1 || storeys > ZONE_CASTLE_MAX_STOREYS){
         return refuse("a castle piece is one to four storeys");
     }
-    //Its decks are counted from the terrain's ground (BuildingLayerHeight), which a terrace is not.
+    //Erased only with nothing on it, a terrace never has a piece taken out from under it: beside one, a deck level with
+    //its top goes on onto it (Walkers.h, LAYERS).
     if (ZoneTerraced(z,plot)){
         return refuse("not on a terrace");
     }
@@ -1516,6 +1737,15 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
     }
     if (shape == ZONE_CASTLE_ARCH && storeys < ZONE_CASTLE_ARCH_LOWEST){
         return refuse("an arch is two storeys at least - its passage clears a gate");
+    }
+    //LEVEL (ZoneCastleBase): a storey over all the ground under it - an arch two, its passage's - or the hill has risen
+    //past the drag's level there.
+    float lowest = 0.0f;
+    float highest = 0.0f;
+    ZonePlotGroundRange(w,plot,lowest,highest);
+    int least = (shape == ZONE_CASTLE_ARCH) ? ZONE_CASTLE_ARCH_LOWEST : 1;
+    if (highest > (float)(base + storeys - least) * ZONE_STOREY_HEIGHT + 1e-3f){
+        return refuse("the ground rises past this level - start a new drag up there, or a stair");
     }
     //A road's rules: it may stand beside the wet, on a road's slope - an arch is where a road goes.
     if (!PlotIsBuildable(w,z,plot,why,ZONE_RISE_ROAD,false,true)){
@@ -1535,7 +1765,8 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
     return true;
 }
 
-bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why){
+//A field's cell, or with `f_dock` a dock's: a balcony's too, within ZONE_DOCK_REACH of the chasm's edge.
+static bool CellBuildable(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why, bool f_dock){
     auto refuse = [why](const char* reason){
         if (why){
             *why = reason;
@@ -1567,7 +1798,7 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
             }
             //Anything may be built on a balcony but food: whoever lives down there is fed from the
             //rim, by winch (gameplay_plan.md, "Terraces").
-            if (level == TERRAIN_BALCONY){
+            if (level == TERRAIN_BALCONY && !f_dock){
                 return refuse("no fields on a balcony - its food comes down from the rim");
             }
             if (w.terrain->wet[v]){
@@ -1592,6 +1823,85 @@ bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const cha
     }
     if (highest - lowest > ZONE_RISE_FIELD){
         return refuse("too steep");
+    }
+    if (f_dock){
+        vec2 mid(0.0f,0.0f);
+        for (int q = coarse * 4; q < coarse * 4 + 4; q++){
+            mid += g.FineQuadCentre(q) * 0.25f;
+        }
+        if (ChasmRiftDistance(g.layout,mid) > ZONE_DOCK_REACH){
+            return refuse("too far from the chasm's edge - a zeppelin floats only over the chasm");
+        }
+    }
+    return true;
+}
+
+bool ZoneCanField(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why){
+    return CellBuildable(w,z,coarse,why,false);
+}
+
+bool ZoneCanDock(const ChasmWorld& w, const ZoneState& z, int coarse, const char** why){
+    return CellBuildable(w,z,coarse,why,true);
+}
+
+bool ZoneDockFrame(const ChasmWorld& w, const ZoneState& z, uint32_t id, ZoneDockLie& out){
+    out = ZoneDockLie();
+    if (!id || id >= z.buildings.size() || z.buildings[id].kind != ZONE_KIND_DOCK || z.buildings[id].size <= 0){
+        return false;
+    }
+    const Grid& g = *w.grid;
+    std::vector<vec2> mids;
+    for (size_t c = 0; c < z.field.size(); c++){
+        if (z.field[c] == id){
+            vec2 mid(0.0f,0.0f);
+            for (int q = (int)c * 4; q < (int)c * 4 + 4; q++){
+                mid += g.FineQuadCentre(q) * 0.25f;
+            }
+            mids.push_back(mid);
+        }
+    }
+    if (mids.empty()){
+        return false;
+    }
+    vec2 centre(0.0f,0.0f);
+    for (const vec2& m : mids){
+        centre += m * (1.0f / (float)mids.size());
+    }
+    //Its long way: the cells' middles' principal axis.
+    float sxx = 0.0f, sxy = 0.0f, syy = 0.0f;
+    for (const vec2& m : mids){
+        vec2 d = m - centre;
+        sxx += d.x * d.x;
+        sxy += d.x * d.y;
+        syy += d.y * d.y;
+    }
+    float along = 0.5f * std::atan2(2.0f * sxy,sxx - syy);
+    out.centre = centre;
+    GridPick under = w.picker->Pick(centre);
+    out.ground = (under.f_hit && under.plot >= 0) ? ZoneGroundAt(w,z,under.plot) : 0.0f;
+    auto toward_chasm = [&](vec2 d){
+        float ahead = ChasmRiftDistance(g.layout,centre + d * 5.0f);
+        float behind = ChasmRiftDistance(g.layout,centre - d * 5.0f);
+        return (behind < ahead - 0.01f) ? d * -1.0f : d;
+    };
+    out.nose = toward_chasm(vec2(std::cos(along),std::sin(along)));
+    for (int t = 0; t <= 2 * ZONE_DOCK_FIT_TURNS; t++){
+        int turn = (t + 1) / 2 * ((t % 2) ? 1 : -1);        //0, +1, -1, +2, -2...
+        float a = along + turn * ZONE_DOCK_FIT_STEP;
+        vec2 d(std::cos(a),std::sin(a));
+        vec2 across(-d.y,d.x);
+        bool f_on = true;
+        for (float s = -ZONE_DOCK_FIT_LENGTH * 0.5f; s <= ZONE_DOCK_FIT_LENGTH * 0.5f + 1e-3f && f_on; s += 1.0f){
+            for (float c = -ZONE_DOCK_FIT_WIDTH * 0.5f; c <= ZONE_DOCK_FIT_WIDTH * 0.5f + 1e-3f && f_on; c += ZONE_DOCK_FIT_WIDTH / 4.0f){
+                GridPick p = w.picker->Pick(centre + d * s + across * c);
+                f_on = p.f_hit && p.coarse_quad >= 0 && p.coarse_quad < (int)z.field.size() && z.field[p.coarse_quad] == id;
+            }
+        }
+        if (f_on){
+            out.nose = toward_chasm(d);
+            out.f_fits = true;
+            break;
+        }
     }
     return true;
 }
@@ -1979,6 +2289,9 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state.ground_owner.assign(g.fine.pos.size(),0);
     state.castle.assign(g.fine.pos.size(),0);
     state.castle_over.assign(g.fine.pos.size(),0);
+    state.castle_base.assign(g.fine.pos.size(),0);
+    state.castle_stroke = 0;
+    state.castle_stroke_base = 0;
     state.terrace.assign(g.fine.pos.size(),ZONE_NO_TERRACE);
     state.terrace_built.assign(g.fine.pos.size(),0);
     state.field.assign(g.coarse.quads.size(),0);
@@ -2388,9 +2701,14 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             break;
         }
         case ZONE_OP_FIELD_PAINT:
-        case ZONE_OP_RANGE_PAINT:{
-            //A range is painted as a field is, on the same cells and by the same rules (range_plan.md).
-            int cell_kind = (op == ZONE_OP_RANGE_PAINT) ? ZONE_KIND_RANGE : ZONE_KIND_FIELD;
+        case ZONE_OP_RANGE_PAINT:
+        case ZONE_OP_DOCK_PAINT:{
+            //A range is painted as a field is, on the same cells and by the same rules (range_plan.md); a dock by
+            //its own (ZoneCanDock, steam_plan.md step 5), and all of it on one ground.
+            int cell_kind = ZoneCellOpKind(op);
+            auto can = [&](int cell, const char** reason){
+                return (cell_kind == ZONE_KIND_DOCK) ? ZoneCanDock(w,state,cell,reason) : ZoneCanField(w,state,cell,reason);
+            };
             int c = (int)index;
             if (c >= 0 && c < (int)state.field.size() && state.field[c]){
                 if (stroke != state.stroke){
@@ -2410,11 +2728,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 int bridge = -1;
                 for (int k = 0; k < 4 && bridge < 0; k++){
                     int n = coarse_across[c * 4 + k];
-                    if (n >= 0 && !state.field[n] && cell_touches(n,joining) && ZoneCanField(w,state,n,NULL)){
+                    if (n >= 0 && !state.field[n] && cell_touches(n,joining) && can(n,NULL)){
                         bridge = n;
                     }
                 }
-                if (bridge >= 0 && (!most || state.buildings[joining].size + 2 <= most) && ZoneCanField(w,state,c,NULL)){
+                if (bridge >= 0 && (!most || state.buildings[joining].size + 2 <= most) && can(c,NULL)){
                     state.field[bridge] = joining;
                     state.field_built[bridge] = f_play ? 0 : 1;
                     state.buildings[joining].size++;
@@ -2424,9 +2742,21 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                     joining = 0;
                 }
             }
-            if (!ZoneCanField(w,state,c,&why)){
+            if (!can(c,&why)){
                 last_refusal = why;
                 return false;
+            }
+            //A dock across a cliff from the rest of it is no dock: a zeppelin lies on one floor.
+            if (joining && cell_kind == ZONE_KIND_DOCK){
+                for (size_t o = 0; o < state.field.size(); o++){
+                    if (state.field[o] == joining){
+                        if (!w.terrain->SameGround(w.grid->fine.quads[c * 4].v[0],w.grid->fine.quads[o * 4].v[0])){
+                            last_refusal = "across a cliff from the rest of the dock";
+                            return false;
+                        }
+                        break;
+                    }
+                }
             }
             if (!joining){
                 //An EMPTY field (fields_plan.md): nothing grows on it until its starting crop is chosen.
@@ -2979,11 +3309,17 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 int shape = piece >> 4;
                 int storeys = piece & 15;
                 bool f_over = ZoneCastleGoesOver(state,plot,shape,storeys);
-                if ((f_over ? state.castle_over[plot] : state.castle[plot]) == piece){
+                //Its LEVEL (ZoneCastleLevelFor): the drag's, so a wall over a hill is level - one over a piece its.
+                int base = f_over ? state.castle_base[plot] : ZoneCastleLevelFor(w,state,plot,stroke);
+                if ((f_over ? state.castle_over[plot] : state.castle[plot]) == piece && (f_over || state.castle_base[plot] == base)){
                     return false;   //the same piece again: nothing to do, as a drag over its own plots
                 }
+                if (!f_over && state.castle_over[plot] && state.castle_base[plot] != base){
+                    last_refusal = "a piece stands over it, at its own level";
+                    return false;
+                }
                 //Over the piece there, or in its place - swapped for it as the piece over it allows.
-                if (!ZoneCanCastle(w,state,plot,shape,storeys,&why)){
+                if (!ZoneCanCastle(w,state,plot,shape,storeys,base,&why)){
                     last_refusal = why;
                     return false;
                 }
@@ -2991,6 +3327,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                     state.castle_over[plot] = (uint8_t)piece;
                 }else{
                     state.castle[plot] = (uint8_t)piece;
+                    state.castle_base[plot] = (int8_t)base;
+                }
+                if (stroke != 0){
+                    state.castle_stroke = stroke;
+                    state.castle_stroke_base = base;
                 }
             }
             touch_ring(plot);       //a stair's slope meets its neighbours, so they are drawn again too
@@ -3103,13 +3444,23 @@ void Zones::SettlePriorities(){
     }
 }
 
-int Zones::RestoreCastle(const std::vector<std::pair<int,int>>& pieces){
+int Zones::RestoreCastle(const std::vector<ZoneSavedCastle>& pieces){
+    //Each at its saved level, as a drag of its own that took it - a stroke no paint command uses; an older save's
+    //where a piece painted there now goes.
+    const uint32_t RESTORE_STROKE = 0xFFFFFFFFu;
     int refused = 0;
-    for (const auto& pc : pieces){
-        if (!Apply(ZONE_OP_CASTLE,(uint32_t)pc.first,pc.second,0,false)){
+    for (const ZoneSavedCastle& pc : pieces){
+        uint32_t stroke = 0;
+        if (pc.base != ZONE_CASTLE_NO_BASE){
+            state.castle_stroke = RESTORE_STROKE;
+            state.castle_stroke_base = pc.base;
+            stroke = RESTORE_STROKE;
+        }
+        if (!Apply(ZONE_OP_CASTLE,(uint32_t)pc.plot,pc.piece,stroke,false)){
             refused++;
         }
     }
+    state.castle_stroke = 0;
     return refused;
 }
 

@@ -189,6 +189,12 @@ void BuildFieldCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, int 
         MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_PATH);
         return;
     }
+    //A zeppelin dock's (steam_plan.md step 5) the same trodden ground: its mast, scaffold and zeppelin are instances of
+    //their own (ApplicationChasmDock.cpp).
+    if (on && on < z.buildings.size() && z.buildings[on].kind == ZONE_KIND_DOCK){
+        MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_PATH);
+        return;
+    }
     MeshQuad(out,base[0],base[1],base[2],base[3],up,PAL_EARTH);
 
     //What grows is the crop SOWN on it - the economy's, in the look - or with none, the field's starting
