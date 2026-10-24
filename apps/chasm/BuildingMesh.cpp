@@ -728,12 +728,13 @@ bool LowestStandingPlot(const ChasmWorld& w, const ZoneState& z, int plot){
 
 /*
     A DOOR in a building's wall from `plot` toward `across` - the wall `edge` of `plot`'s quarter in cell `quad`, as
-    ChimneyPlace's - only where it leads somewhere people could go: open ground or an arch's passage over this floor, and
-    no retaining wall between (ZoneTerraceStep, the walkers' own rule). Beside a terrace a door was drawn into its fill
-    (the user's, 2026-10-23), and on a terrace's edge it would open onto the drop. On the ground floor, where the wall's
-    hash gives it one in `door_chance` - an arch's passage always, a house beside a road being most likely entered from
-    it. Against a terrace's wall, on the storey that opens onto its top (ZoneUpperDoor, stage 3), always - on the one
-    piece of the wall where people are drawn coming and going (BuildingUpperDoorAt). `storey` is the door's.
+    ChimneyPlace's - only where it leads somewhere people could go: open ground or an arch's passage over this floor, not
+    a palisade's plot, and no retaining wall between (ZoneTerraceStep, the walkers' own rule). Beside a terrace a door was
+    drawn into its fill (the user's, 2026-10-23), and on a terrace's edge it would open onto the drop. On the ground
+    floor, where the wall's hash gives it one in `door_chance` - an arch's passage always, a house beside a road being
+    most likely entered from it. Against a terrace's wall, on the storey that opens onto its top (ZoneUpperDoor, stage
+    3), always - on the one piece of the wall where people are drawn coming and going (BuildingUpperDoorAt). `storey` is
+    the door's.
 */
 enum{
     WALL_DOOR_NONE,
@@ -767,6 +768,8 @@ int WallDoor(const ChasmWorld& w, const ZoneState& z, int plot, int across, int 
         int road = BuildingFootHalves(w,z,ZONE_KIND_NONE,across);
         bool f_under = z.ArchFloorOf(across,road + 2) >= BuildingFootHalves(w,z,z.KindOf(plot),plot) + 2;
         return f_under ? WALL_DOOR_DRAWN : WALL_DOOR_NONE;
+    }else if (!z.ground.empty() && z.ground[across] == ZONE_GROUND_WALL){
+        return WALL_DOOR_NONE;      //onto a palisade's plot, planned or standing: nobody goes out that way
     }else if (CornerSolid(w,z,across)){
         return WALL_DOOR_NONE;      //another building, or this one standing higher: into its wall
     }

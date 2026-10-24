@@ -161,7 +161,7 @@ collector reaches.
 - **The zeppelin is the dock's second site**, once the dock stands: its frame (wood), hull (floatstone), rigging
   (rope), envelope (canvas) - and **steam last**, filling it, so a zeppelin is never left half-filled for want of
   canvas. Built, it lies moored at the dock.
-- **Flight is its own step**, planned when it is reached. The likely shape: a ride from mooring to mooring like
+- **Flight is its own step**, planned when it is reached - since 2026-10-24 in `flight_plan.md`. The likely shape: a ride from mooring to mooring like
   the winch's, only long, with the zeppelin at one end at a time and room for a few people and a load. An
   island's landing needs no building, as a winch's landing needs none.
 
@@ -195,7 +195,7 @@ Each step is playable on the one before.
    sailmakers sharing a loft, the ropewalk beside it on the same hemp; the store beside it; canvas kept in a store.
 5. **(BUILT 2026-10-23, "As built: step 5" below)** **The dock and the zeppelin as a site.** Tested: a zeppelin built
    by the builders from goods gathered by the dock, its steam last.
-6. **Flight** - its own plan, then.
+6. **Flight** - its own plan: `flight_plan.md` (talked through 2026-10-24).
 7. **The boiler**, whenever a map wants steam without a collector.
 
 Each step adds its state to the saves and the trace, and its page to the wiki.
@@ -342,9 +342,10 @@ dock's second site: its stages standing, `EconomyState::zeppelin` by building id
   envelope (13 x 4.4) it refused the crooked 2 x 4s the grid makes away from its straight parts. A dock nothing fits on
   has its mast alone, its card says "Too small for a zeppelin", and NEEDS ATTENTION lists it (`dock_small`).
 - **The zeppelin's site** (`Economy::ZeppelinSite`): a dock standing whole, fitting, its zeppelin not finished. `SiteNeed`
-  is every stage still to stand, so the builders bring any of its goods from anywhere they take a site's - stores, the
-  camp, crates, a ropewalk's rope and a sail loft's canvas - and `Build` raises a stage once those before it stand and
-  all of its good is there: steam last. `EVENT_ZEPPELIN_STAGE` tells each, journaled and on the notice line ("the
+  is the NEXT stage's good alone (the user's, 2026-10-24: built first as every stage still to stand, rope brought while
+  the hull waited made both rise at once when the floatstone came) - so the builders bring the frame's wood, then the
+  hull's floatstone and so on, from anywhere they take a site's (stores, the camp, crates, a ropewalk's rope, a sail
+  loft's canvas), and `Build` raises it once that is all there: stage by stage, steam last. `EVENT_ZEPPELIN_STAGE` tells each, journaled and on the notice line ("the
   zeppelin's frame is built" ... "the zeppelin is finished - filled with steam, and moored").
 - **The look** (`ApplicationChasmDock.cpp`): instance sets of the GLB's models in one frame - the mast once the dock
   stands, the scaffold from the zeppelin's beginning until it is finished (the user's), the stage's model, and finished,
@@ -358,8 +359,9 @@ dock's second site: its stages standing, `EconomyState::zeppelin` by building id
   mast, frame, hull, rigging, the slack envelope, finished on its mooring; a crooked 7-cell dock refused, with its card
   line and its NEEDS ATTENTION row; the card with no steam held ("No steam to be had"); save and reload keeping a finished
   zeppelin. Then for real: a dock painted in play on that save, four people and a three-plot builders' hut added, the
-  goods in a crate by it - the builders built the dock, then carried wood, floatstone, rope, canvas and steam, bringing
-  the later stages' goods early while the earlier stood, and finished it in 15,000 ticks.
+  goods in a crate by it - the builders built the dock, then carried wood, floatstone, rope, canvas and steam and
+  finished it in 15,000 ticks. They brought later stages' goods early then, which the user saw skip a stage; since
+  2026-10-24 the site asks for one stage at a time (above).
 - **Not tested**: a dock on an island; a zeppelin begun and its dock erased (what was brought should be left as a crate,
   as any site's).
 
@@ -419,9 +421,11 @@ the islands give the rest. How many zeppelins' worth there is in all is still op
 - **The snow following the temperature**: the green band along the rim and on the terraces in winter (above,
   "The chasm's heat, shown"). The user's call; it changes a rule much else reads.
 - **Floatstone on the islands**: "without end" or "scarce" - `gameplay_plan.md` says both. To settle with flight.
-- **What a zeppelin carries** and how many there can be at once.
+- **What a zeppelin carries** and how many there can be at once: proposed in `flight_plan.md` - people by order, a
+  load list at a mast, one zeppelin to a dock at a time.
 - **A zeppelin lost**: whether one can be, and to what - the gameplay plan says losing one should matter.
-- **The far rim's dock**: built by the first who land there, or a mooring on any edge plot.
+- **The far rim's dock**: settled 2026-10-24 (`flight_plan.md`) - a zeppelin sets down at any edge, and a MAST on
+  any edge plot over the open chasm loads and unloads it; a dock is needed only to build one.
 
 ## Ideas, for later
 

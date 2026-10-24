@@ -6,7 +6,7 @@ status: partial
 summary: Built on a dock in five stages - frame, hull, rigging, envelope, and steam last to fill it. Finished, it is moored there; flying is to come.
 plans: steam_plan.md > Decided (the user, 2026-10-21); steam_plan.md > The zeppelin dock, and building the zeppelin; steam_plan.md > The zeppelin, modelled (2026-10-23); steam_plan.md > As built: step 5 (2026-10-23)
 code: Economy.h: ZEPPELIN_STAGES ECONOMY_ZEPPELIN_WOOD ECONOMY_ZEPPELIN_FLOATSTONE ECONOMY_ZEPPELIN_ROPE ECONOMY_ZEPPELIN_CANVAS ECONOMY_ZEPPELIN_STEAM EconomyZeppelinGood EVENT_ZEPPELIN_STAGE; Economy.cpp: ZeppelinSite SiteNeed Build; ApplicationChasmDock.cpp: UploadDocks
-verified: 2026-10-23
+verified: 2026-10-24
 ---
 
 The colony's way over the chasm - it floats only over it, held up by its heat and its steam. It is built on a
@@ -23,10 +23,11 @@ for its zeppelin.
 | 4 envelope | {ECONOMY_ZEPPELIN_CANVAS} [[Canvas|canvas]] | the canvas on - slack, fallen in between the hoops |
 | 5 filling | {ECONOMY_ZEPPELIN_STEAM} [[Steam|steam]] | filled taut: finished |
 
-- **The builders carry all of it** as they can, as to any site, from stores, the camp, crates and the workshops'
-  piles - a ropewalk's rope, a sail loft's canvas.
-- **A stage stands once those before it do and all of its good is there**, so the steam goes in last and a
-  zeppelin is never left half-filled for want of canvas.
+- **One stage at a time**: the site asks for the next stage's good alone, and the builders carry it as to any site,
+  from stores, the camp, crates and the workshops' piles - a ropewalk's rope, a sail loft's canvas. Nothing is
+  brought for a later stage.
+- **A stage stands once all of its good is there**, so the zeppelin rises stage by stage, the steam goes in last and
+  it is never left half-filled for want of canvas.
 - Each stage is told on the notice line and kept in the [[Statistics|journal]]; the last as its finishing.
 
 ## Its card
@@ -43,4 +44,5 @@ mooring lines, its nose in the mast's cup.
 
 ## Planned
 
-- [planned] Flying it, from mooring to mooring over the chasm (`steam_plan.md`, step 6).
+- [planned] Flying it over the chasm, ordered by click: people in and out by order, goods loaded at a mast, and the
+  dock beginning another once it is finished (`flight_plan.md`).

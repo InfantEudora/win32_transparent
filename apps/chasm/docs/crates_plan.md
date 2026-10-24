@@ -427,3 +427,28 @@ Files: `Economy.cpp` only (and the comment on `WORKER_HOLDING` in `Economy.h`). 
     where she was, where she would have held it until a store stood.
   - Replay: 1,051 ticks recorded - the bridge placed, carriers out, the cancel, the drop - replayed twice: every
     tick's hash equal, nothing changed between ticks, the same six crates at the end as the run recorded.
+
+## Fixed: the ever-filling crate (a bug report, 2026-10-24)
+
+`saves/now.json` (seed 12, year 16, 24 people, one store of one plot): one crate beside the camp held 843 wheat, 799
+beans, 390 greens and 504 water, and a hundred crates of 5 to 20 wood lay through the forest. Two leaks, both from
+dropping instead of holding (step 5) meeting a check made before the walk:
+
+- **Every carrier set out for the store's last load of room.** Whether a store had room counted what it held, not
+  what was on its way to it, so farmers, carriers and crate movers all saw the same room; the first filled it, the
+  rest put their loads down beside it - one crate, which only grew, every time a house took a few units out.
+  `Economy::StoreRoomLeft` now takes the loads carried there (`WORKER_TO_STORE`, `WORKER_UNLOADING`) off the room,
+  and all nine places that decide on a store before setting out ask it: `FindStore`, `FetchHarvest`,
+  `FetchFromWorkplace`, `GoDig`, `FindRock`, the woodcutter's `wood_room`, a crate's lifter, `MoveCrate`, the
+  builders' provisions. Putting down at the store is still by the room as it stands.
+- **A woodcutter lifted a log with nowhere to take it.** His hut, one plot, walled in by another hut: its pile had
+  room nobody could walk to, so `wood_room` said yes, and with the store full the log went down where he stood. A log
+  is now lifted only when `deliver`'s own ways - a store, then the pile - would take it from where he stands, tried on
+  a copy of him (`wood_goes`); else it is left lying, and LOGS FIRST brings him back for it.
+- **Checked** (debug, minimised, port 8771, paused and stepped a day at a time, 12 days from the save): before, the
+  big crate's food grew by whole loads (beans 799 -> 832, wheat 843 -> 875, greens 390 -> 400) and the woodcutter
+  dropped a crate every day or two; after, its food stayed at 799 / 843 / 390 while its water and wood were drawn on,
+  and no crate was made at all. Not run: a replay across the change (saves A/B differ from the first full store).
+- **Left as it is**: the old crate stays. Its food goes when a store has room, by PICK UP and the builders - or, once
+  `spoilage_plan.md` is built, it rots. A miner digs before he knows the room is still there, as the woodcutter
+  fells; so far that is only a race, with no hut walled in to make it last.

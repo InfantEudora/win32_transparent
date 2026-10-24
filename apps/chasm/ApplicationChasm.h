@@ -1875,6 +1875,7 @@ private:
     std::string menu_note;                      //"Saved ...", shown for a few seconds from menu_note_at
     std::chrono::steady_clock::time_point menu_note_at;
     std::string colony_name;                    //the start's name, or "Seed N": what the colony's saves are titled by
+    std::string colony_save;                    //the save it came from, loaded or saved by name: SAVE names it; "" none
     std::atomic<bool> f_game_on{true};          //a colony in play: Continue goes back to it, and leaving it autosaves
     int autosave_season = -1;                   //physics thread: year * 4 + season of the last pass, so a dawn is seen
     void OpenPause();                           //physics thread
@@ -1889,7 +1890,8 @@ private:
     void RefreshTitleMenu();
     bool LoadSaveNamed(const std::string& name, std::string& error);
     void StartNewGame(int start);
-    void EnteredColony(const std::string& colony);
+    void EnteredColony(const std::string& colony, const std::string& save = "");
+    void SetColonySave(const std::string& name);    //any thread: a load or a save by name outside the menus
     bool WriteSave(const std::string& name, const char* kind, std::string& error);
     void Autosave(const std::string& keep = "", bool f_record = true);     //and a fresh recording from it
     void UpdateAutosave();                      //physics thread, from UpdateView: a season's first dawn

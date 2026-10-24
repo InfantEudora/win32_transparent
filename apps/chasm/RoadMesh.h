@@ -36,7 +36,10 @@
     WALLS (line_works_plan.md, step 3) take the same line along the edges - through the wall plots and
     the gates beside each - drawn as a PALISADE of sharpened logs once a plot stands, a taller stake
     while it is planned. Where a wall meets a gate (a road plot it runs through) it ends in a tall post
-    at the edge's midpoint, and the gate's plot hangs a crossbeam from post to post over the road.
+    at the edge's midpoint, and the gate's plot hangs a crossbeam from post to post over the road. A wall's
+    END runs on to what it ends against (step 5): into a building's, a terrace's or a castle's face, or to
+    short of a drop - the chasm's rim, its own terrace's edge - stepping down there; a gate's side may be
+    such a face too, with a post of the gate's own against it.
 
     HARMED by zombies (zombies_plan.md, step 4d), as the rules' harm says in ZoneMesh.h's steps: a palisade's logs
     lean away from the blows, and drop; a BROKEN plot - a wall site again - is drawn as its fallen logs and stumps, not

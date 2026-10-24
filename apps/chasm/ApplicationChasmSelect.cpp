@@ -2143,6 +2143,11 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
         if (f_no_room){
             c.Text("Too small to keep a log, and no lot beside it: nowhere to put wood",HUD_AMBER);
         }
+        //SHUT IN on every side, as a house can be (EconomyShutIn, EconomyDoorMatters): nobody gets to its door.
+        if (EconomyDoorMatters(b.kind) && EconomyShutIn(*e,id)){
+            c.Text(b.kind == ZONE_KIND_WOODCUTTER ? "Shut in on every side, with no way in: nobody can get to its woodpile"
+                                                  : "Shut in on every side, with no way in: nothing is brought or fetched",HUD_AMBER);
+        }
         //What a log makes here (woodcutting_plan.md), and what a second storey on all of it would make of one.
         if (b.kind == ZONE_KIND_WOODCUTTER && id < e->log_wood.size() && e->log_wood[id] > 0){
             c.Text((e->log_wood[id] >= ECONOMY_LOFT_LOG_WOOD) ? Format("A log makes %i wood",e->log_wood[id])
@@ -4013,24 +4018,39 @@ void ApplicationChasm::UploadSelection(){
     with the least health - the dry first where it is even, as they lose it fastest - each with his badge,
     his name, what he is short of and how much health he has left, so whoever is in trouble can be found
     before it is too late. A click on one selects him and takes the view to him (OVERLAY_HIT_PERSON).
+    Ranked on his health as this round of LIFE_SHARE_FULL ticks began, not as it is: a baby's or child's bar falls
+    on only some ticks of a round, which ones by his id (EconomyShareTick), so two of them at the same health are a
+    point apart every other tick - and on the bare figure traded places as often, a flicker. A round takes each his
+    whole share, so two level as it began stay level until it ends.
 */
 std::vector<const EconomyWorker*> ChasmNeediest(const EconomyState& e, int count){
-    std::vector<const EconomyWorker*> order;
+    struct Need{
+        const EconomyWorker* k;
+        int health;     //as the round began: what he has, and what it has taken so far
+    };
+    std::vector<Need> order;
     for (const EconomyWorker& k : e.workers){
-        order.push_back(&k);
+        int lost = 0;
+        for (uint64_t t = e.tick - e.tick % LIFE_SHARE_FULL; t <= e.tick; t++){
+            lost += EconomyShareTick(k,t) ? EconomyHealthDrain(e,k) : 0;
+        }
+        order.push_back(Need{&k,k.health + lost});
     }
     int shown = std::max(0,std::min(count,(int)order.size()));
-    std::partial_sort(order.begin(),order.begin() + shown,order.end(),[](const EconomyWorker* a, const EconomyWorker* b){
-        if (a->health != b->health){
-            return a->health < b->health;
+    std::partial_sort(order.begin(),order.begin() + shown,order.end(),[](const Need& a, const Need& b){
+        if (a.health != b.health){
+            return a.health < b.health;
         }
-        if (EconomyDry(*a) != EconomyDry(*b)){
-            return EconomyDry(*a);
+        if (EconomyDry(*a.k) != EconomyDry(*b.k)){
+            return EconomyDry(*a.k);
         }
-        return a->id < b->id;
+        return a.k->id < b.k->id;
     });
-    order.resize(shown);
-    return order;
+    std::vector<const EconomyWorker*> out;
+    for (int i = 0; i < shown; i++){
+        out.push_back(order[i].k);
+    }
+    return out;
 }
 
 const char* ChasmNeedName(const EconomyWorker& k){

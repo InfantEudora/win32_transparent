@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 8a43c07d-a515-47eb-b112-6ad10766c43d
-  modified: 2026-10-21T21:00:24.431Z
+  modified: 2026-10-24T10:00:14.010Z
 ---
 
 Decided by the user 2026-10-21: a zeppelin floats ONLY over the chasm (its heat), so steam is an ingredient that fills the envelope, not fuel. Steam collector and condenser are TWO buildings, sized by plots like every workplace - one collector may feed two smaller condensers deep down, 1-1 on the rim. Yield rises with EVERY step down (terraces beat the rim); terraces have no river, so condensers are their water. Envelope = hemp canvas (sail loft), replacing leather. All my proposals agreed (warm rim: snow never stops collectors; a floatstone seam guaranteed at home; tuning). Ballista tower is the next plan after this one.
@@ -19,4 +19,4 @@ Zeppelin MODELLED 2026-10-23 (the user: dock the size of a field, zeppelin big, 
 
 Step 5 BUILT 2026-10-23: ZONE_KIND_DOCK 19 on cells (ZONE_OP_DOCK_PAINT), no key (user), at the chasm's edge (ZONE_DOCK_REACH 13 - 9 refused every 2-wide rim dock); ZoneDockFrame fits the GROUND footprint 10.5x5 (envelope overhangs); the zeppelin = the dock's second site, EconomyState::zeppelin stages saved+hashed, SiteNeed/Build steam last, EVENT_ZEPPELIN_STAGE; ApplicationChasmDock.cpp instance sets; set_stock `site` debug shortcut; saves/zeppelin_dock_test.json. Test scripts in the scratchpad (dock_grid.py paints a lattice-straight block - an early version erased the colony's fields!).
 
-**How to apply:** next is step 6, flight (its own plan, to talk through with the user first). NO letter keys are free now (Y terrace, I sail loft; WASD/U are core's) - a new tool needs a key decision. Test terraces on `saves/casm_edge.json` (seed 58): its winch lands on a wide balcony 2 steps down at x~50..64, z~-3; seed 12's balconies are too thin to camp on. Staffing goes by building order, so add people (chasm_economy add_person, no `house`) before judging a collector unworked. Related: [[chasm-stone-plan]], [[chasm-goods-plan]], [[chasm-zombies-plan]].
+**How to apply:** step 6, flight, is its own plan since 2026-10-24: [[chasm-flight-plan]]. NO letter keys are free now (Y terrace, I sail loft; WASD/U are core's) - a new tool needs a key decision. Test terraces on `saves/casm_edge.json` (seed 58): its winch lands on a wide balcony 2 steps down at x~50..64, z~-3; seed 12's balconies are too thin to camp on. Staffing goes by building order, so add people (chasm_economy add_person, no `house`) before judging a collector unworked. Related: [[chasm-stone-plan]], [[chasm-goods-plan]], [[chasm-zombies-plan]].

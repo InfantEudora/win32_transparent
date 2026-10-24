@@ -3,17 +3,17 @@ title: The demo's goals
 aliases: goals, goal, demo, demo complete, the end, colony lost, death pop-up
 kind: systems
 status: built
-summary: Two goals - the first winter through with nobody dead, and the chasm reached - a pop-up for every death, and an end, the demo complete or the colony lost, on the statistics page.
+summary: Two goals - the first winter through with nobody lost, and the chasm reached - a pop-up for every death but of old age, and an end, the demo complete or the colony lost, on the statistics page.
 plans: done/demo_plan.md > The demo's goals; done/demo_plan.md > As built: the goals and the end (2026-10-16)
-code: Economy.h: CHASM_GOAL_WINTER CHASM_GOAL_CHASM EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST; ApplicationChasmGoals.cpp: ChasmGoalState TickGoals UpdateEnd DrawGoals; ApplicationChasmStats.cpp: OpenEnd UpdateEndPage; Calendar.h: CALENDAR_YEAR_TICKS
-verified: 2026-10-16
+code: Economy.h: CHASM_GOAL_WINTER CHASM_GOAL_CHASM EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST NEEDS_DIED_OLD_AGE; ApplicationChasmGoals.cpp: ChasmGoalState TickGoals UpdateEnd DrawGoals; ApplicationChasmStats.cpp: OpenEnd UpdateEndPage; Calendar.h: CALENDAR_YEAR_TICKS
+verified: 2026-10-24
 ---
 
 The demo has **two goals**, shown at the top left in play mode, each in progress, met or failed:
 
 1. **Through the winter, nobody lost.** Met at the first dawn of the second spring, {CALENDAR_YEAR_TICKS:days}
-   after the landing, with nobody dead. Failed by the first death before then. Until then the panel
-   counts the days to go.
+   after the landing, with nobody lost. Failed by the first death before then - but not one of
+   [[Old age|old age]], which is no villager lost. Until then the panel counts the days to go.
 2. **Reach the chasm.** Met once a [[Winch|winch]] is finished and someone has been lowered by it to a
    balcony ([[Discoveries]]). It can't fail. Until then the panel says what's next: find the chasm, build
    a winch, lower someone down.
@@ -27,6 +27,9 @@ a load tells nothing again. A goal met or failed is told on the notice line.
 Every death stops the game behind a pop-up: who died and of what, several on one tick together. If it
 fails the first goal, the same pop-up says so. **Continue** plays on; **Main menu** goes to the title,
 which loses nothing.
+
+A death of **old age** stops nothing: it is no villager lost. It is told as every death is - on the red line
+over the build bar, in the journal and in the [[Statistics|statistics]] - but with no pop-up.
 
 ## The end
 

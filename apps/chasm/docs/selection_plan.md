@@ -109,7 +109,9 @@ The bar along the bottom had grown too full. Now:
 - **The jobs overview sits in the bottom left corner** (`builders_plan.md`), lifted over the grid only in a
   window too narrow for both.
 - **MOST IN NEED** (`DrawNeediest`), over the jobs: the five people with the least health, the dry first
-  where it is even. Each row his badge, his name, what he is short of - DRY red, THIRSTY blue, HUNGRY amber
+  where it is even. Health as this round of four ticks began, not as it is (2026-10-24): a baby's or child's
+  bars fall on only some ticks of the four, by his id, so two at one health traded places every other tick and
+  the card flickered. Each row his badge, his name, what he is short of - DRY red, THIRSTY blue, HUNGRY amber
   (below the water and health he goes for them at, `NEEDS_PRESSING_*`) - and his health in the badge ring's
   colour. A click on a row SELECTS him (`OVERLAY_HIT_PERSON`) and the view glides to him at the zoom it
   has (`cam_seek_person`; the camp's glide still sets its own zoom). The selected one's row is lit orange.

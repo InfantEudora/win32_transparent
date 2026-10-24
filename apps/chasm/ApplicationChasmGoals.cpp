@@ -16,6 +16,8 @@
     through with nobody dead and the chasm reached - a winch built, someone lowered by it - each in progress, met or
     failed; a death stops the game behind a pop-up; and the end, the demo complete or the colony lost, is the
     statistics page with its own heading and buttons (ApplicationChasmStats.cpp).
+    A death of OLD AGE is no villager lost (the user's, 2026-10-24): it fails no goal and stops nothing. The death line
+    over the build bar, the journal and the statistics still tell it, as they tell every death.
 
     THE RULES: whether a goal is met is worked out from the state - the dead with their ticks, the calendar, the
     DISCOVERIES - and told once, as an event the journal keeps (EVENT_GOAL_MET and the rest), on the tick it comes
@@ -45,7 +47,8 @@ std::string GoalCaps(int goal){
 
 /*
     Whether a goal is met (CHASM_GOAL_*): as the journal has it once it was told, else as the state stands -
-      - THROUGH THE WINTER: failed by any death before the first dawn of the second spring, met at that dawn;
+      - THROUGH THE WINTER: failed by any death before the first dawn of the second spring - but of old age - met at
+        that dawn;
       - THE CHASM: met with a winch finished and someone lowered by one to a balcony. It is never failed.
 */
 int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d){
@@ -54,7 +57,7 @@ int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d){
     }
     if (goal == CHASM_GOAL_WINTER){
         for (const EconomyDeath& x : e.dead){
-            if (x.tick < (uint64_t)CALENDAR_YEAR_TICKS){
+            if (x.tick < (uint64_t)CALENDAR_YEAR_TICKS && x.cause != NEEDS_DIED_OLD_AGE){
                 return CHASM_GOAL_FAILED;
             }
         }
@@ -145,11 +148,11 @@ void ApplicationChasm::TickGoals(){
         if (d.goal_told[g] < 0 && state == CHASM_GOAL_MET){
             told(EVENT_GOAL_MET,(g == CHASM_GOAL_CHASM) ? d.person[DISCOVERY_BALCONY] : 0,g);
         }else if (d.goal_told[g] < 0 && state == CHASM_GOAL_FAILED){
-            //The death that failed it: the first of the year.
+            //The death that failed it: the first of the year that was not of old age.
             uint32_t who = 0;
             uint64_t first = UINT64_MAX;
             for (const EconomyDeath& x : e.dead){
-                if (x.tick < first){
+                if (x.tick < first && x.cause != NEEDS_DIED_OLD_AGE){
                     first = x.tick;
                     who = x.id;
                 }
@@ -191,8 +194,8 @@ void ApplicationChasm::UpdateEnd(){
             if (e.tick >= ev.tick + CALENDAR_DAY_TICKS / 2){
                 continue;
             }
-            if (ev.kind == EVENT_DIED){
-                deaths.push_back(&ev);
+            if (ev.kind == EVENT_DIED && ev.amount != NEEDS_DIED_OLD_AGE){
+                deaths.push_back(&ev);      //...a loss: old age is told on the death line alone
             }
             f_failed = f_failed || (ev.kind == EVENT_GOAL_FAILED && ev.amount == CHASM_GOAL_WINTER);
             f_complete = f_complete || ev.kind == EVENT_DEMO_COMPLETE;

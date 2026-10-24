@@ -2,6 +2,7 @@
 #include "BuildingMesh.h"
 #include "ZoneMesh.h"
 #include "MeshBuild.h"
+#include "Walkers.h"
 
 #include <algorithm>
 #include <array>
@@ -116,15 +117,19 @@ float SegmentDistance(const vec2& p, const vec2& a, const vec2& b){
     Road vertex v's centre line as segments (pairs of points): the curve for two edges, the spokes to
     the midpoints otherwise. One description, used by both the mesh and the forest's clearance, so the
     trees give way to exactly the road that is drawn - and a wall's line is the same shape (LineThrough),
-    through the neighbours `nb` it joins.
+    through the neighbours `nb` it joins. Each piece ends at its edge's midpoint, or where `at` says, if given: a
+    wall's end runs on into what it meets, or stops short of a brink (WallJoinAt).
 */
-void LineThrough(const ChasmWorld& w, int v, const int* nb, int n, std::vector<vec2>& segs){
+void LineThrough(const ChasmWorld& w, int v, const int* nb, int n, std::vector<vec2>& segs, const vec2* at = NULL){
     segs.clear();
     const std::vector<vec2>& pos = w.grid->fine.pos;
     vec2 c = pos[v];
+    auto end = [&](int i){
+        return at ? at[i] : (c + pos[nb[i]]) * 0.5f;
+    };
     if (n == 2){
-        vec2 a = (c + pos[nb[0]]) * 0.5f;
-        vec2 b = (c + pos[nb[1]]) * 0.5f;
+        vec2 a = end(0);
+        vec2 b = end(1);
         vec2 prev = a;
         for (int i = 1; i <= ROAD_CURVE_STEPS; i++){
             vec2 q = Curve(a,c,b,(float)i / ROAD_CURVE_STEPS);
@@ -135,7 +140,7 @@ void LineThrough(const ChasmWorld& w, int v, const int* nb, int n, std::vector<v
     }else{
         for (int i = 0; i < n; i++){
             segs.push_back(c);
-            segs.push_back((c + pos[nb[i]]) * 0.5f);
+            segs.push_back(end(i));
         }
         if (n == 0){
             segs.push_back(c);      //a lone road plot: a point, drawn as its joint
@@ -337,8 +342,13 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
 #define WALL_GATE_HEIGHT    1.80f   //the gate posts, and the top of the crossbeam between them
 #define WALL_GATE_BEAM      0.18f
 #define WALL_DOOR_HEIGHT    1.42f   //a gate's door's logs (defence_plan.md): over the palisade's, under the beam
-#define WALL_RIM_ACROSS     0.3f    //a wall's end on the rim: the drop it runs on to is at least this far across (cosine)...
-#define WALL_RIM_REACH      0.9f    //...and it stops this much of the way to the edge, short of the brink
+#define WALL_RIM_ACROSS     -0.5f   //a wall's END (WallJoins): what it runs on to, anywhere not back along it (cosine)...
+#define WALL_RIM_REACH      0.9f    //...a drop it stops this much of the way to the edge, short of the brink...
+#define WALL_END_INTO       0.05f   //...and into a face it runs this far past the edge's midpoint: no daylight at the joint
+#define WALL_END_OVER       0.65f   //a building or castle piece is a face only standing this far over the wall's ground
+#define WALL_END_LOGS       3       //toward a DROP the last logs stand lower, so the line reads as ended (the user's)...
+#define WALL_END_LOWEST     0.45f   //...the last at this share of a log's height, those before it stepping up to whole
+#define WALL_GATE_ACROSS    0.5f    //a gate's side against a face: across its road from the other side (cosine), never along it
 #define WALL_DOOR_LOG_W     0.15f
 #define WALL_DOOR_BATTEN    0.21f   //the battens across a leaf: wider than its logs, so they show either side
 #define WALL_DOOR_GAP       0.03f   //between the two leaves of a shut door
@@ -358,6 +368,171 @@ void BuildRoadStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
 #define GATE_HANG_SWING_MORE 0.90f
 #define GATE_HANG_SAG       0.22f   //...dropped at its far end this far, and up to GATE_HANG_SAG_MORE more
 #define GATE_HANG_SAG_MORE  0.18f
+
+/*
+    A WALL'S END against what nobody walks round it by (line_works_plan.md, step 5, the user's 2026-10-24): the line runs
+    on to it, where it would stop at its plot's point, half an edge short - a gap the rules shut already.
+      - A FACE: a building standing with a body, a castle's block or stair - each over the wall's ground by most of a
+        palisade - or a terrace standing a wall's height over it. Each is drawn on its own plot's outline, which crosses
+        the edge at its midpoint: the line runs on into it.
+      - A DROP: a cliff falling away, or the edge of the terrace the wall stands on: on to short of the brink, its last
+        logs lower, so it reads as an end and not as a wall broken off.
+      - A CLIFF rising over it: as near as to a drop, at full height.
+      - A face at a CORNER, across a cell from it: on to the cell's middle, where that face's corner is. A line along this
+        grid steps where the grid runs across it, so an end often meets a face so - a road between two terraces most of
+        all, its gate's far side round the corner. The walkers cannot pass between the two either: plot to plot is by edges.
+    Never the line's own plots (WallLine), which it joins anyway, nor what has nothing to meet yet - a site, a castle's
+    arch over its passage - nor the kinds drawn apart (a winch, mine or well), nor water.
+*/
+enum{
+    WALL_END_NONE,
+    WALL_END_FACE,
+    WALL_END_DROP,
+    WALL_END_CLIFF,
+    WALL_END_CORNER,
+};
+
+int WallEndKind(const ChasmWorld& w, const ZoneState& z, int v, int u){
+    if (WallLine(z,u)){
+        return WALL_END_NONE;
+    }
+    float ground = ZoneGroundAt(w,z,v);
+    float there = ZoneGroundAt(w,z,u);
+    if (!w.terrain->SameGround(v,u)){
+        return (there < ground) ? WALL_END_DROP : WALL_END_CLIFF;
+    }
+    const float half = ZONE_STOREY_HEIGHT * 0.5f;     //floors and tops are counted in half storeys
+    int kind = z.KindOf(u);
+    if (z.standing[u] > 0 && ZoneKindHasBody(kind)
+        && (BuildingFootHalves(w,z,kind,u) + 2 * z.standing[u]) * half > ground + WALL_END_OVER){
+        return WALL_END_FACE;
+    }
+    if (ZoneCastleShuts(z,u) && WalkNodeHalves(w,z,u,ZoneCastleLayer(z,u)) * half > ground + WALL_END_OVER){
+        return WALL_END_FACE;
+    }
+    if (ZoneTerraceStep(w,z,v,u) == ZONE_STEP_WALL){
+        return (there > ground) ? WALL_END_FACE : WALL_END_DROP;
+    }
+    return WALL_END_NONE;
+}
+
+#define WALL_JOINS_MOST     (ROAD_MAX_NEIGHBOURS + 2)
+
+//The middle of the cell plots v and u are opposite corners of, in `middle`; false if they are not.
+bool CornerCellMiddle(const ChasmWorld& w, int v, int u, vec2& middle){
+    const GridPicker& p = *w.picker;
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    for (int i = 0; i < p.PlotQuadCount(v); i++){
+        int qc = p.PlotQuadCorner(v,i);
+        const GridQuad& q = w.grid->fine.quads[qc / 4];
+        if (q.v[(qc % 4 + 2) % 4] == u){
+            middle = (pos[q.v[0]] + pos[q.v[1]] + pos[q.v[2]] + pos[q.v[3]]) * 0.25f;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+    Everything plot v's line is drawn to, in `nb`: the plots of its line it joins (WallNeighbours), then the ends it runs on
+    to (WallEndKind) - for an END of the line, one plot of it beside v, the one most nearly straight on; for a plot with none
+    of its line beside it, the two most across from each other, else the one. Never one back along it - `least`, the cosine
+    across - and none for a plot the line runs through: a wall alongside a house gets no stub into every plot of it. `kind`
+    says which are ends, WALL_END_NONE for the line's own. Returns how many.
+*/
+int WallJoins(const ChasmWorld& w, const ZoneState& z, int v, int* nb, int* kind, float least = WALL_RIM_ACROSS){
+    int n = WallNeighbours(w,z,v,nb);
+    for (int i = 0; i < n; i++){
+        kind[i] = WALL_END_NONE;
+    }
+    if (n > 1){
+        return n;
+    }
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    auto unit = [](const vec2& d){
+        return d * (1.0f / std::max(1e-6f,d.length()));
+    };
+    struct End{
+        int plot, kind;
+        vec2 dir;       //from v's point toward where it would end
+    };
+    End cand[2 * ROAD_MAX_NEIGHBOURS];
+    int m = 0;
+    int all[ROAD_MAX_NEIGHBOURS];
+    int c = ZonePlotNeighbours(w,v,all,ROAD_MAX_NEIGHBOURS);
+    for (int i = 0; i < c; i++){
+        int k = WallEndKind(w,z,v,all[i]);
+        if (k != WALL_END_NONE){
+            cand[m++] = End{all[i],k,unit(pos[all[i]] - pos[v])};
+        }
+    }
+    //...and a face at a corner, across a cell - unless one of the two plots between is the line's own, or an end nearer.
+    const GridPicker& p = *w.picker;
+    for (int i = 0; i < p.PlotQuadCount(v); i++){
+        int qc = p.PlotQuadCorner(v,i);
+        const GridQuad& q = w.grid->fine.quads[qc / 4];
+        int k = qc % 4;
+        int a = q.v[(k + 1) % 4];
+        int b = q.v[(k + 3) % 4];
+        int u = q.v[(k + 2) % 4];
+        if (WallLine(z,a) || WallLine(z,b) || WallEndKind(w,z,v,a) != WALL_END_NONE || WallEndKind(w,z,v,b) != WALL_END_NONE
+            || WallEndKind(w,z,v,u) != WALL_END_FACE){
+            continue;
+        }
+        vec2 middle = (pos[q.v[0]] + pos[q.v[1]] + pos[q.v[2]] + pos[q.v[3]]) * 0.25f;
+        cand[m++] = End{u,WALL_END_CORNER,unit(middle - pos[v])};
+    }
+    int best[2] = {-1,-1};
+    float most = least;
+    for (int i = 0; i < m; i++){
+        if (n == 1){
+            float across = -unit(pos[nb[0]] - pos[v]).dot(cand[i].dir);
+            if (across > most){
+                most = across;
+                best[0] = i;
+            }
+            continue;
+        }
+        for (int j = i + 1; j < m; j++){
+            float across = -cand[i].dir.dot(cand[j].dir);
+            if (across > most){
+                most = across;
+                best[0] = i;
+                best[1] = j;
+            }
+        }
+    }
+    if (n == 0 && best[0] < 0 && m > 0){
+        best[0] = 0;        //a lone plot beside one thing: out to it alone
+    }
+    for (int e : best){
+        if (e >= 0){
+            nb[n] = cand[e].plot;
+            kind[n++] = cand[e].kind;
+        }
+    }
+    return n;
+}
+
+//Where v's line ends toward joined plot u, of `kind` (WallJoins): the edge's midpoint for the line's own plots; past it
+//into a FACE by `into` - short of it, where less than 0 (a gate's jamb, standing out of the face) - and past a CORNER's
+//cell middle the same way; short of a brink.
+vec2 WallJoinAt(const ChasmWorld& w, int v, int u, int kind, float into){
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    vec2 half = (pos[u] - pos[v]) * 0.5f;
+    if (kind == WALL_END_DROP || kind == WALL_END_CLIFF){
+        return pos[v] + half * WALL_RIM_REACH;
+    }
+    vec2 mid = pos[v] + half;
+    if (kind == WALL_END_CORNER){
+        CornerCellMiddle(w,v,u,mid);
+        half = mid - pos[v];
+    }
+    if (kind == WALL_END_FACE || kind == WALL_END_CORNER){
+        return mid + half * (into / std::max(1e-6f,half.length()));
+    }
+    return mid;
+}
 
 //A sharpened log standing at p on ground y0: a square post and a four-sided tip.
 void Log(std::vector<vertex>& out, const vec2& p, float y0, float height, float width, int column){
@@ -424,7 +599,7 @@ void HarmedLog(std::vector<vertex>& out, const vec2& p, float y0, float height, 
 /*
     A planned wall plot: a tall stake at its vertex with a ribbon, and a cord out to each edge the wall
     will take - to the stakes of planned plots beside it, meeting halfway, and to the midpoint toward one
-    standing or a gate.
+    standing or a gate - and at an end, on to what it will meet (WallJoins), so the plan shows the line closing.
 */
 void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
     const std::vector<vec2>& pos = w.grid->fine.pos;
@@ -434,14 +609,15 @@ void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
     Bar(out,vec3(c.x,y0 + WALL_STAKE_HEIGHT - STAKE_RIBBON,c.y),vec3(c.x,y0 + WALL_STAKE_HEIGHT + 0.01f,c.y),
         STAKE_THICK * 2.0f,PAL_ACCENT);
     vec3 tie(c.x,y0 + WALL_STAKE_TIE,c.y);
-    int nb[ROAD_MAX_NEIGHBOURS];
-    int n = WallNeighbours(w,z,v,nb);
+    int nb[WALL_JOINS_MOST];
+    int kind[WALL_JOINS_MOST];
+    int n = WallJoins(w,z,v,nb,kind);
     for (int i = 0; i < n; i++){
         int u = nb[i];
-        vec2 mid = (c + pos[u]) * 0.5f;
-        float y_mid = ZoneWallPlanned(z,u) ? (tie.y + ZoneGroundHeight(w,z,u,pos[u]) + WALL_STAKE_TIE) * 0.5f
-                                           : ZoneGroundHeight(w,z,v,mid) + WALL_STAKE_TIE;
-        Bar(out,tie,vec3(mid.x,y_mid,mid.y),STAKE_CORD,PAL_WALL);
+        vec2 end = WallJoinAt(w,v,u,kind[i],WALL_END_INTO);
+        float y_end = ZoneWallPlanned(z,u) ? (tie.y + ZoneGroundHeight(w,z,u,pos[u]) + WALL_STAKE_TIE) * 0.5f
+                                           : ZoneGroundHeight(w,z,v,end) + WALL_STAKE_TIE;
+        Bar(out,tie,vec3(end.x,y_end,end.y),STAKE_CORD,PAL_WALL);
     }
 }
 
@@ -451,6 +627,8 @@ void BuildWallStake(const ChasmWorld& w, const ZoneState& z, int v, std::vector<
     logs at the middles of equal steps along each piece, so two plots' logs meet at a midpoint without a
     doubled one. A thicker log at the vertex where the line does not run straight through. Toward a gate
     the piece ends in a tall post at the midpoint - the jamb - and the crossbeam is the gate's (BuildGate).
+    At an END it runs on to what it ends against (WallJoins): into a building's, a terrace's or a castle's face, or to
+    short of a drop's brink - the edge of the chasm, or of the terrace it stands on - its last logs stepping down there.
     HARMED (`harm`, step 4d), its logs lean and drop away from the blows (HarmedLog); BROKEN, a wall site again, it is
     drawn here too, as what is left of it. Its jambs stand either way.
 */
@@ -460,8 +638,13 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
     auto ground = [&](const vec2& p){
         return ZoneGroundHeight(w,z,v,p);     //a terrace's top, if it stands on one (terraces_plan.md)
     };
-    int nb[ROAD_MAX_NEIGHBOURS];
-    int n = WallNeighbours(w,z,v,nb);
+    int nb[WALL_JOINS_MOST];
+    int kind[WALL_JOINS_MOST];
+    int n = WallJoins(w,z,v,nb,kind);
+    vec2 end_at[WALL_JOINS_MOST];
+    for (int i = 0; i < n; i++){
+        end_at[i] = WallJoinAt(w,v,nb[i],kind[i],WALL_END_INTO);
+    }
     //Which way the blows push a log standing at `at` in a line running across `side`: to the side of the wall away from
     //where they came from - by the plot's chord, the line between its neighbours in the wall, since the zombies stand
     //off its point and may stand along a bend of it - or with that not known, one way for the whole plot by its hash.
@@ -487,7 +670,7 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         return (side.dot(push) < 0.0f) ? -side : side;
     };
     std::vector<vec2> segs;
-    LineThrough(w,v,nb,n,segs);
+    LineThrough(w,v,nb,n,segs,end_at);
     //The pieces as polylines, with the neighbour at each end (-1 at the vertex).
     struct Piece{
         std::vector<vec2> pts;
@@ -507,31 +690,15 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         HarmedLog(out,pos[v],ground(pos[v]),WALL_LOG_HEIGHT + WALL_LOG_JITTER,WALL_LOG_W * 1.4f,PAL_BARK,
                   away(vec2()),f,MeshHash((uint32_t)v,0xC0u));
     }
-    /*
-        AT A CLIFF'S EDGE (the user's, 2026-10-23: walls built right up to the chasm, PlotIsBuildable's `f_rim`): a wall
-        ending on the rim runs on from its point to the drop most across from the rest of it, almost to the edge - so no
-        strip of the rim shows round its end, as nobody walks round it there.
-    */
-    if (n == 1){
-        const Terrain& t = *w.terrain;
-        vec2 back = pos[nb[0]] - pos[v];
-        back = back * (1.0f / std::max(1e-6f,back.length()));
-        int nbs[8];
-        int c = ZonePlotNeighbours(w,v,nbs,8);
-        int drop = -1;
-        float best = WALL_RIM_ACROSS;
-        for (int i = 0; i < c; i++){
-            vec2 d = pos[nbs[i]] - pos[v];
-            float across = -back.dot(d * (1.0f / std::max(1e-6f,d.length())));
-            if (!t.SameGround(v,nbs[i]) && across > best){
-                best = across;
-                drop = nbs[i];
+    //Whether joined plot u is a DROP the line ends at: its last logs there step down.
+    auto drop_at = [&](int u){
+        for (int i = 0; i < n; i++){
+            if (nb[i] == u){
+                return kind[i] == WALL_END_DROP;
             }
         }
-        if (drop >= 0){
-            pieces.push_back(Piece{{pos[v],pos[v] + (pos[drop] - pos[v]) * (0.5f * WALL_RIM_REACH)},-1,-1});
-        }
-    }
+        return false;
+    };
     /*
         Against a GUARD TOWER (defence_plan.md) the piece runs on past the midpoint to the tower's wall, which stands
         well back from it: the tower draws no palisade of its own.
@@ -580,6 +747,8 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
             continue;
         }
         int logs = std::max(1,(int)std::lround((to - from) / WALL_LOG_SPACING));
+        bool f_drop_start = p.at_start >= 0 && drop_at(p.at_start);
+        bool f_drop_end = p.at_end >= 0 && drop_at(p.at_end);
         size_t seg = 1;
         for (int i = 0; i < logs; i++){
             float s = from + (to - from) * ((float)i + 0.5f) / logs;
@@ -590,7 +759,11 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
             vec2 d = p.pts[seg] - p.pts[seg - 1];
             vec2 at = p.pts[seg - 1] + d * t;
             float jitter = (float)(MeshHash((uint32_t)v,(uint32_t)pi,(uint32_t)i) % 100) / 100.0f;
-            HarmedLog(out,at,ground(at),WALL_LOG_HEIGHT + jitter * WALL_LOG_JITTER,WALL_LOG_W,PAL_BARK,
+            //Toward a drop the last few stand lower, stepping down to the end.
+            int from_end = std::min(f_drop_start ? i : logs,f_drop_end ? logs - 1 - i : logs);
+            float lower = (from_end < WALL_END_LOGS)
+                        ? 1.0f - (1.0f - WALL_END_LOWEST) * (float)(WALL_END_LOGS - from_end) / WALL_END_LOGS : 1.0f;
+            HarmedLog(out,at,ground(at),(WALL_LOG_HEIGHT + jitter * WALL_LOG_JITTER) * lower,WALL_LOG_W,PAL_BARK,
                       away(vec2(-d.y,d.x)),f,MeshHash((uint32_t)v,(uint32_t)pi + 64u,(uint32_t)i));
         }
     }
@@ -622,7 +795,9 @@ void DoorLeaf(const ChasmWorld& w, const ZoneState& z, const vec2& hinge, const 
 /*
     A GATE - a road plot a wall runs through (ZoneState::gate): a crossbeam over the road from jamb to jamb,
     the posts the walls either side end in. Only once every wall beside it stands, so the beam never hangs
-    from a post not there yet.
+    from a post not there yet. A side may instead be what a wall's end runs on to (WallJoins, line_works_plan.md
+    step 5) - a building's, a terrace's or a castle's face, a brink - and the gate stands its own jamb against it: so
+    a gate between two terraces, one plot of wall drawn over the road there, has posts, a beam and a door.
     Its DOOR (defence_plan.md, step 3): a leaf from each jamb to the gate's middle. SHUT, the leaves meet
     there across the road; OPEN, each is swung back about its jamb to lie along the road - both to the same
     side of the wall, by a fixed direction, so the two of a gate never fold opposite ways. Between the two plots
@@ -633,31 +808,46 @@ void DoorLeaf(const ChasmWorld& w, const ZoneState& z, const vec2& hinge, const 
 void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<vertex>& out,
                const ZoneHarmLook* harm = NULL){
     const std::vector<vec2>& pos = w.grid->fine.pos;
-    int nb[ROAD_MAX_NEIGHBOURS];
-    int n = WallNeighbours(w,z,g,nb);
-    bool f_wall = false;
+    int nb[WALL_JOINS_MOST];
+    int kind[WALL_JOINS_MOST];
+    int n = WallJoins(w,z,g,nb,kind,WALL_GATE_ACROSS);
+    bool f_side = false;        //a palisade beside it, or something its own jamb stands against
     for (int i = 0; i < n; i++){
-        if (z.ground[nb[i]] == ZONE_GROUND_WALL){
+        if (kind[i] != WALL_END_NONE){
+            f_side = true;
+        }else if (z.ground[nb[i]] == ZONE_GROUND_WALL){
             //A broken plot beside it keeps its jamb (BuildPalisade), so the beam still has a post to hang from.
             const ZoneHarmMark* broken = harm ? harm->Wall(nb[i]) : NULL;
             if (!ZoneWallStands(z,nb[i]) && !(broken && broken->step >= ZONE_HARM_STEPS)){
                 return;
             }
-            f_wall = true;
+            f_side = true;
         }
     }
-    if (!f_wall || n < 2){
+    if (!f_side || n < 2){
         return;
     }
-    auto top = [&](const vec2& p){
-        return vec3(p.x,ZoneGroundHeight(w,z,g,p) + WALL_GATE_HEIGHT - WALL_GATE_BEAM * 0.5f,p.y);
+    auto ground = [&](const vec2& p){
+        return ZoneGroundHeight(w,z,g,p);
     };
+    auto top = [&](const vec2& p){
+        return vec3(p.x,ground(p) + WALL_GATE_HEIGHT - WALL_GATE_BEAM * 0.5f,p.y);
+    };
+    //Where each side's jamb stands: at the edge's midpoint, where the palisade there ends in one - or the gate's own,
+    //out of a face or short of a brink.
+    vec2 side_at[WALL_JOINS_MOST];
+    for (int i = 0; i < n; i++){
+        side_at[i] = WallJoinAt(w,g,nb[i],kind[i],-WALL_GATE_POST_W * 0.5f);
+        if (kind[i] != WALL_END_NONE){
+            Log(out,side_at[i],ground(side_at[i]),WALL_GATE_HEIGHT,WALL_GATE_POST_W,PAL_BARK_DARK);
+        }
+    }
     const vec2 c = pos[g];
     if (n == 2){
-        Bar(out,top((c + pos[nb[0]]) * 0.5f),top((c + pos[nb[1]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
+        Bar(out,top(side_at[0]),top(side_at[1]),WALL_GATE_BEAM,PAL_BARK_DARK);
     }else{
         for (int i = 0; i < n; i++){
-            Bar(out,top(c),top((c + pos[nb[i]]) * 0.5f),WALL_GATE_BEAM,PAL_BARK_DARK);
+            Bar(out,top(c),top(side_at[i]),WALL_GATE_BEAM,PAL_BARK_DARK);
         }
     }
     bool f_shut = ZoneGateShut(z,g);
@@ -671,7 +861,7 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
     bool f_broken = hit && hit->step >= ZONE_HARM_STEPS && !f_shut;
     float f = (hit && f_shut) ? std::min(1.0f,(float)hit->step / ZONE_HARM_STEPS) : 0.0f;
     auto jamb_at = [&](int i){
-        return z.ground[nb[i]] == ZONE_GROUND_WALL || z.KindOf(nb[i]) == ZONE_KIND_TOWER;
+        return kind[i] != WALL_END_NONE || z.ground[nb[i]] == ZONE_GROUND_WALL || z.KindOf(nb[i]) == ZONE_KIND_TOWER;
     };
     /*
         Harmed, each leaf turns as one about its jamb's hinge. A piece this plot draws with no jamb of its own is the far
@@ -700,7 +890,7 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
     }
     const vec3 up(0.0f,1.0f,0.0f);
     for (int i = 0; i < n; i++){
-        vec2 mid = (c + pos[nb[i]]) * 0.5f;
+        vec2 mid = side_at[i];
         vec2 in = c - mid;
         float half = in.length();
         if (half < 1e-4f){
@@ -714,7 +904,7 @@ void BuildGate(const ChasmWorld& w, const ZoneState& z, int g, std::vector<verte
         int hung = f_jamb ? i : one_jamb;      //the jamb the leaf this piece is part of hangs from
         if (hung >= 0 && (f > 0.0f || f_broken)){
             //Built shut, then turned on its hinge: its far end dropped, then swung along the road away from the blows.
-            vec2 jamb_mid = (c + pos[nb[hung]]) * 0.5f;
+            vec2 jamb_mid = side_at[hung];
             vec2 shuts = c - jamb_mid;          //the way the leaf runs from its hinge, shut
             float span = shuts.length();
             if (span < 1e-4f){
@@ -1573,9 +1763,14 @@ bool RoadNear(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& p, 
             if (ZoneRoadLaid(z,v)){
                 RoadCentreLine(w,z,v,segs);
             }else if (ZoneWallStands(z,v)){
-                int nb[ROAD_MAX_NEIGHBOURS];
-                int n = WallNeighbours(w,z,v,nb);
-                LineThrough(w,v,nb,n,segs);
+                int nb[WALL_JOINS_MOST];
+                int kind[WALL_JOINS_MOST];
+                vec2 end_at[WALL_JOINS_MOST];
+                int n = WallJoins(w,z,v,nb,kind);
+                for (int i = 0; i < n; i++){
+                    end_at[i] = WallJoinAt(w,v,nb[i],kind[i],WALL_END_INTO);
+                }
+                LineThrough(w,v,nb,n,segs,end_at);
             }else{
                 continue;
             }

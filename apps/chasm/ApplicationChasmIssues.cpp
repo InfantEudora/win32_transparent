@@ -94,6 +94,7 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_STEAM:       return "THE STEAM COLLECTOR";
         case ZONE_KIND_CONDENSER:   return "THE CONDENSER";
         case ZONE_KIND_SAIL_LOFT:   return "THE SAIL LOFT";
+        case ZONE_KIND_STORE:       return "THE STORE";
         default:                    return "A WORKPLACE";
     }
 }
@@ -314,6 +315,21 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
             i.tier = ISSUE_STUCK;
             i.order = (float)id;
             i.text = "ROPEWALK: TOO SHORT TO WORK";
+            i.building = (uint32_t)id;
+            out.push_back(i);
+        }
+        /*
+            A store or a workplace SHUT IN, as a house can be (EconomyShutIn, EconomyDoorMatters; the user's, 2026-10-24):
+            nothing is brought to it or fetched from it. A woodcutter's hut walled in by another kept a pile nobody could
+            reach, and nothing said so.
+        */
+        if (EconomyDoorMatters(b.kind) && EconomyShutIn(e,(uint32_t)id)){
+            ChasmIssue i;
+            i.kind = "shut_in";
+            i.tier = ISSUE_STUCK;
+            i.order = (float)id;
+            i.text = std::string(WorkplaceName(b.kind) + 4) + " SHUT IN";     //"THE WOODCUTTER'S HUT" less its "THE "
+            i.value = "NO WAY IN";
             i.building = (uint32_t)id;
             out.push_back(i);
         }
@@ -714,7 +730,7 @@ void ApplicationChasm::RegisterIssueTools(){
     MCPServer::Get()->RegisterTool("chasm_issues",
         "NEEDS ATTENTION (docs/issues_plan.md): everything the panel over the tools' grid would list, in its order - "
         "the panel shows the first five, in play mode. Each: kind (choose_crop, build_water, build_field, "
-        "build_woodcutter, build_houses, build_store, find_river (play mode, no river found yet), nobody_at, no_room, ropewalk_short, house_shut_in, house_crowded, field_fallow, tower_unkept, site_needs_rope, site_needs_stone, mine_worked_out, trees_unreached), tier (danger: a deadline under two days; "
+        "build_woodcutter, build_houses, build_store, find_river (play mode, no river found yet), nobody_at, no_room, ropewalk_short, shut_in, house_shut_in, house_crowded, field_fallow, tower_unkept, site_needs_rope, site_needs_stone, mine_worked_out, trees_unreached), tier (danger: a deadline under two days; "
         "countdown: a choice the game makes when it runs out; stuck; next: a next step), text and value as drawn, "
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
         "selects), plot (where a click takes the view: trees_unreached's roads and walls) or tool (what it takes up). "

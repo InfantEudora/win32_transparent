@@ -7,7 +7,7 @@ summary: The only one who fells trees. Works from a hut or from the camp, fells 
 plans: economy_plan.md > The woodcutter: logs first; woodcutting_plan.md > Decided (the user, 2026-10-11); woodcutting_plan.md > As built (2026-10-11); yards_plan.md > Noted; building_size_plan.md > Decided (the user, 2026-10-18)
 code: Economy.cpp: TickWorker FindTree WoodNear TreesInTheWay FetchFromWorkplace FindStore Felled AssignJobs EconomySkillFactor RouteTo; Economy.h: WORKER_JOB_WOODCUTTER ECONOMY_PLOTS_PER_WORKER; Walkers.h: WALK_WHO_ICE
 tuning: ECONOMY_PICK_SECONDS
-verified: 2026-10-18
+verified: 2026-10-24
 ---
 
 A job at a **woodcutter's hut**, which the player drags out over at most {ZONE_BUILDING_MAX_PLOTS:#plots}, or at the [[Camp|camp]], which has one
@@ -31,8 +31,8 @@ A hut keeps wood **indoors**, {ECONOMY_HUT_ROOM} for every unit of its floor are
 {ECONOMY_HUT_WORKSHOP}, the floor he works in: a big hut is a cheap store for wood, a small one keeps none
 and needs a lot. Each standing **lot** of its [[Yard|yard]] holds {ECONOMY_LOT_ROOM} more per unit of its
 area, piled outside. The camp's woodcutter puts his wood in with its supplies, up to {ECONOMY_CAMP_WOODPILE}.
-A hut with room for not even a log fells nothing, and NEEDS ATTENTION says so. The price tag says what a hut
-would keep before it is placed.
+A hut with room for not even a log fells nothing, and one [[House|shut in]] on every side has a pile nobody can reach:
+NEEDS ATTENTION says so of either. The price tag says what a hut would keep before it is placed.
 
 ## Strength
 
@@ -55,8 +55,8 @@ Every round starts and ends at the woodcutter's [[House|house]], or tent.
    **In winter**, one in the way on a [[Bridge|bridge's]] far bank too: he crosses the [[Seasons|ice]] for it and back, for nothing else.
 3. **A second log**, if one lies within {ECONOMY_LOG_PAIR_REACH} and there is room for both: at most
    {ECONOMY_WOODCUTTER_LOGS:#logs} a trip.
-4. **Deliver** to the nearest store that takes wood and has room, or else into the hut and onto its lot.
-   If neither has room, the wood is put down as a [[Crate|crate]] where the woodcutter stands.
+4. **Deliver** to the nearest store that takes wood and has room, or else into the hut and onto its lot. A log
+   neither would take - by a way he can walk, too - is not lifted: it lies for a later round, not as a [[Crate|crate]].
 5. **Home**, then the next round.
 
 A site whose last tree is felled goes up at once, if all it takes is there.

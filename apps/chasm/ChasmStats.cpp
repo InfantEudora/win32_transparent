@@ -497,12 +497,23 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
         case EVENT_DIED:
             //...his rank before his name, as the dead keep it (ranks_plan.md): "Expert Jelle De Wit died of thirst". Not
             //his kills - the page's column would cut the cause off; the pop-up and the death line have room for them.
+            //His AGE last (the user's, 2026-10-24), where a narrow column cuts first: "... died of old age at 43".
+            buf[0] = 0;
             for (const EconomyDeath& d : e.dead){
+                if (d.id != ev.person){
+                    continue;
+                }
                 int rank = EconomyRank(d.kills);
-                who = (d.id == ev.person && rank > RANK_NONE) ? std::string(EconomyRankName(rank)) + " " + who : who;
+                who = (rank > RANK_NONE) ? std::string(EconomyRankName(rank)) + " " + who : who;
+                int age = EconomyAgeAt(d.born,d.tick);
+                if (age > 0){
+                    snprintf(buf,sizeof(buf)," at %i",age);
+                }else{
+                    snprintf(buf,sizeof(buf)," as a baby");
+                }
             }
-            return (ev.amount == NEEDS_DIED_ZOMBIE) ? who + " was killed by a zombie"
-                                                    : who + " died of " + EconomyDeathCause(ev.amount);
+            return ((ev.amount == NEEDS_DIED_ZOMBIE) ? who + " was killed by a zombie"
+                                                     : who + " died of " + EconomyDeathCause(ev.amount)) + buf;
         case EVENT_RANKED:
             return who + " rose to " + EconomyRankName(ev.amount);
         case EVENT_ZEPPELIN_STAGE:

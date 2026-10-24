@@ -59,7 +59,7 @@ from it. Once nobody lives there, its stock is anyone's, like a [[Store|store's]
 A house needs a way in: one of its plots reachable from open ground - or from a terrace, by an upper door onto it
 ([[Terrace|terraces]]). Closed in on every side by other buildings, walls, terraces or water, it is **shut in**: no family
 moves in, and one living there can't get out until the player clears a plot beside it. Its card warns about it. Its
-**doors** open only where they lead somewhere - never into a building, a terrace's wall or off its edge.
+**doors** open only where they lead somewhere - never into a building or a terrace's wall, nor over a drop.
 
 **Zombies breach** its door in {ZOMBIE_BREACH_DOOR:#seconds} of hitting, as any building's ([[Zombie|zombies]]): nothing of
 it comes down, but they walk through it from then on, and whoever is indoors can be got at. Its doors stand open on the dark.

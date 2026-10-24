@@ -6,7 +6,7 @@ status: partial
 summary: What the colony did, kept by the rules and saved: a journal of what happened and a row for every day, on a page of their own.
 plans: statistics_plan.md > Chosen for version 1 (2026-10-16, confirmed by the user); statistics_plan.md > As built: version 1 (2026-10-16); sound_plan.md > Working with the statistics plan; ranks_plan.md > As built: step 1, kills (2026-10-19); settlements_plan.md > As built: statistics by colony
 code: Economy.h: ECONOMY_EVENTS_KEPT ECONOMY_STAGES EVENT_BORN EVENT_SETTLED EVENT_ZOMBIE_FELLED; Economy.cpp: Event CloseDay BeginHistory EconomyDayLevels EconomyJournaled EconomyColonyRow; ChasmStats.cpp: ChasmStatsCheck ChasmStatsNowOf ChasmColonyHistory ChasmStatsColonies; ApplicationChasmStats.cpp: DrawStats UpdateStats
-verified: 2026-10-22
+verified: 2026-10-24
 ---
 
 Press **Tab**, click the figures in the top bar, or choose Statistics in the pause menu, for the **Statistics page**.
@@ -18,7 +18,7 @@ also [[The demo's goals|the demo's end]], with its own heading and buttons.
 Everything that happens is made once by the rules as an [[Events|event]], and the colony's history is kept from those, as
 they happen - so a replay keeps the same history, and a load shows what was saved.
 
-- **The journal** remembers these one by one: a birth, a death and its cause, a harvest with what it gave, a
+- **The journal** remembers these one by one: a birth, a death with its cause and the age, a harvest with what it gave, a
   building standing whole for the first time, a [[Settlement|settlement]] founded ([[Founding|a tent]] pitched
   outside every one, and the settlers' landing), a floatstone seam first seen ([[Deposit|deposits]]), an area
   found, someone grown up, a couple expecting, a crop the frost took, someone risen a [[Kills|rank]], and the firsts the [[Discoveries|discoveries]]

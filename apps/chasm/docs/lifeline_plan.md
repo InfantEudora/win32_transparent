@@ -547,3 +547,16 @@ line, the rows, the causes), `ApplicationChasmTime.cpp` (the notice, the death l
   - **replay**: 7,876 ticks across Jelle's retiring and Wessel's death, replayed twice - equal on every tick.
 - **Not checked by a run**: a mother whose caring year ends past 36; a death in a camp's tent; an old person in a
   household that moves.
+
+## Old age is no villager lost (the user's, 2026-10-24)
+
+A bug report's save from before old age (`saves/now.json`, year 16) lost six settlers to it within 800 ticks of
+loading - long past their day, each died the first time home - and each death stopped the game behind the death's
+pop-up, as a loss. Now (`ApplicationChasmGoals.cpp`) a death of `NEEDS_DIED_OLD_AGE` fails no goal ("through the
+winter, nobody lost": `ChasmGoalState`, and the death named as failing it in `TickGoals`) and opens no pop-up
+(`UpdateEnd`). It is still told as every death is: the red line over the build bar, the journal, the statistics'
+DIED and its causes. The colony lost is still lost when the last of it dies of old age.
+
+- **Checked** (debug, port 8771, play mode by `chasm_view`): the save loaded and stepped - before, the pop-up up from
+  the first two deaths (Floris and Elin Veen); after, no pop-up through all six. A death of thirst set up with
+  `chasm_economy set_needs` still brought the pop-up.

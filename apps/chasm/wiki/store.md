@@ -5,8 +5,8 @@ kind: buildings
 status: built
 summary: Holds goods for the whole colony. Beside a workplace it takes only that workplace's goods; on its own, whatever the player allows.
 plans: economy_plan.md > As built: the simulation; economy_plan.md > Decided; goods_plan.md > Step 5: the view by category
-code: Economy.cpp: Derive FindStore; Zones.h: ZoneBuilding; ChasmHud.h: HudGoodsGroup HUD_GROUP_COUNT
-verified: 2026-10-23
+code: Economy.cpp: Derive FindStore StoreRoomLeft; Zones.h: ZoneBuilding; ChasmHud.h: HudGoodsGroup HUD_GROUP_COUNT
+verified: 2026-10-24
 ---
 
 ## What it takes
@@ -22,7 +22,9 @@ verified: 2026-10-23
   [[Provisions|provisions]] included.
 
 Workers carry to the *nearest* store that takes their load and has room for all of it, so a store beside
-a workplace is in effect that workplace's own.
+a workplace is in effect that workplace's own. **The loads already on their way count against its room**: with one
+load of room left, one worker sets out for it, not every farmer and carrier at once - the rest, arriving to a full
+store, used to put their loads down beside it as a [[Crate|crate]] that only grew.
 
 ## Its card
 
@@ -42,6 +44,9 @@ against everything they hold, since they have no room.
 
 A store is at most {ZONE_STORE_MAX_PLOTS:#plots} - a longer drag goes on with another - and holds its floor area (plot area x storeys) x {ECONOMY_STORE_ROOM} units, shared by every good in
 it. It does nothing until it has been built ([[Construction]]).
+
+**Shut in** on every side by other buildings, walls or water, as a [[House|house]] can be, it has no way in: nothing
+is brought to it or taken from it, and NEEDS ATTENTION says so - as it does of a workplace shut in.
 
 ## Who comes to it
 

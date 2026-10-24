@@ -946,6 +946,9 @@ inline bool ZoneGateShut(const ZoneState& z, int v){
 #define ZONE_CASTLE_MAX_STOREYS 4
 #define ZONE_CASTLE_ARCH_LOWEST 2
 #define ZONE_CASTLE_HEADROOM    2       //storeys from a piece's top to an arch over it: a walker under it clears its slab
+//How far a piece may stand INTO its ground (ZoneCastleLevelFor): the plateau lies a few centimetres either side of a
+//whole storey, and rounding those up lifted a one-storey wall on flat ground to two. Its walls go on down to the ground.
+#define ZONE_CASTLE_SETTLE      (ZONE_STOREY_HEIGHT * 0.25f)
 //A piece as `castle` holds it, and a ZONE_OP_CASTLE's value[1]: its shape and storeys.
 inline uint8_t ZoneCastlePiece(int shape, int storeys){
     return (uint8_t)((shape << 4) | (storeys & 15));
@@ -1000,13 +1003,14 @@ bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys);
 /*
     The level (ZoneCastleBase) a piece painted on `plot` as part of drag `stroke` stands on: the drag's, once its first
     piece is down - so one drag is one level; a first piece the level of the piece it is painted on, else the highest
-    ground under its plot rounded up to a whole storey, as a terrace's top is (ZoneTerraceTopOver).
+    ground under its plot rounded up to a whole storey, as a terrace's top is (ZoneTerraceTopOver) - less
+    ZONE_CASTLE_SETTLE, which a terrace cannot have: the terrain would show through its top.
 */
 int ZoneCastleLevelFor(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t stroke);
 /*
     Whether a piece may be painted on `plot` at level `base`: a plot of the debug's rules for a road, nothing built on
     it, and no ground but a road under an arch; not a tower's ladder; and standing a storey over all the ground under
-    it - an arch its two - so a level drag up a hill stops where the hill rises past it. Over a piece, as
+    it - an arch its two - less ZONE_CASTLE_SETTLE, so a level drag up a hill stops where the hill rises past it. Over a piece, as
     ZoneCastleGoesOver says; in its place, only one that still carries the piece over it. `why` says why not.
 */
 bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, int base, const char** why);

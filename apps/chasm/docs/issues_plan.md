@@ -137,3 +137,17 @@ fallow (it waits for him, `Tending`), and nor is a field still a site.
 Checked (debug, 8769): village_year5 lists FIELD LIES FALLOW / TOO FEW HANDS for house 11's second field, with
 the jobs overview's FARMERS 4 / 5 in amber; a new seed-12 colony with 39 fields painted by debug round the camp
 lists 32 FIELDS LIE FALLOW / BUILD HOUSES and one across the way as NOBODY CAN REACH IT.
+
+## As built: a workplace or store shut in (2026-10-24)
+
+The user's, from a bug report: a woodcutter's hut walled in by another kept a pile nobody could reach - its woodcutter
+put his logs down in the forest as crates (`crates_plan.md`, "Fixed: the ever-filling crate") - and nothing said so.
+A house shut in had its row (HOUSE SHUT IN); now a store or a workplace on plots does too: "WOODCUTTER'S HUT SHUT IN",
+"STORE SHUT IN" and so on, value NO WAY IN, kind `shut_in`, a click selecting it. Which kinds is
+`EconomyDoorMatters` (`Economy.h`, beside `EconomyShutIn`): the store, woodcutter, water collector, builders' hut,
+ropewalk, stonecutter, mine, steam collector, condenser and sail loft - not a tower, whose guards climb to it along
+its walls. Its card says the same: "Shut in on every side, with no way in: nobody can get to its woodpile" (a hut),
+"... nothing is brought or fetched" (the rest).
+
+Checked (debug, a copy linked under another name, port 8771): `saves/now.json` lists WOODCUTTER'S HUT SHUT IN for huts
+7, 8 and 9 - three in that colony - and not its store; hut 7's card has the line.

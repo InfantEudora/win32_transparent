@@ -59,6 +59,23 @@ first ("Build first"). Line works join that queue - "that fits in better with th
   raising, and roads and walls in the joint queue; (5) the tests - a wall with a gate the walkers must use,
   and the replay test's fixtures made again on today's map (its camp woodcutter and its oaks are stale).
 
+## Walls' ends, decided (the user, 2026-10-24)
+
+A palisade drawn up to a house, a terrace or the castle stopped half an edge short of it: its line ends at its last
+plot's point, and those draw their faces on their own plots' outlines, which cross the edge at its midpoint. Nothing
+walked through - a standing wall plot, a building, a terrace a storey up and a castle block each shut the edge already -
+so it was the look alone. The guard tower (`on_to_tower`) and, the day before, the chasm's rim already had the wall run on.
+
+- **A wall's END runs on to what it ends against**: into a building's, a terrace's or a castle's face, or to just short
+  of a drop. Only at an end - one plot of its line beside it, or none - so a wall alongside a house gets no stubs.
+- **The rim's turn limit** for which: the most nearly straight on, anything but back along it.
+- **Gates too**: a gate's side may be such a face, with a jamb of the gate's own against it - so one plot of wall drawn
+  over the road between two terraces makes a gate there, posts, beam and door. Gates stay explicit: a terrace or a house
+  does not make the roads beside it gates, which would gate every street between two of them.
+- **On a terrace, to its edge** as to the chasm's rim - with **its last few logs lower**, so it reads as an end.
+- In the rules nothing changes; the zombies' way is as it was - a house in a ring is a door to breach
+  (`ZOMBIE_BREACH_DOOR`), a terrace and a castle block they never cross.
+
 ## The plan
 
 ### The model: ground on a chain of plots
@@ -152,6 +169,7 @@ first ("Build first"). Line works join that queue - "that fits in better with th
 | 2 | Road sites: `ZoneRoadStands` (+ `ground_built`), the staked look, the clearing + laying errand, saves, replay test with a road through a forest edge | BUILT 2026-10-06 |
 | 3 | Walls: the kind, its rules, walkers closed where it stands, the palisade mesh and gates, its wood; roads and walls in the site queue by line (above) | BUILT 2026-10-08 (five phases: zones, tool, look, work + queue, the replay test) |
 | 4 | Building sites fell their trees first | planned |
+| 5 | Walls' ends run on to faces and drops; gates against faces; a wall's end steps down at a drop | BUILT 2026-10-24 |
 | later | A bridge's chain drawn freehand with the same stroke (dry bank, wet run, dry bank) - c4's suggestion | idea |
 
 **Depends on** the gardens-and-lots-as-sites work (`ground_built`, `ZONE_OP_GROUND_RAISE`, `ZONE_GROUND_LOT`)
@@ -399,3 +417,49 @@ does the woodcutter's search (`WoodNear`), which skipped those under buildings a
 or lot. Replayed: the three set out on the first tick and all three plots were laid 14 s later. `chasm_economy`'s
 `roads` now lists `planned_plots` - each still to lay, where it is, its line, and the trees in its way with
 where they stand - so the next road that will not be laid can be looked at without sending anyone.
+
+### Step 5: walls' ends (2026-10-24)
+
+Files: `RoadMesh.cpp` (`WallEndKind`, `WallJoins`, `WallJoinAt`, `CornerCellMiddle`; `LineThrough` takes the points its
+pieces end at; `BuildPalisade`, `BuildWallStake`, `BuildGate` and `RoadNear` all go by `WallJoins`), `BuildingMesh.cpp`
+(`WallDoor`). The look only: nothing in the rules, saves or hash.
+
+- **What an end meets** (`WallEndKind`): a FACE - a building standing with a body, a castle block or stair, each over the
+  wall's ground by `WALL_END_OVER`, or a terrace standing a wall's height over it (`ZoneTerraceStep`) - run into, past the
+  edge's midpoint where its outline crosses, by `WALL_END_INTO`; a DROP - a cliff falling away, or the edge of the
+  terrace the wall stands on - run to short of the brink (`WALL_RIM_REACH`), its last `WALL_END_LOGS` logs stepping down
+  to `WALL_END_LOWEST` of their height; a cliff rising over it, as near, at full height. The chasm's rim of the day
+  before (a45b42c) is now one case of it, drawn as the line's curve rather than a spoke of its own.
+- **At a CORNER too**: a face across a cell, corner to corner, run to the cell's middle, where that face's corner is -
+  unless one of the two plots between is the line's own, or an end nearer. Not in the decisions, but needed for them: a
+  line along this grid steps where the grid runs across it, so ends meet faces so all the time, and the gate between
+  two terraces had its far side round a corner (both its edge neighbours on the terraces were on one side). The rules
+  shut the corner already: with that gate shut, the walk from one end of the corridor to the other went round the
+  terraces' ends (`chasm_pick to_x/to_z`), and through the gate once it was open.
+- **Which** (`WallJoins`): only where the line ends - one plot of it beside the plot, or none - so a wall alongside a
+  house gets no stubs. For an end, the one most nearly straight on, anything but back along it (`WALL_RIM_ACROSS`, the
+  rim's limit); for a lone plot, the two most across from each other, else the one.
+- **Gates**: a gate's side may be such an end, with a jamb of the gate's own against it (`WallJoinAt` with the post's
+  half width out of the face); its beam and door hang as between two palisades. A gate's far side must be across its
+  road (`WALL_GATE_ACROSS`), never a house beside the street. A gate drawn between a palisade and a house, or between
+  two terraces, used to be a working gate drawn as nothing.
+- **Stakes**: a planned wall's cord runs to the same end, so the plan shows the line closing.
+- **Doors**: a house's wall no longer takes a door onto a palisade's plot, planned or standing (`WallDoor`) - it led
+  nowhere, and now a joined end would meet the wall beside it.
+- **Seen** (debug, `saves/wall_ends_test.json`, a flat test map, and seed 12's rim): a wall into a two-storey house; one
+  plot of wall over the road through a corridor between two terraces - posts against both, beam, door, shut and open;
+  a wall to a terrace's foot; a wall on a terrace to its corner, stepping down; a wall into a castle block; a gate
+  between a palisade and a house; one wall plot filling the notch between a house and a terrace; a wall ending at a
+  house's corner, across a cell; a planned wall's cord to the castle; a wall to the chasm's rim at (3, 0), stepping
+  down. A gate on the slant between two palisades looks as before.
+
+#### Current tuning
+
+| Constant | Value | What |
+|---|---|---|
+| `WALL_RIM_ACROSS` | -0.5 | an end's turn limit (cosine): anything but back along it |
+| `WALL_GATE_ACROSS` | 0.5 | a gate's far side: across its road from the other |
+| `WALL_RIM_REACH` | 0.9 | of the way to the edge's midpoint a drop's end stops |
+| `WALL_END_INTO` | 0.05 | how far past a face's outline the line runs |
+| `WALL_END_OVER` | 0.65 | how far over the wall's ground a building or castle piece must stand to be a face |
+| `WALL_END_LOGS`, `WALL_END_LOWEST` | 3, 0.45 | the logs stepping down at a drop, the last at this share of the height |

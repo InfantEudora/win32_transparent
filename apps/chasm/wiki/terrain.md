@@ -37,7 +37,7 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
   stands at its edge.
 - Ground rises gently in hills and steeply in the mountain's crags. A building's plot may rise at most
   {ZONE_RISE_HOUSE} across it, a road's {ZONE_RISE_ROAD}, a field's cell {ZONE_RISE_FIELD}. Nothing stands
-  half over a cliff.
+  half over a cliff but a wall, which runs right up to the edge.
 - **Foundations**: a building drawn as a house, not a collector, may stand on up to {ZONE_RISE_FOUNDATION} of
   rise (one storey: hills, not crags) on a stone foundation it gets by itself - its floor built up to the highest
   ground under its walls, nothing dug in, the plinth showing downhill. The ground storey then takes

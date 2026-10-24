@@ -365,10 +365,11 @@ struct PropInstance;
     A DOCK (ZONE_KIND_DOCK) is painted on coarse cells as a field is, at the chasm's edge (ZoneCanDock), and built
     with ECONOMY_DOCK_WOOD_PER_CELL a cell, all at once. Once it stands and its zeppelin FITS on it (ZoneDockFrame,
     `dock_lie`), it is a site again: its ZEPPELIN, in ZEPPELIN_STAGES stages, each one good (EconomyZeppelinGood) -
-    the frame wood, the hull floatstone, the rigging rope, the envelope canvas, and STEAM LAST to fill it. The
-    builders bring all of them as they can, as to any site (SiteNeed: every stage still to stand); a stage stands
-    once those before it do and all of its good is there (Build), so a zeppelin is never left half-filled for want
-    of canvas. The stages standing (`zeppelin`, saved and hashed) are its look's, and each is told (EVENT_ZEPPELIN_STAGE).
+    the frame wood, the hull floatstone, the rigging rope, the envelope canvas, and STEAM LAST to fill it. The site
+    asks for ONE STAGE AT A TIME (SiteNeed: the next one's good alone; the user's, 2026-10-24 - rope brought early made
+    two stages rise at once), so the builders carry the frame's wood, then the hull's floatstone and so on, and a stage
+    stands once all of its good is there (Build): it rises stage by stage, and is never left half-filled for want of
+    canvas. The stages standing (`zeppelin`, saved and hashed) are its look's, and each is told (EVENT_ZEPPELIN_STAGE).
     Built, it is finished and moored there; flight is to come.
 
     --- STOCK KEPT (docs/goods_plan.md, "Kept in stock, and made to order") -------------------------
@@ -1518,6 +1519,15 @@ struct EconomyState{
 inline bool EconomyCold(const EconomyState& e, const EconomyWorker& k){
     return k.house < e.heat.size() && e.heat[k.house] == HEAT_COLD;
 }
+//Whether his bars fall on `tick` (A SHARE): that many ticks in every LIFE_SHARE_FULL, which ones by his id, so that a
+//house's babies do not all fall on the same ticks.
+inline bool EconomyShareTick(const EconomyWorker& k, uint64_t tick){
+    return (int)((tick + k.id) % LIFE_SHARE_FULL) < EconomyShare(k.born,tick);
+}
+//...and the health he loses on one (NEEDS): a tick's, more while dry or cold.
+inline int EconomyHealthDrain(const EconomyState& e, const EconomyWorker& k){
+    return 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0) + (EconomyCold(e,k) ? NEEDS_COLD_DRAIN : 0);
+}
 
 //The plot of his post (POSTS): an order's, else a guard's tower - -1 for neither.
 int EconomyPostPlot(const EconomyState& e, const EconomyWorker& k);
@@ -1640,6 +1650,14 @@ uint32_t EconomyOnTower(const EconomyState& e, const ZoneState& z, const Economy
 */
 inline bool EconomyShutIn(const EconomyState& e, uint32_t id){
     return id < e.shut.size() && e.shut[id] != 0;
+}
+//...and the kinds it stops - a store and the workplaces on plots, where goods are brought or fetched at the door (a bug
+//report, 2026-10-24: a woodcutter's hut walled in by another kept a pile nobody could reach). A house has its own reading,
+//uninhabitable; a tower's guards climb to it along its walls.
+inline bool EconomyDoorMatters(int kind){
+    return kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS
+           || kind == ZONE_KIND_ROPEWALK || kind == ZONE_KIND_STONECUTTER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_STEAM
+           || kind == ZONE_KIND_CONDENSER || kind == ZONE_KIND_SAIL_LOFT;
 }
 
 //A mother's children so far (BIRTHS), the living and the dead.
@@ -2219,6 +2237,8 @@ private:
     bool TowerWhole(const ZoneState& z, uint32_t id) const;
     std::array<int,GOOD_COUNT> TowerLeft(const ZoneState& z, uint32_t id, const EconomyWorker* except) const;
     int GoodFree(uint32_t id, int good) const;
+    //...and the other way: what store `id` still has room for, less every load already on its way there but `except`'s.
+    int StoreRoomLeft(uint32_t id, const EconomyWorker* except) const;
     int NearestPlot(uint32_t id, const vec2& to, bool f_dry = false) const;
     bool FindSiteWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers);
     void Build(const ZoneState& z, uint32_t id);

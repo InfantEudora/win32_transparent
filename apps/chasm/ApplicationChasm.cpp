@@ -3901,8 +3901,17 @@ void ApplicationChasm::RenderChasmPanel(){
         ImGui::SameLine();
         if (ImGui::Button("Save##save")){
             std::string error;
-            save_status = ChasmSaveWrite(save_name,ChasmSaveToJson(MakeSave()),error)
-                          ? "saved " + ChasmSavePath(save_name) : error;
+            bool f_saved = ChasmSaveWrite(save_name,ChasmSaveToJson(MakeSave()),error);
+            save_status = f_saved ? "saved " + ChasmSavePath(save_name) : error;
+            if (f_saved){
+                SetColonySave(save_name);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(menu_text_mutex);
+            if (!colony_save.empty()){
+                ImGui::TextDisabled("this game's save: %s",colony_save.c_str());
+            }
         }
         //The panel holds physics_mutex, so loading - which replaces simulation state - is safe here.
         for (const std::string& name : ChasmSaveList()){
@@ -3915,6 +3924,7 @@ void ApplicationChasm::RenderChasmPanel(){
                     save_status = error;
                 }else{
                     save_status = LoadSave(save,error) ? "loaded " + name : error;
+                    SetColonySave(name);    //loaded even with plots refused, as LoadSave says
                 }
             }
             ImGui::SameLine();
@@ -4659,6 +4669,7 @@ void ApplicationChasm::RegisterMCPTools(){
             if (!ChasmSaveWrite(name,ChasmSaveToJson(s),error)){
                 return json{{"error",error}};
             }
+            SetColonySave(name);
             return json{{"path",ChasmSavePath(name)},{"buildings",s.buildings.size()},
                         {"world_hash",s.world_hash},{"saves",ChasmSaveList()}};
         });
@@ -4687,6 +4698,7 @@ void ApplicationChasm::RegisterMCPTools(){
             main_scene->AtTickBoundary([&](){
                 f_ok = LoadSave(save,error);
             });
+            SetColonySave(name);
             std::shared_ptr<const ChasmWorld> w = GetWorld();
             char hash[32];
             snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)w->grid->Hash());

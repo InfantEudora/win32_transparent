@@ -12,6 +12,7 @@
 #include <ctime>
 #include <limits>
 #include <stdio.h>
+#include <string.h>
 
 /*
     THE PAUSE MENU, THE LISTS AND THE SAVES (docs/demo_plan.md, steps 1 and 2).
@@ -236,7 +237,8 @@ void ApplicationChasm::BuildScreen(){
     screen_menu.layout.top = 0.30f;
     screen_menu.layout.item_h = 0.050f;
     screen_menu.layout.gap = 0.008f;
-    screen_menu.layout.width = (screen == CHASM_SCREEN_NEW) ? 0.62f : 1.05f;
+    //A save's row holds a hand-given name, its day, its people, its date - and "(this game)" on the one in play's.
+    screen_menu.layout.width = (screen == CHASM_SCREEN_NEW) ? 0.62f : 1.20f;
     if (screen == CHASM_SCREEN_SETTINGS){
         //From the store, so the screen always shows what is saved - archer's settings, without its Controls: there
         //are no keys to map yet, and no pad to play with. Higher and tighter than the other lists, so all eight rows
@@ -278,8 +280,17 @@ void ApplicationChasm::BuildScreen(){
         int count = f_replays ? (int)screen_recordings.size() : (int)screen_saves.size();
         int from = screen_page * MENU_ROWS;
         int to = std::min(count,from + MENU_ROWS);
+        std::string ours;
+        {
+            std::lock_guard<std::mutex> lock(menu_text_mutex);
+            ours = colony_save;
+        }
         for (int i = from; i < to; i++){
             std::string label = f_replays ? RecordingLabel(screen_recordings[i]) : EntryLabel(screen_saves[i]);
+            //The save the colony in play came from, marked: several of one colony read alike but for their dates.
+            if (!f_replays && !ours.empty() && screen_saves[i].name == ours){
+                label += "      (this game)";
+            }
             screen_menu.AddButton(label.c_str(),SCREEN_ITEM_ROW + i);
         }
         if (screen != CHASM_SCREEN_SAVE && count == 0){
@@ -499,7 +510,7 @@ bool ApplicationChasm::LoadSaveNamed(const std::string& name, std::string& error
     std::string refused;
     LoadSave(save,refused);
     std::string colony = meta_text("colony");
-    EnteredColony(colony.empty() ? "Seed " + std::to_string(save.settings.seed) : colony);
+    EnteredColony(colony.empty() ? "Seed " + std::to_string(save.settings.seed) : colony,name);
     error = refused;
     debug->Info("Loaded %s: %s\n",name.c_str(),SaveTitle().c_str());
     return true;
@@ -519,11 +530,13 @@ void ApplicationChasm::StartNewGame(int start){
     debug->Info("New game: %s, seed %u, %i fine cells\n",st.name,st.seed,st.fine_cells);
 }
 
-//PHYSICS THREAD: a colony entered, loaded or new - its name for its saves, nothing in hand, the view on it.
-void ApplicationChasm::EnteredColony(const std::string& colony){
+//PHYSICS THREAD: a colony entered, loaded or new - its name for its saves, the save it came from (a load's), nothing in
+//hand, the view on it.
+void ApplicationChasm::EnteredColony(const std::string& colony, const std::string& save){
     {
         std::lock_guard<std::mutex> lock(menu_text_mutex);
         colony_name = colony;
+        colony_save = save;
     }
     f_game_on = true;
     CalendarDate d = CalendarDateOf(calendar_shown.load());
@@ -572,7 +585,16 @@ bool ApplicationChasm::WriteSave(const std::string& name, const char* kind, std:
         return false;
     }
     debug->Info("Saved %s (%s): %s\n",name.c_str(),kind,title.c_str());
+    //A save by hand is where the colony now comes from; one written of it by itself (auto, quick, a report) is not.
+    if (strcmp(kind,"save") == 0){
+        SetColonySave(name);
+    }
     return true;
+}
+
+void ApplicationChasm::SetColonySave(const std::string& name){
+    std::lock_guard<std::mutex> lock(menu_text_mutex);
+    colony_save = name;
 }
 
 /*
@@ -763,6 +785,11 @@ void ApplicationChasm::DrawScreen(float s){
     }else{
         heading = "SAVE";
         detail = SaveTitle();
+        //...and the save it came from, so it is saved over on purpose or not at all (its row is marked too).
+        std::lock_guard<std::mutex> lock(menu_text_mutex);
+        if (!colony_save.empty()){
+            detail += "\nThis game's save: " + colony_save;
+        }
     }
     DrawMenuPanel(screen_menu,heading,detail,s,MENU_BOX,true);
 }

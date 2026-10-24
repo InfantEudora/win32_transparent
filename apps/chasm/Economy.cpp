@@ -1774,7 +1774,7 @@ bool Economy::GoDig(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     int load = std::min(ECONOMY_LOAD,left);
     bool f_room = false;
     for (size_t s = 1; s < state.accepts.size() && !f_room; s++){
-        f_room = (state.accepts[s] & GOOD_BIT(good)) && state.room[s] - CarryTotal(state.stock[s]) >= load && Ours(k,(uint32_t)s);
+        f_room = (state.accepts[s] & GOOD_BIT(good)) && Ours(k,(uint32_t)s) && StoreRoomLeft((uint32_t)s,&k) >= load;
     }
     if (!f_room){
         return false;
@@ -2805,8 +2805,7 @@ bool Economy::FetchFromWorkplace(EconomyWorker& k, const ZoneState& z, Walkers& 
     }
     bool f_taken = false;
     for (size_t id = 1; id < state.accepts.size() && !f_taken; id++){
-        f_taken = (state.accepts[id] & GOOD_BIT(good)) && state.room[id] - CarryTotal(state.stock[id]) >= load
-                  && Ours(k,(uint32_t)id);
+        f_taken = (state.accepts[id] & GOOD_BIT(good)) && Ours(k,(uint32_t)id) && StoreRoomLeft((uint32_t)id,&k) >= load;
     }
     if (!f_taken){
         return false;
@@ -4192,7 +4191,7 @@ bool Economy::FindRock(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
     }
     bool f_room = false;
     for (size_t s = 1; s < state.accepts.size() && !f_room; s++){
-        f_room = (state.accepts[s] & GOOD_BIT(GOOD_STONE)) && state.room[s] > CarryTotal(state.stock[s]) && Ours(k,(uint32_t)s);
+        f_room = (state.accepts[s] & GOOD_BIT(GOOD_STONE)) && Ours(k,(uint32_t)s) && StoreRoomLeft((uint32_t)s,&k) > 0;
     }
     if (!f_room){
         return false;
@@ -4581,8 +4580,8 @@ bool Economy::FindStore(EconomyWorker& k, const ZoneState& z, Walkers& walkers){
         if (!(state.accepts[id] & GOOD_BIT(k.carry_good)) || !Ours(k,(uint32_t)id)){
             continue;       //SETTLEMENTS: a store of his own
         }
-        if (state.room[id] - CarryTotal(state.stock[id]) < k.carry){
-            continue;
+        if (StoreRoomLeft((uint32_t)id,&k) < k.carry){
+            continue;       //...with the loads on their way counted, or he goes with the others for one load of room
         }
         float best = 1e30f;
         for (int v : plots_of[id]){
@@ -4919,12 +4918,21 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
     //Somewhere that takes `amount` wood whole: a store with the room, or his pile.
     auto wood_room = [&](int amount){
         for (size_t s = 1; s < state.accepts.size(); s++){
-            if ((state.accepts[s] & GOOD_BIT(GOOD_WOOD)) && state.room[s] - CarryTotal(state.stock[s]) >= amount
-                && Ours(k,(uint32_t)s)){
+            if ((state.accepts[s] & GOOD_BIT(GOOD_WOOD)) && Ours(k,(uint32_t)s) && StoreRoomLeft((uint32_t)s,&k) >= amount){
                 return true;
             }
         }
         return pile >= 0 && own[GOOD_WOOD] + amount <= pile_room;
+    };
+    //...and whether he could take it there from where he stands: deliver's own ways - a store, then his pile - tried on a copy
+    //of him, so nothing he is doing changes. The room alone is not enough: a hut walled in by another has a pile with room
+    //that nobody can walk to.
+    auto wood_goes = [&](int amount){
+        EconomyWorker probe = k;
+        probe.carry = amount;
+        probe.carry_good = GOOD_WOOD;
+        return FindStore(probe,z,walkers) || (pile >= 0 && own[GOOD_WOOD] + amount <= pile_room
+                                              && RouteTo(probe,z,walkers,pile,state.world->grid->fine.pos[pile]));
     };
     /*
         The camp's picker done at a plant: on to the next ripe one within FORAGE_ROUND_REACH of him while his load has
@@ -5264,10 +5272,27 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 Felled(z,k.prop);
                 EconomyStartTimer(k,SecondsToTicks(ECONOMY_PICK_SECONDS));
             }else if (state.prop_state[k.prop] == PROP_STATE_LOG){
+                /*
+                    NOWHERE FOR IT NOW: the room he set out for was taken while he felled, and his pile is full or he
+                    cannot get to it. The log is left lying, and LOGS FIRST brings him back for it once there is room -
+                    as a collector's carrier leaves a load that no store takes where it was. Lifted, it went down as a
+                    crate where he stood: a woodcutter whose hut another had walled in had strewn a hundred through the
+                    forest (a bug report, 2026-10-24). What he already carries goes on as ever.
+                */
+                int lifted = ((k.carry_good == GOOD_WOOD) ? k.carry : 0) + log_wood;
+                if (!wood_room(lifted) || !wood_goes(lifted)){
+                    k.prop = -1;
+                    if (k.carry > 0){
+                        deliver();
+                    }else{
+                        GoHome(k,z,walkers);
+                    }
+                    break;
+                }
                 state.prop_state[k.prop] = PROP_STATE_STUMP;
                 state.felled_version++;
                 k.prop = -1;
-                k.carry = ((k.carry_good == GOOD_WOOD) ? k.carry : 0) + log_wood;
+                k.carry = lifted;
                 k.carry_good = GOOD_WOOD;
                 /*
                     TWO LOGS A ROUND (the user's, 2026-10-08): with another lying within ECONOMY_LOG_PAIR_REACH of
@@ -5277,7 +5302,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 if (k.carry < ECONOMY_WOODCUTTER_LOGS * log_wood && wood_room(k.carry + log_wood)){
                     std::vector<std::pair<std::pair<int,float>,int>> logs;
                     WoodNear(k,z,walkers,k.pos,ECONOMY_LOG_PAIR_REACH,true,logs);
-                    if (GoForWood(k,z,walkers,logs,2)){
+                    if (!logs.empty() && wood_goes(k.carry + log_wood) && GoForWood(k,z,walkers,logs,2)){
                         break;
                     }
                 }
@@ -5472,8 +5497,7 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                     }
                     int amount = std::min(ECONOMY_LOAD,(*src)[g]);
                     for (size_t s = 1; s < state.accepts.size(); s++){
-                        if ((state.accepts[s] & GOOD_BIT(g)) && state.room[s] - CarryTotal(state.stock[s]) >= amount
-                            && Ours(k,(uint32_t)s)){
+                        if ((state.accepts[s] & GOOD_BIT(g)) && Ours(k,(uint32_t)s) && StoreRoomLeft((uint32_t)s,&k) >= amount){
                             good = g;
                             break;
                         }
@@ -6056,8 +6080,7 @@ bool Economy::FetchHarvest(EconomyWorker& k, const ZoneState& z, Walkers& walker
         bool f_stored = f_camp || (f_home && GoodIsFood(good));
         int load = std::min(ECONOMY_LOAD,have);
         for (size_t s = 1; s < state.accepts.size() && !f_stored; s++){
-            f_stored = (state.accepts[s] & GOOD_BIT(good)) && state.room[s] - CarryTotal(state.stock[s]) >= load
-                       && Ours(k,(uint32_t)s);
+            f_stored = (state.accepts[s] & GOOD_BIT(good)) && Ours(k,(uint32_t)s) && StoreRoomLeft((uint32_t)s,&k) >= load;
         }
         if (!f_taken && f_stored){
             best = id;
@@ -8189,11 +8212,12 @@ void Economy::Needs(const ZoneState& z, Walkers& walkers, uint64_t tick){
     for (EconomyWorker& k : state.workers){
         //His SHARE (Economy.h): his bars fall on that many ticks in four - a baby's on two, by his id so that
         //a house's babies do not all fall on the same ticks. Eating and drinking then follow, a unit as one fits.
-        if ((int)((tick + k.id) % LIFE_SHARE_FULL) < EconomyShare(k.born,tick)){
+        //Dry is asked after the water goes, so the tick that empties it already drains as dry.
+        if (EconomyShareTick(k,tick)){
             if (k.water > 0){
                 k.water--;
             }
-            k.health -= 1 + (EconomyDry(k) ? NEEDS_DRY_DRAIN : 0) + (EconomyCold(state,k) ? NEEDS_COLD_DRAIN : 0);
+            k.health -= EconomyHealthDrain(state,k);
         }
         //Bitten to death this tick (A FIGHT): struck off below, whatever there is to eat.
         if (std::find(bitten_dead.begin(),bitten_dead.end(),k.id) != bitten_dead.end()){
@@ -8560,11 +8584,12 @@ std::array<int,GOOD_COUNT> Economy::SiteNeed(const ZoneState& z, uint32_t id) co
         }
         return need;
     }
-    //A DOCK that stands (steam_plan.md step 5): its zeppelin's stages still to stand, a good each.
+    //A DOCK that stands (steam_plan.md step 5): its zeppelin's NEXT stage alone, its one good - so the builders bring
+    //nothing for a later stage, and it rises stage by stage (the user's, 2026-10-24: rope brought while the hull waited
+    //made both rise at once with the floatstone).
     if (ZeppelinSite(z,id)){
-        for (int s = state.zeppelin[id] + 1; s <= ZEPPELIN_STAGES; s++){
-            need[EconomyZeppelinGood(s)] += EconomyZeppelinCost(s);
-        }
+        int stage = state.zeppelin[id] + 1;
+        need[EconomyZeppelinGood(stage)] = EconomyZeppelinCost(stage);
         return need;
     }
     //Its storeys still to build, and its arches' floors (arches_plan.md step 3) - each by its level.
@@ -8632,6 +8657,27 @@ int Economy::GoodFree(uint32_t id, int good) const{
         free -= SiteReservation(o,id,good);
     }
     return free;
+}
+
+/*
+    A store's room left for a load: its room, less what it holds and every load carried to it now (WORKER_TO_STORE,
+    WORKER_UNLOADING) - but `except`'s, who asks for himself. Whoever sets out for a store asks this, never the room
+    alone: with what was on its way left out, every carrier saw the same last load of room and set out for it, the first
+    filled it, and each of the rest put his load down beside it - a crate by a colony's one full store that grew for
+    years, its food and water there for the taking while the farmers and carriers kept bringing more (a bug report,
+    2026-10-24). Putting down, at the store, is still by the room as it stands: whoever gets there first.
+*/
+int Economy::StoreRoomLeft(uint32_t id, const EconomyWorker* except) const{
+    if (id >= state.room.size() || id >= state.stock.size()){
+        return 0;
+    }
+    int left = state.room[id] - CarryTotal(state.stock[id]);
+    for (const EconomyWorker& o : state.workers){
+        if (&o != except && o.store == id && o.carry > 0 && (o.state == WORKER_TO_STORE || o.state == WORKER_UNLOADING)){
+            left -= o.carry;
+        }
+    }
+    return left;
 }
 
 //Where goods are taken from building `id`: a woodcutter's on his pile, the rest at its plot nearest `to`; a
@@ -8967,8 +9013,9 @@ void Economy::Build(const ZoneState& z, uint32_t id){
         return;
     }
     /*
-        A DOCK's zeppelin (steam_plan.md step 5): each stage once those before it stand and all of its one good is
-        there - so its steam goes in last, and it is never left half-filled for want of canvas. Told, every one.
+        A DOCK's zeppelin (steam_plan.md step 5): its next stage once all of its one good is there - the only good the
+        site asks for (SiteNeed), so the steam goes in last and it is never left half-filled for want of canvas. Told,
+        every one. A later stage's good already there (set by hand, `set_stock`'s `site`) raises it in its turn.
     */
     if (ZeppelinSite(z,id)){
         while (state.zeppelin[id] < ZEPPELIN_STAGES){
@@ -9690,8 +9737,7 @@ bool Economy::MoveCrate(EconomyWorker& k, const ZoneState& z, Walkers& walkers, 
         int best = -1;
         float best_d = 1e30f;
         for (size_t s = 1; s < state.accepts.size() && s < plots_of.size(); s++){
-            if (!(state.accepts[s] & GOOD_BIT(good)) || state.room[s] - CarryTotal(state.stock[s]) < amount
-                || !Ours(k,(uint32_t)s)){
+            if (!(state.accepts[s] & GOOD_BIT(good)) || !Ours(k,(uint32_t)s) || StoreRoomLeft((uint32_t)s,&k) < amount){
                 continue;
             }
             for (int v : plots_of[s]){
@@ -10066,7 +10112,7 @@ bool Economy::MakeProvisions(EconomyWorker& k, const ZoneState& z, Walkers& walk
     for (int g : {GOOD_PROVISIONS,GOOD_WHEAT,GOOD_BEANS}){
         int load = std::min(ECONOMY_LOAD,(g == GOOD_PROVISIONS) ? std::min(hut[g],spare) : (lacking <= 0) ? hut[g] : 0);
         for (size_t s = 1; load > 0 && s < state.accepts.size(); s++){
-            if ((state.accepts[s] & GOOD_BIT(g)) && state.room[s] - CarryTotal(state.stock[s]) >= load && Ours(k,(uint32_t)s)){
+            if ((state.accepts[s] & GOOD_BIT(g)) && Ours(k,(uint32_t)s) && StoreRoomLeft((uint32_t)s,&k) >= load){
                 return to_hut();
             }
         }

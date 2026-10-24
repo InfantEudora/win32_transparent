@@ -51,5 +51,7 @@ is more than one. Hovering it lists each food on its own, and
 
 ## Planned
 
-- [planned] Spoilage: fruit and greens rotting when winter comes, wheat a little each season, beans not at all.
+- [planned] Rotting while lying out: a harvest on a [[Field|field]] or food in a [[Crate|crate]] loses a share at every
+  dawn after two days - greens and fruit fastest, beans slowest (`spoilage_plan.md`).
+- [planned] Keeping in a store: fruit and greens rotting when winter comes, wheat a little each season, beans not at all.
 - [idea] Animals for meat and leather.

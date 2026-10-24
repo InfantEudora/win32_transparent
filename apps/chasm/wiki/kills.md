@@ -6,7 +6,7 @@ status: partial
 summary: The zombies a person killed, by bow and by hand - whoever's hit took the last of its health - and the rank they make: Novice, Expert, Master, never lost.
 plans: ranks_plan.md > Decided; ranks_plan.md > Proposed; ranks_plan.md > As built: step 1, kills (2026-10-19); ranks_plan.md > As built: step 2, ranks (2026-10-19)
 code: Economy.h: KILL_BOW KILL_HAND EconomyKills EconomyWorker EconomyDeath EVENT_ZOMBIE_FELLED EVENT_RANKED ZOMBIE_HEALTH ARROW_HIT RANK_NOVICE RANK_EXPERT RANK_MASTER EconomyArrowHarm; Economy.cpp: EconomyRank EconomyKillsTold AddPerson; Zombies.cpp: ZombieKilled Fights; Shooting.cpp: Shoot EconomyShotTicks; ChasmStats.cpp: ChasmStatsCheck
-verified: 2026-10-19
+verified: 2026-10-24
 ---
 
 Every [[Zombie|zombie]] killed is someone's **kill**: whoever's hit took the last of its {ZOMBIE_HEALTH} hit points. No
@@ -40,7 +40,7 @@ A **rank** comes from all the kills together, bow and hand - worked out from the
 - **[[Person|A person's card]]**: the rank first by the name ("Expert, age 24 - Guard"); under archery, the kills
   and what the next rank takes - "Kills 2: 1 by bow, 1 by hand - Master at 3", or "Kills 2, by bow - ...".
 - **A death**: the pop-up and the red line give the rank and the kills - "Jelle De Wit, Expert, 2 kills, of
-  thirst"; the journal, the rank only - "Expert Jelle De Wit died of thirst".
+  thirst"; the journal, the rank only - "Expert Jelle De Wit died of thirst at 30".
 - **The [[Statistics|statistics]]** count the zombies killed each day, and the page shows their total once there
   has been one. Its check: the zombies killed, and the kills people were put down with, are everyone's kills.
 - A kill is an event too, counted, with no sound of its own: the arrow's hit or the punch is heard.
