@@ -43,6 +43,7 @@ struct MusicScore;
 #define PLAY_PICK_CRATE         4       //a crate lying about, by its id (crates_plan.md)
 #define PLAY_PICK_GROUND        5       //a garden or lot still being built, by its patch's lowest plot (yards_plan.md)
 #define PLAY_PICK_GROUP         6       //two or more grown-ups at once, in play_group - `id` 0 ("Several people selected")
+#define PLAY_PICK_ZEPPELIN      7       //a finished zeppelin, by its id (flight_plan.md)
 struct PlayPick{
     int kind = PLAY_PICK_NONE;
     uint32_t id = 0;
@@ -87,6 +88,8 @@ int PersonFigure(const EconomyWorker& k, uint64_t tick);
 //The archery range's props in chasm_props.glb (ApplicationChasmRange.cpp): target, hay bale, arrow.
 extern const char* range_asset_names[];
 extern const char* dock_asset_names[];
+//The zeppelin a ray meets first by its body (ApplicationChasmFleet.cpp, flight_plan.md), and how far along it; 0 none.
+uint32_t ChasmZeppelinAlongRay(const EconomyState& e, const ray& r, float* along);
 //An arrow, as the range's props draw it - and a zombie's (ApplicationChasmZombies.cpp).
 #define RANGE_ARROW_HALF        0.16f   //half a stuck arrow's length: chasm_props.glb's `arrow` is centred on its origin
 #define RANGE_ARROW_FULL        0.46f   //a whole arrow, nock to point: `arrow_full`, its origin at the nock, pointing +z
@@ -375,6 +378,9 @@ const char* ChasmNeedName(const EconomyWorker& k);
                                                         //value[1] his age in days; value[2] his skills, four bits each
                                                         //from SKILL_STRENGTH up, and his sex at bit 16 (1 a man, 2 a
                                                         //woman) - 0 for any of them the seed's; value[3] his archery
+#define CHASM_CMD_ZEPPELIN          SIM_CMD_LAST+18     //a zeppelin sent (flight_plan.md, a right click): subtype its id;
+                                                        //value[0], [1] x and z to hover over; value[2] an edge plot to
+                                                        //set down by, -1 none; value[3] a dock to moor on, 0 none
 
 //What a left click does.
 enum ChasmTool{
@@ -752,7 +758,7 @@ private:
     Economy economy;
     std::shared_ptr<const EconomyState> economy_snapshot;
     std::atomic<uint32_t> needs_commands_done{0};
-    std::atomic<uint32_t> order_commands_done{0};      //CHASM_CMD_GUARD's too: a right click either way, refused alike
+    std::atomic<uint32_t> order_commands_done{0};      //CHASM_CMD_GUARD's and CHASM_CMD_ZEPPELIN's too: a right click, refused alike
     std::atomic<uint32_t> guards_commands_done{0};
     std::atomic<uint32_t> keep_commands_done{0};
     std::atomic<uint32_t> crate_commands_done{0};
@@ -797,6 +803,7 @@ private:
     //Any thread; plot -1 releases him, layer -1 its top; f_spread for one of a group's (Economy::Order).
     void SubmitOrder(uint32_t person, int plot, int layer = -1, bool f_spread = false);
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
+    void SubmitZeppelin(uint32_t id, const vec2& at, int plot, uint32_t dock);   //any thread (Economy::SendZeppelin)
     void SubmitGuards(uint32_t tower, int count);               //any thread
     void SubmitKeep(int good, int count, bool f_order, uint32_t colony);   //any thread; f_order: `count` more, 0 cancelling
     void SubmitGather(uint32_t person, bool f_on);              //any thread; refused as an order is
@@ -1358,7 +1365,7 @@ private:
         The zeppelin docks (ApplicationChasmDock.cpp, steam_plan.md step 5): each of the zeppelin's stages, its scaffold,
         the dock's mast and its mooring lines - an instance set each, chasm_props.glb's prop by its name in dock_asset_names.
     */
-    #define DOCK_PROPS          8
+    #define DOCK_PROPS          10
     Object* dock_set[DOCK_PROPS] = {};
     Mesh* dock_mesh[DOCK_PROPS] = {};
     std::shared_ptr<const ChasmWorld> dock_built_world;
@@ -1366,6 +1373,21 @@ private:
     uint32_t dock_built_economy = 0xFFFFFFFFu;      //...and the economy's: a zeppelin's stage
     void BuildDockScene();                          //from LoadProps
     void UploadDocks();                             //from PreRender
+    /*
+        THE ZEPPELINS FLYING (ApplicationChasmFleet.cpp, flight_plan.md step 1): each finished one's body and its two
+        propellers, objects of their own - not instance sets, so the selected one is outlined - for the first
+        FLEET_SHOWN of the fleet. Render thread.
+    */
+    #define FLEET_SHOWN         8
+    Object* fleet_body[FLEET_SHOWN] = {};
+    Object* fleet_prop[FLEET_SHOWN][2] = {};
+    uint32_t fleet_id[FLEET_SHOWN] = {};            //the zeppelin each slot draws, 0 none
+    float fleet_spin[FLEET_SHOWN] = {};             //its propellers' turn, radians
+    double fleet_clock = 0.0;                       //the simulation's seconds at the last frame: they turn by its clock
+    void UploadFleet();                             //from PreRender
+    //A right click with a zeppelin selected (physics thread): a dock under the cursor to moor on, else the edge plot
+    //under it to set down by, else the point over the chasm at its height to hover at - the rules decide which.
+    void SendZeppelinTo(uint32_t id, int2 px, const GridPick& hover);
     //SETTLEMENTS, drawn (docs/settlements_plan.md, ApplicationChasmBorders.cpp): the territories' border posts, and
     //with a person selected, the walk to the plot under the cursor - the render thread's own route search for it.
     Object* border_object = NULL;

@@ -4,14 +4,15 @@ aliases: clouds, explored, sight, fog
 kind: world
 status: built
 summary: The map starts under clouds. People clear them by looking around as they go, and nothing can be placed under them in play.
-plans: play_mode_plan.md
-code: Exploration.h: EXPLORATION_CELL SIGHT_RANGE; Exploration.cpp; Economy.cpp: Order Forage; ApplicationChasmExplore.cpp: LookForAreas; ApplicationChasmSelect.cpp: PlayPickUnder; ApplicationChasmBorders.cpp: DrawWalkTip
-verified: 2026-10-18
+plans: play_mode_plan.md; flight_plan.md > As built: step 1 (2026-10-24)
+code: Exploration.h: EXPLORATION_CELL SIGHT_RANGE; Exploration.cpp; Economy.cpp: Order Forage; ApplicationChasmExplore.cpp: LookForAreas TickExploration; ApplicationChasmSelect.cpp: PlayPickUnder; ApplicationChasmBorders.cpp: DrawWalkTip
+verified: 2026-10-24
 ---
 
 A new map starts with nothing explored. The settlers at the [[Camp|camp]] look around on the first tick,
 and from then on **everyone out of doors looks around** as they go, clearing the clouds wherever they can
-see. Explored ground stays explored.
+see - and so does every [[Flight|zeppelin]], from its deck, high over the chasm: its first flight maps it.
+Explored ground stays explored.
 
 ## What they see
 

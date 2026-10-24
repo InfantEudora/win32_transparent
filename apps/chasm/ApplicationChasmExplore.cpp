@@ -192,6 +192,23 @@ void ApplicationChasm::TickExploration(){
             LookForAreas(*w,k.id,!f_landing);
         }
     }
+    //...and every zeppelin from its deck (flight_plan.md): high over the chasm, it sees far - its first flight maps it.
+    for (const EconomyZeppelin& f : economy.State().fleet){
+        int cell = exploration.CellAt(f.pos);
+        if (cell < 0){
+            continue;
+        }
+        float eye_ground = f.y + ZEPPELIN_DECK;
+        if (looked_from[(size_t)cell] == eye_ground){
+            continue;
+        }
+        looked_from[(size_t)cell] = eye_ground;
+        if (exploration.See(*w->sight,cell,eye_ground)){
+            f_changed = true;
+            LookForSeams(*w,0);
+            LookForAreas(*w,0,!f_landing);
+        }
+    }
     if (f_changed){
         PublishExploration();
     }

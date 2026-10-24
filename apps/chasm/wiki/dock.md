@@ -3,10 +3,10 @@ title: Zeppelin dock
 aliases: dock, docks, zeppelin docks, mooring mast, mast
 kind: buildings
 status: built
-summary: Painted over cells as a field is, at the chasm's edge. Once it stands, a zeppelin is built on it, and moored to its mast.
-plans: steam_plan.md > The zeppelin dock, and building the zeppelin; steam_plan.md > As built: step 5 (2026-10-23)
-code: Zones.h: ZONE_KIND_DOCK ZONE_DOCK_MAX_CELLS ZONE_DOCK_REACH ZONE_DOCK_FIT_LENGTH ZONE_DOCK_FIT_WIDTH ZoneCanDock ZoneDockFrame; Economy.h: ECONOMY_DOCK_WOOD_PER_CELL; Economy.cpp: ZeppelinSite; ApplicationChasmDock.cpp: UploadDocks
-verified: 2026-10-23
+summary: Painted over cells as a field is, at the chasm's edge. Once it stands, a zeppelin is built on it, and moored to its mast - and any zeppelin may moor there while its berth is free.
+plans: steam_plan.md > The zeppelin dock, and building the zeppelin; steam_plan.md > As built: step 5 (2026-10-23); flight_plan.md > As built: step 1 (2026-10-24)
+code: Zones.h: ZONE_KIND_DOCK ZONE_DOCK_MAX_CELLS ZONE_DOCK_REACH ZONE_DOCK_FIT_LENGTH ZONE_DOCK_FIT_WIDTH ZoneCanDock ZoneDockFrame; Economy.h: ECONOMY_DOCK_WOOD_PER_CELL; Economy.cpp: ZeppelinSite; Flight.cpp: DockBerthFree; ApplicationChasmDock.cpp: UploadDocks
+verified: 2026-10-24
 ---
 
 Where a [[Zeppelin|zeppelin]] is built. Its tool is on the build bar with no key (the user's: the keys are all
@@ -33,8 +33,14 @@ the map it may want a different 8.
 A dock nothing fits on takes no zeppelin: its card says it is too small, and NEEDS ATTENTION lists it as DOCK:
 TOO SMALL FOR A ZEPPELIN.
 
+## Its berth
+
+Once its zeppelin is finished, the dock is a **berth**: its zeppelin leaves from it and comes back to it, and any
+other may [[Flight|moor]] there while none is moored on it or on its way to it. Its card says whether its zeppelin
+is moored there or away, and whether the berth is free. It builds no second zeppelin for now.
+
 ## How it looks
 
 Trodden ground, fenced, as an [[Archery range|archery range's]] cells, and at its nose's end a **mooring mast**: a
 timber tower with a deck at its head and a brass cup the zeppelin's nose is moored into. The scaffold and the
-zeppelin stand on it as they are built.
+zeppelin stand on it as they are built; its mooring lines are drawn while a zeppelin is moored on it.

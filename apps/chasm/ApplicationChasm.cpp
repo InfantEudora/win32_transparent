@@ -1505,7 +1505,7 @@ void ApplicationChasm::LoadProps(){
     names.push_back(CHASM_ANGEL_ASSET);      //zombies_plan.md step 6: rising from where a person sank
     names.push_back(CHASM_BIRD_ASSET);       //birds_plan.md: its shape keys come with it
     names.insert(names.end(),range_asset_names,range_asset_names + RANGE_PROPS);
-    names.insert(names.end(),dock_asset_names,dock_asset_names + DOCK_PROPS);    //steam_plan.md step 5: the zeppelin
+    names.insert(names.end(),dock_asset_names,dock_asset_names + DOCK_PROPS);    //steam_plan.md step 5: the zeppelin, flying too
     GetAssetsFromGLTF(names);
     int loaded = 0;
     for (int k = 0; k < PROP_KIND_COUNT; k++){
@@ -3116,6 +3116,7 @@ void ApplicationChasm::PreRender(void){
     UploadFallen();
     UploadRange();
     UploadDocks();
+    UploadFleet();
     UploadRopewalks();
     UploadBorders();
     UploadClouds();

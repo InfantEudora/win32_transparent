@@ -1,11 +1,11 @@
 ---
 name: chasm-flight-plan
-description: "Chasm zeppelin flight (apps/chasm/docs/flight_plan.md, steam_plan step 6): talked through 2026-10-24, nothing built; the user's answers on orders, masts, no pilot, winter"
+description: "Chasm zeppelin flight (apps/chasm/docs/flight_plan.md, steam_plan step 6): step 1 BUILT 2026-10-24 (it flies); people next; the user's answers on orders, masts, no pilot, winter"
 metadata:
   node_type: memory
   type: project
   originSessionId: 8a43c07d-a515-47eb-b112-6ad10766c43d
-  modified: 2026-10-24T10:11:07.155Z
+  modified: 2026-10-24T15:49:35.961Z
 ---
 
 Talked through 2026-10-24. The user called my proposal "already quite perfect" and added:
@@ -29,4 +29,9 @@ The build order: flies, then people, then mast and goods, then the new-zeppelin 
 
 **Why:** flight is the path to the islands' floatstone, then the far rim and the desert ([[chasm-steam-plan]], [[chasm-settlements]]).
 
-**How to apply:** the plan is settled. Start step 1 on the user's go-ahead.
+**Step 1 BUILT 2026-10-24.**
+- Code: rules in Flight.cpp (EconomyZeppelin in EconomyState::fleet; SendZeppelin; TickFleet; CHASM_CMD_ZEPPELIN), view in ApplicationChasmFleet.cpp. New props `zeppelin_body` and `zeppelin_propeller`.
+- Lesson: docks lie ALONG the rim, so their nose runs parallel to the edge. Leave and arrive sideways to the nearest point over the chasm (DockOut), never along the nose: the nose sent it 37 units over land.
+- Tests: scratchpad fly.py / fly_ui.py / probe.py; saves/zeppelin_fly_mid.json is a flight in progress.
+
+**How to apply:** step 2 (people aboard) next, on the user's go-ahead.

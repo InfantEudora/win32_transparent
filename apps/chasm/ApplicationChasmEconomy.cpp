@@ -165,6 +165,18 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Add(((uint64_t)id << 32) | (uint32_t)e.zeppelin[id] | 0x2E00000000000000ull);
         }
     }
+    //THE FLEET (flight_plan.md): each finished zeppelin where it is and on its way - none before one is finished.
+    for (const EconomyZeppelin& f : e.fleet){
+        int32_t ints[9] = {(int32_t)f.id,(int32_t)f.built_at,(int32_t)f.doing,(int32_t)f.dock,(int32_t)f.plot,
+                           (int32_t)f.bound,(int32_t)f.leg,(int32_t)f.next,(int32_t)f.path.size()};
+        float floats[10] = {f.pos.x,f.pos.y,f.y,f.heading,f.speed,f.turn,f.height,f.end_heading,f.end_y,0.0f};
+        h.Bytes(ints,sizeof(ints));
+        h.Bytes(floats,sizeof(floats));
+        for (const vec2& p : f.path){
+            float xz[2] = {p.x,p.y};
+            h.Bytes(xz,sizeof(xz));
+        }
+    }
     //The plants' fruit and their growing back (foraging_plan.md), by prop like the felled trees.
     h.Bytes(e.fruit.data(),e.fruit.size());
     h.Bytes(e.regrow.data(),e.regrow.size());
@@ -544,6 +556,23 @@ void ApplicationChasm::RegisterEconomyCommands(){
             order_commands_done++;
             return OBJECTID_INVALID;
         });
+    //A zeppelin sent (flight_plan.md): a right click with it selected, refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_ZEPPELIN,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (!economy.SendZeppelin(cmd.subtype,vec2(cmd.value[0],cmd.value[1]),(int)cmd.value[2],(uint32_t)cmd.value[3],
+                                      zones.State(),&why)){
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }else{
+                PublishEconomy();
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
     main_scene->RegisterCommandHandler(CHASM_CMD_GUARDS,
         [this](const SimCommand& cmd) -> objectid_t {
             if (economy.SetGuards(cmd.subtype,(int)cmd.value[0],zones.State())){
@@ -821,6 +850,18 @@ void ApplicationChasm::SubmitGuard(uint32_t person, uint32_t tower){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = (float)tower;    //a building id, well inside a float's exact integers
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitZeppelin(uint32_t id, const vec2& at, int plot, uint32_t dock){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_ZEPPELIN;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = id;
+    cmd.value[0] = at.x;            //the point over the chasm, as the view worked it out: recorded as it is
+    cmd.value[1] = at.y;
+    cmd.value[2] = (float)plot;     //a plot index and a building id, well inside a float's exact integers
+    cmd.value[3] = (float)dock;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -1189,6 +1230,8 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
                              {"next",(stage < ZEPPELIN_STAGES) ? EconomyZeppelinStageName(stage + 1) : "finished"},
                              {"next_good",(stage < ZEPPELIN_STAGES) ? GoodName(EconomyZeppelinGood(stage + 1)) : ""},
                              {"next_takes",EconomyZeppelinCost(stage + 1)},{"brought",brought}};
+        const EconomyZeppelin* moored = EconomyZeppelinAtDock(*e,id);
+        j["zeppelin"]["moored"] = moored ? moored->id : 0;     //FLIGHT: the zeppelin on its berth, 0 none
     }
     if (z->buildings[id].kind == ZONE_KIND_STORE){
         GoodsMask takes = EconomyAccepts(*e,id);
@@ -1777,6 +1820,12 @@ void ApplicationChasm::RegisterEconomyTools(){
         "(id, name, job - a farmer's workplace is the home whose land he farms), settlement; a home's living and holds, "
         "a camp's camp_places (its own woodcutter, water carrier and picker), a field's farmer, a well's water and endless; "
         "and `homeless`. "
+        "FLIGHT (docs/flight_plan.md): `fleet` lists every finished zeppelin - id, built_at (its dock), doing (moored, "
+        "flying, hovering, set_down), dock, plot, x, z, y, heading (radians, its nose along cos,sin in x,z), speed, bound "
+        "(what it does at its way's end), leg (0 rise, 1 cruise, 2 turn, 3 descend), height, path, next. op zeppelin - "
+        "zeppelin `zeppelin` (default the first) sent as a right click with it selected sends it: `dock` a dock's id to "
+        "moor on; else `plot` (or x,z with `set_down` true) an edge plot to set down by; else x,z to hover over the open "
+        "chasm. RECORDED (CHASM_CMD_ZEPPELIN), `refusal` as for an order. "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1815,6 +1864,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"spread",{{"type","boolean"},{"description","forage: one of a group's"}}},
                 {"reach",{{"type","number"},{"description","plants: how far from x,z, world units (default 20)"}}},
                 {"crate",{{"type","integer"},{"description","pick_up: the crate's id"}}},
+                {"zeppelin",{{"type","integer"},{"description","zeppelin: its id, default the first"}}},
+                {"dock",{{"type","integer"},{"description","zeppelin: a dock's building id to moor on"}}},
+                {"set_down",{{"type","boolean"},{"description","zeppelin: x,z names the edge plot to set down by"}}},
                 {"play",{{"type","boolean"},{"description","order, forage, pick_up: as a PLAY command, held to the clouds - forage and "
                                                           "pick_up refused under them, an order's refusal there only 'no way there' "
                                                           "(default false: a debug command, as every tool's)"}}},
@@ -2437,6 +2489,36 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["refusal"] = refusal;
                 result["plot"] = plot;
+            }else if (op == "zeppelin"){
+                //FLIGHT (flight_plan.md): as a right click with it selected - the rules say whether it may go.
+                std::shared_ptr<const EconomyState> now = GetEconomy();
+                uint32_t id = (uint32_t)std::max(0,args.value("zeppelin",0));
+                if (!id && now && !now->fleet.empty()){
+                    id = now->fleet[0].id;
+                }
+                vec2 at(args.value("x",0.0f),args.value("z",0.0f));
+                int plot = args.value("plot",-1);
+                if (plot < 0 && args.value("set_down",false)){
+                    GridPick p = w->picker->Pick(at);
+                    plot = p.f_hit ? p.plot : -1;
+                }
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_ZEPPELIN;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = id;
+                cmd.value[0] = at.x;
+                cmd.value[1] = at.y;
+                cmd.value[2] = (float)plot;
+                cmd.value[3] = (float)std::max(0,args.value("dock",0));
+                uint32_t before = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                std::string refusal;
+                if (order_refusals.load() != before){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["zeppelin"] = id;
+                result["refusal"] = refusal;
             }else if (op == "pick_up"){
                 //PICK UP (stone_plan.md): as the chip on the crate's card.
                 SimCommand cmd;
@@ -2977,6 +3059,20 @@ void ApplicationChasm::RegisterEconomyTools(){
                                       {"rot",RotJson(c.stock,c.fresh)}});
             }
             result["crates"] = crates;
+            //THE FLEET (flight_plan.md), in id order.
+            static const char* doings[] = {"moored","flying","hovering","set_down"};
+            json fleet = json::array();
+            for (const EconomyZeppelin& f : e->fleet){
+                json way = json::array();
+                for (const vec2& p : f.path){
+                    way.push_back(json::array({p.x,p.y}));
+                }
+                fleet.push_back(json{{"id",f.id},{"built_at",f.built_at},{"doing",doings[f.doing & 3]},{"dock",f.dock},
+                                     {"plot",f.plot},{"x",f.pos.x},{"z",f.pos.y},{"y",f.y},{"heading",f.heading},
+                                     {"speed",f.speed},{"bound",doings[f.bound & 3]},{"leg",f.leg},{"height",f.height},
+                                     {"path",way},{"next",f.next}});
+            }
+            result["fleet"] = fleet;
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));
         });
 }

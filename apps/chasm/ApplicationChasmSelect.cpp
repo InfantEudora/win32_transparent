@@ -1599,8 +1599,16 @@ void DockLines(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, u
     }
     int stage = EconomyZeppelinStage(e,id);
     if (stage >= ZEPPELIN_STAGES){
-        c.Text("The zeppelin is finished, filled with steam and moored to its mast");
-        c.Text("Flying it is still to come",HUD_TEXT_DIM);
+        //FLIGHT (flight_plan.md): its zeppelin a craft of its own now, here or away - and any other may moor here.
+        const EconomyZeppelin* moored = EconomyZeppelinAtDock(e,id);
+        const EconomyZeppelin* bound = EconomyZeppelinAtDock(e,id,true);
+        c.Text(!moored ? "Its zeppelin is finished, and away" : (moored->built_at == id) ? "Its zeppelin is moored here"
+                                                                                       : "A zeppelin is moored here");
+        if (bound && !moored){
+            c.Text("A zeppelin is coming in to moor",HUD_TEXT_DIM);
+        }else if (!moored){
+            c.Text("Its berth is free: a zeppelin may moor here",HUD_TEXT_DIM);
+        }
         return;
     }
     int next = stage + 1;
@@ -1701,20 +1709,20 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             && EconomyGoodHeld(*e,GOOD_ROPE) < site_cost[GOOD_ROPE] - brought[GOOD_ROPE]){
             int chain = EconomyRopeChain(*e,z);
             if (chain == ECONOMY_ROPE_NO_HEMP){
-                c.Text("No rope to be had: grow hemp on a field, and make it at a ropewalk",HUD_AMBER);
+                c.Text("No rope available: grow hemp on a field, and make it at a ropewalk",HUD_AMBER);
             }else if (chain == ECONOMY_ROPE_NO_ROPEWALK){
-                c.Text("No rope to be had: build a ropewalk to make it of hemp",HUD_AMBER);
+                c.Text("No rope available: build a ropewalk",HUD_AMBER);
             }else{
-                c.Text("Waiting for rope from the ropewalk",HUD_TEXT_DIM);
+                c.Text("Waiting for rope",HUD_TEXT_DIM);
             }
         }
         if (f_field){
             //A field site (fields_plan.md): staked out, all its cells built at once.
-            c.Text(Format("%i cell%s to build - then empty, to be sown",info.site_cells,info.site_cells == 1 ? "" : "s"),
+            c.Text(Format("%i field%s to build",info.site_cells,info.site_cells == 1 ? "" : "s"),
                    HUD_TEXT_DIM);
         }else if (f_cells){
-            //A range site (range_plan.md): the same, and a trainee a cell once it stands.
-            c.Text(Format("%i cell%s to build - a trainee a cell",info.site_cells,info.site_cells == 1 ? "" : "s"),HUD_TEXT_DIM);
+            //A range for archers of a plot for a zeppelin dock
+            c.Text(Format("%i cell%s to build",info.site_cells,info.site_cells == 1 ? "" : "s"),HUD_TEXT_DIM);
         }else{
             c.Text(Format("%i storey%s to build%s",info.site_storeys,info.site_storeys == 1 ? "" : "s",
                           info.storeys ? Format(", %i standing",info.storeys).c_str() : ""),HUD_TEXT_DIM);
@@ -1724,7 +1732,7 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
             for (const EconomyWorker& k : e->workers){
                 carriers += (k.site == id) ? 1 : 0;
             }
-            c.Text(carriers ? Format("%i carrying for it",carriers) : std::string("Waiting for someone free to carry"),
+            c.Text(carriers ? Format("%i carriers",carriers) : std::string("Waiting for someone free to carry"),
                    HUD_TEXT_DIM);
         }
         //The player's say over the queue (construction_plan.md): this one before every other site - a
@@ -2646,8 +2654,42 @@ void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint
     }
 }
 
+/*
+    A ZEPPELIN'S CARD (flight_plan.md): what it is doing and where - moored on a dock, on its way and to what, still over the
+    chasm or set down by an edge - and how to send it, since a right click is all it takes.
+*/
+void ZeppelinCard(const ChasmWorld& w, const EconomyZeppelin& f, Card& c){
+    c.title = "Zeppelin";
+    auto dock_name = [&f](uint32_t dock){
+        return std::string((dock == f.built_at) ? "its dock" : "a dock");
+    };
+    switch (f.doing){
+        case ZEPPELIN_MOORED:   c.Text("Moored at " + dock_name(f.dock)); break;
+        case ZEPPELIN_HOVERING: c.Text("Holding still over the chasm"); break;
+        case ZEPPELIN_SET_DOWN: c.Text(std::string("Set down by ") + EconomyEdgeName(w,f.plot)); break;
+        default:{
+            std::string to = (f.bound == ZEPPELIN_MOORED) ? "to moor at " + dock_name(f.dock)
+                           : (f.bound == ZEPPELIN_SET_DOWN) ? std::string("to set down by ") + EconomyEdgeName(w,f.plot)
+                           : std::string("over the chasm");
+            const char* how = (f.leg == FLIGHT_RISE) ? "Rising" : (f.leg == FLIGHT_TURN) ? "Turning"
+                            : (f.leg == FLIGHT_DESCEND) ? ((f.bound == ZEPPELIN_MOORED) ? "Mooring" : "Coming down") : "Flying";
+            c.Text(std::string(how) + ", " + to);
+            break;
+        }
+    }
+    c.Text("Right click: over the chasm to hold still there,",HUD_TEXT_DIM);
+    c.Text("by an edge to set down, on a free dock to moor",HUD_TEXT_DIM);
+}
+
 bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c,
               const std::vector<uint32_t>& group = {}){
+    if (p.kind == PLAY_PICK_ZEPPELIN){
+        const EconomyZeppelin* f = e ? EconomyZeppelinById(*e,p.id) : NULL;
+        if (f){
+            ZeppelinCard(w,*f,c);
+        }
+        return f != NULL;
+    }
     if (p.kind == PLAY_PICK_GROUP){
         if (e && !group.empty()){
             GroupCard(z,*e,group,c);
@@ -2924,6 +2966,14 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
             out.id = k.id;
         }
         if (out.kind != PLAY_PICK_NONE){
+            return out;
+        }
+        //A ZEPPELIN by its body (flight_plan.md), unless what the cursor is on stands in front of it.
+        float zeppelin_along = INFINITY;
+        uint32_t zeppelin = ChasmZeppelinAlongRay(*e,main_scene->camera->GetPixelRay(px),&zeppelin_along);
+        if (zeppelin && zeppelin_along < surface + PERSON_HIDDEN_SLACK){
+            out.kind = PLAY_PICK_ZEPPELIN;
+            out.id = zeppelin;
             return out;
         }
         //...but none under the clouds: its card would tell what lies there, and PICK UP fetch it (the user's, 2026-10-18).
@@ -3637,13 +3687,18 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
     }
     if (f_right_click){
         std::vector<uint32_t> people = SelectedPeople();
+        PlayPick selected;
         {
             std::lock_guard<std::mutex> lock(pick_mutex);
             forage_menu.f_open = false;     //a right click anywhere closes it - or opens it afresh, below
+            selected = play_selected;
         }
         if (paint_tool != CHASM_TOOL_SELECT){
             paint_tool = CHASM_TOOL_SELECT;
             pick_version++;
+        }else if (selected.kind == PLAY_PICK_ZEPPELIN){
+            //A ZEPPELIN sent (flight_plan.md): onto a dock, by an edge or over the chasm - the rules say which, or why not.
+            SendZeppelinTo(selected.id,px,hover);
         }else if (!people.empty() && hover.f_hit && hover.plot >= 0){
             /*
                 An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
@@ -4019,6 +4074,24 @@ void ApplicationChasm::UploadSelection(){
         o->SetScale(vec3(scale,scale,scale));
         SetOutlineOf(o,(i == 0) ? SELECT_COLOUR : HOVER_COLOUR);
         o->SetVisibility(CHASM_OUTLINE_READY != 0);
+    }
+    //A ZEPPELIN (flight_plan.md): its body and propellers, each its own object (UploadFleet), outlined where they fly.
+    for (int i = 0; i < FLEET_SHOWN; i++){
+        if (!fleet_body[i]){
+            continue;
+        }
+        vec4 c(0.0f,0.0f,0.0f,0.0f);
+        if (f_play && fleet_id[i] && sel.kind == PLAY_PICK_ZEPPELIN && sel.id == fleet_id[i]){
+            c = SELECT_COLOUR;
+        }else if (f_play && fleet_id[i] && hover.kind == PLAY_PICK_ZEPPELIN && hover.id == fleet_id[i]){
+            c = HOVER_COLOUR;
+        }
+        SetOutlineOf(fleet_body[i],c);
+        for (Object* p : fleet_prop[i]){
+            if (p){
+                SetOutlineOf(p,c);
+            }
+        }
     }
     //Where the selected person is going (BuildPathMarks), out of doors and on his way - or a group's, each his own way,
     //all in the one mesh.
@@ -4616,7 +4689,7 @@ void ApplicationChasm::RegisterSelectTools(){
         "Play mode's selection (docs/selection_plan.md) - what a click selects there, without the mouse. "
         "op select: the building at x,z (or by `building` id) - or the gate there, for its door (docs/defence_plan.md), or the "
         "garden or lot being built there (kind ground, by its patch's lowest plot: docs/yards_plan.md) - or a person by `person` id, "
-        "or a crate by `crate` id (docs/crates_plan.md) - or several grown-ups by `people` (ids), a GROUP; op add / remove `person`: "
+        "or a crate by `crate` id (docs/crates_plan.md), or a zeppelin by `zeppelin` id (docs/flight_plan.md) - or several grown-ups by `people` (ids), a GROUP; op add / remove `person`: "
         "into the selection or out of it, as a Shift+click does; op box px0,py0,px1,py1: a box dragged and let go there - every "
         "grown-up out of doors whose figure's middle is inside, selected or with `shift` added, `in_box` who; `hold` true draws it as "
         "still being dragged, for a screenshot, until an op box without it; op clear; op hover px,py: the hover pinned at that "
@@ -4644,6 +4717,7 @@ void ApplicationChasm::RegisterSelectTools(){
                 {"building",{{"type","integer"}}},
                 {"person",{{"type","integer"}}},
                 {"crate",{{"type","integer"}}},
+                {"zeppelin",{{"type","integer"},{"description","select: a zeppelin by its id (flight_plan.md)"}}},
                 {"px",{{"type","integer"}}},
                 {"py",{{"type","integer"}}},
                 {"button",{{"type","string"},{"description","press: left (default) or right"}}},
@@ -4698,9 +4772,9 @@ void ApplicationChasm::RegisterSelectTools(){
                         std::lock_guard<std::mutex> lock(pick_mutex);
                         h = play_hover;
                     }
-                    const char* kinds[] = {"none","building","person","gate","crate","ground"};
+                    const char* kinds[] = {"none","building","person","gate","crate","ground","group","zeppelin"};
                     return json{{"hover_pinned",true},{"read",f_read},
-                                {"hover",json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUND,h.kind))]},{"id",h.id}}}};
+                                {"hover",json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_ZEPPELIN,h.kind))]},{"id",h.id}}}};
                 }
                 f_overlay_mouse_pinned = false;
                 RestorePickPin();
@@ -4714,8 +4788,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 main_scene->AtTickBoundary([&](){
                     GridPick ground = PickUnderPixel(px);
                     PlayPick p = PlayPickUnder(px,ground);
-                    const char* kinds[] = {"none","building","person","gate","crate","ground"};
-                    out = json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUND,p.kind))]},{"id",p.id},{"plot",p.plot},
+                    const char* kinds[] = {"none","building","person","gate","crate","ground","group","zeppelin"};
+                    out = json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_ZEPPELIN,p.kind))]},{"id",p.id},{"plot",p.plot},
                                {"ground_plot",ground.f_hit ? ground.plot : -1},
                                {"ground_building",(ground.f_hit && ground.plot < (int)z->building.size()) ? z->building[ground.plot] : 0},
                                {"read",f_read}};
@@ -4850,6 +4924,13 @@ void ApplicationChasm::RegisterSelectTools(){
                     if (args.contains("person") && args["person"].is_number_unsigned()){
                         p.kind = PLAY_PICK_PERSON;
                         p.id = args["person"].get<uint32_t>();
+                    }else if (args.contains("zeppelin") && args["zeppelin"].is_number_unsigned()){
+                        //A zeppelin (flight_plan.md), by its id.
+                        p.kind = PLAY_PICK_ZEPPELIN;
+                        p.id = args["zeppelin"].get<uint32_t>();
+                        if (!e || e->world != w || !EconomyZeppelinById(*e,p.id)){
+                            return json{{"error","no such zeppelin"}};
+                        }
                     }else if (args.contains("crate") && args["crate"].is_number_unsigned()){
                         //A crate (crates_plan.md), by its id - the plot it lies on with it.
                         p.kind = PLAY_PICK_CRATE;
@@ -4924,8 +5005,8 @@ void ApplicationChasm::RegisterSelectTools(){
                 }
             }
             auto pick_json = [](const PlayPick& p) -> json {
-                const char* kinds[] = {"none","building","person","gate","crate","ground","group"};
-                return json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_GROUP,p.kind))]},{"id",p.id},{"plot",p.plot}};
+                const char* kinds[] = {"none","building","person","gate","crate","ground","group","zeppelin"};
+                return json{{"kind",kinds[std::max(0,std::min(PLAY_PICK_ZEPPELIN,p.kind))]},{"id",p.id},{"plot",p.plot}};
             };
             json result{{"selected",pick_json(sel)},{"hover",pick_json(hover)},{"play_mode",PlayMode()}};
             if (sel.kind == PLAY_PICK_GROUP){

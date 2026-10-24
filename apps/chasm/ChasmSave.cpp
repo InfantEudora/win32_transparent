@@ -343,6 +343,22 @@ json ChasmSaveToJson(const ChasmSave& s){
         if (!e.endless.empty()){
             economy["endless_wells"] = e.endless;
         }
+        //THE FLEET (flight_plan.md): every finished zeppelin where it is, and its flight as it stands - once there is one.
+        if (!e.fleet.empty()){
+            json fleet = json::array();
+            for (const EconomyZeppelin& f : e.fleet){
+                json way = json::array();
+                for (const vec2& p : f.path){
+                    way.push_back(json::array({p.x,p.y}));
+                }
+                fleet.push_back(json{{"id",f.id},{"built_at",f.built_at},{"doing",f.doing},{"dock",f.dock},{"plot",f.plot},
+                                     {"pos",json::array({f.pos.x,f.pos.y})},{"y",f.y},{"heading",f.heading},
+                                     {"speed",f.speed},{"turn",f.turn},{"bound",f.bound},{"leg",f.leg},{"height",f.height},
+                                     {"path",way},{"next",f.next},{"end_heading",f.end_heading},{"end_y",f.end_y}});
+            }
+            economy["fleet"] = fleet;
+            economy["next_zeppelin"] = e.next_zeppelin;
+        }
         //What the mines have dug from each deposit (stone_plan.md step 5): [deposit, how much] - only once any has.
         if (!e.dug.empty()){
             json dug = json::array();
@@ -1126,6 +1142,32 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         for (const json& zp : e.value("zeppelins",json::array())){
             out.economy.zeppelins.push_back(std::make_pair(zp[0].get<uint32_t>(),zp[1].get<int>()));
         }
+        //THE FLEET (flight_plan.md): a save from before it has none.
+        for (const json& fj : e.value("fleet",json::array())){
+            EconomyZeppelin f;
+            f.id = fj.value("id",0u);
+            f.built_at = fj.value("built_at",0u);
+            f.doing = fj.value("doing",(int)ZEPPELIN_MOORED);
+            f.dock = fj.value("dock",0u);
+            f.plot = fj.value("plot",-1);
+            json pos = fj.value("pos",json::array({0.0f,0.0f}));
+            f.pos = vec2(pos[0].get<float>(),pos[1].get<float>());
+            f.y = fj.value("y",0.0f);
+            f.heading = fj.value("heading",0.0f);
+            f.speed = fj.value("speed",0.0f);
+            f.turn = fj.value("turn",0.0f);
+            f.bound = fj.value("bound",(int)ZEPPELIN_HOVERING);
+            f.leg = fj.value("leg",(int)FLIGHT_RISE);
+            f.height = fj.value("height",0.0f);
+            for (const json& p : fj.value("path",json::array())){
+                f.path.push_back(vec2(p[0].get<float>(),p[1].get<float>()));
+            }
+            f.next = fj.value("next",0);
+            f.end_heading = fj.value("end_heading",0.0f);
+            f.end_y = fj.value("end_y",0.0f);
+            out.economy.fleet.push_back(f);
+        }
+        out.economy.next_zeppelin = e.value("next_zeppelin",1u);
         for (const json& id : e.value("endless_wells",json::array())){
             out.economy.endless.push_back(id.get<uint32_t>());
         }

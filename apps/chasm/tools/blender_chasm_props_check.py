@@ -57,7 +57,9 @@ OWN_ORIGIN = ("mine_portal", "bird")
 #it, and every one centred on x = 0 (but for the scaffold's ladder, up one post) - the gondola rests up on the
 #scaffold's trestles, not on the ground.
 DOCK_ORIGIN = ("zeppelin_1", "zeppelin_2", "zeppelin_3", "zeppelin_4", "zeppelin_5", "zeppelin_scaffold", "dock_mast",
-               "dock_mooring")
+               "dock_mooring", "zeppelin_body")
+#A propeller turns about its hub, so that is its origin: its middle there, on every axis.
+HUB_ORIGIN = ("zeppelin_propeller",)
 #The engine's shape key slots (NUM_MORPH_FACTOR_SLOTS, core/Object.h).
 MORPH_SLOTS = 4
 FOOTPRINT_ORIGIN = ("boulder", "outcrop")
@@ -93,6 +95,10 @@ def verify():
         if obj.name in DOCK_ORIGIN:
             if lo.z < -0.15 or abs(lo.x + hi.x) > 0.3:
                 failures.append("%s: not on the dock's origin (min z %.3f, x %.2f to %.2f)" % (obj.name, lo.z, lo.x, hi.x))
+        elif obj.name in HUB_ORIGIN:
+            mid = (lo + hi) / 2
+            if abs(mid.x) > 0.15 or abs(mid.z) > 0.15 or abs(mid.y) > 0.15:
+                failures.append("%s: not round its hub (middle %.2f %.2f %.2f)" % (obj.name, mid.x, mid.y, mid.z))
         elif obj.name in OWN_ORIGIN:
             if not -0.15 <= lo.z <= 0.0:
                 failures.append("%s: its ground is not z = 0 (min z %.3f)" % (obj.name, lo.z))

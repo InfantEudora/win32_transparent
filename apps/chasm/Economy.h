@@ -370,7 +370,17 @@ struct PropInstance;
     two stages rise at once), so the builders carry the frame's wood, then the hull's floatstone and so on, and a stage
     stands once all of its good is there (Build): it rises stage by stage, and is never left half-filled for want of
     canvas. The stages standing (`zeppelin`, saved and hashed) are its look's, and each is told (EVENT_ZEPPELIN_STAGE).
-    Built, it is finished and moored there; flight is to come.
+    Built, it is finished: a craft of its own from then on, moored there (FLIGHT, below).
+
+    --- FLIGHT (docs/flight_plan.md, step 1) --------------------------------------------------------
+    A finished zeppelin is a CRAFT (EconomyZeppelin, in `fleet`): the colony's, not its dock's, and moved by the tick
+    like a walker - saved and hashed. It is ORDERED BY CLICK (SendZeppelin, CHASM_CMD_ZEPPELIN): on a dock with its
+    berth free it MOORS there; on an edge plot - the rim, a balcony, an island - it SETS DOWN beside it, hovering at the
+    plot's height (EconomySetDownSpot); over the open chasm it flies there and HOVERS. It flies only over the open
+    chasm (EconomyFlyable), but for its legs off a dock and onto one, which stands back from the edge: its way is found
+    over the rift's raster once, when it is sent, and flown at a pace, turning at a rate - up to its height, along its
+    way, turned and down at the end. It cruises ZEPPELIN_CRUISE, over everything standing in the chasm, and over a
+    dock's mast (ZEPPELIN_MAST_CLEAR). No pilot, no fuel, and it flies in winter too (the user's, 2026-10-24).
 
     --- STOCK KEPT (docs/goods_plan.md, "Kept in stock, and made to order") -------------------------
     A MADE good (GOODS_MADE: provisions, rope, canvas) has a KEPT number - the colony's, set by the player - of it to
@@ -550,6 +560,18 @@ struct PropInstance;
 #define ECONOMY_ZEPPELIN_ROPE       20
 #define ECONOMY_ZEPPELIN_CANVAS     20
 #define ECONOMY_ZEPPELIN_STEAM      30
+//FLIGHT (flight_plan.md step 1, current tuning): its pace, turning and climbing, and the heights it keeps.
+#define ZEPPELIN_SPEED          5.0f    //world units a second: three times a walker's
+#define ZEPPELIN_ACCEL          1.2f    //...reached, and slowed from, at this a second
+#define ZEPPELIN_TURN           0.4f    //radians a second at most
+#define ZEPPELIN_CLIMB          1.5f    //world units a second up or down at most
+#define ZEPPELIN_CRUISE         8.0f    //its height on the way: the rim is 0, an island a step or more under it
+#define ZEPPELIN_MAST_CLEAR     6.5f    //...and over a dock's ground, off it or onto it: its gondola over the mast
+#define ZEPPELIN_CLEAR          2.0f    //its way keeps this far inside the rift
+#define ZEPPELIN_REACH          3.0f    //a point on its way passed this near: on to the next
+#define ZEPPELIN_SET_DOWN_REACH 12.0f   //how far from an edge plot it may come alongside, from the plot's middle
+#define ZEPPELIN_DECK           1.35f   //its deck over its origin, as modelled (blender_chasm_props.py, ZEP_DECK_Z)...
+#define ZEPPELIN_SET_DOWN_STEP  0.25f   //...and over the edge's ground when it is set down: a step up to it
 #define ECONOMY_WINCH_ROPE          4       //rope a winch's storey takes, with its wood (goods_plan.md): the colony starts with none
 #define ECONOMY_TENT_ROPE           1       //...and a tent's, painted: its guy lines (settlements_plan.md) - one packed and pitched takes none
 #define ECONOMY_KEPT_START          0       //what the colony keeps of a made good before the player says (STOCK KEPT): none
@@ -1484,6 +1506,40 @@ inline bool EconomyMealOn(const EconomyWorker& k){
     return k.meal_ticks > 0;
 }
 
+/*
+    A ZEPPELIN FLYING (FLIGHT, flight_plan.md): one finished on a dock, a craft of its own from then on. Where it is, its
+    heading and height are the rules' - the view draws it there, the clouds clear round it. Sent, its flight is its way
+    (`path`) and what it does at the end of it (`bound`), in legs.
+*/
+#define ZEPPELIN_MOORED     0       //on dock `dock`'s berth
+#define ZEPPELIN_FLYING     1       //on its way, to be `bound` at its end
+#define ZEPPELIN_HOVERING   2       //still, over the open chasm
+#define ZEPPELIN_SET_DOWN   3       //still, beside edge plot `plot` at its height
+#define FLIGHT_RISE         0       //up to its height, where it is
+#define FLIGHT_CRUISE       1       //along its way
+#define FLIGHT_TURN         2       //at the end, still, turned to its heading there
+#define FLIGHT_DESCEND      3       //...and down to its height there
+struct EconomyZeppelin{
+    uint32_t id = 0;
+    uint32_t built_at = 0;          //the dock it was built on
+    int doing = ZEPPELIN_MOORED;
+    uint32_t dock = 0;              //MOORED: the dock it is on; flying to moor: the one it is bound for
+    int plot = -1;                  //SET DOWN: the edge plot it is beside; flying to set down: the one it is bound for
+    vec2 pos;                       //its middle, over the ground
+    float y = 0.0f;                 //its height: the models' origin - a dock's ground, moored
+    float heading = 0.0f;           //radians: its nose along (cos, sin) in x and z
+    float speed = 0.0f;             //world units a second along its heading
+    float turn = 0.0f;              //radians a second it is turning: the view leans it into the turn
+    //Its flight, FLYING:
+    int bound = ZEPPELIN_HOVERING;  //what it does at the end
+    int leg = FLIGHT_RISE;
+    float height = 0.0f;            //its height on the way
+    std::vector<vec2> path;         //its way, its end last
+    int next = 0;                   //...the point on it it is making for
+    float end_heading = 0.0f;       //its heading at the end, and its height - set down or moored
+    float end_y = 0.0f;
+};
+
 //A SETTLEMENT (Economy::Settle), worked out from the zones.
 struct EconomySettlement{
     uint32_t id = 0;            //its oldest home's building id: what it is named by, and its territory's heart
@@ -1511,6 +1567,8 @@ struct EconomyState{
     uint32_t next_crate = 1;
     std::vector<int> guards;                            //by building id: a tower's GUARD COUNT (POSTS, step 8), -1 not a tower
     std::vector<int> zeppelin;                          //by building id: a DOCK's zeppelin's stages standing, 0 none (step 5)
+    std::vector<EconomyZeppelin> fleet;                 //FLIGHT: the zeppelins finished, in id order
+    uint32_t next_zeppelin = 1;
     std::vector<uint8_t> endless;                       //by building id: a WELL kept full (set_stock's), 0 for any other
     //By COLONY NUMBER, then good: its KEPT number of a made good (STOCK KEPT) - a colony past the end keeps the start's
     std::vector<std::array<int,GOOD_COUNT>> kept;
@@ -1668,6 +1726,22 @@ inline const char* EconomyZeppelinStageName(int stage){
 inline int EconomyZeppelinStage(const EconomyState& e, uint32_t id){
     return (id < e.zeppelin.size()) ? e.zeppelin[id] : 0;
 }
+//FLIGHT (Flight.cpp): zeppelin `id`, NULL for none...
+const EconomyZeppelin* EconomyZeppelinById(const EconomyState& e, uint32_t id);
+//...the one moored on dock `dock` - or with `f_bound`, flying there to moor too - NULL for none: a berth is one's.
+const EconomyZeppelin* EconomyZeppelinAtDock(const EconomyState& e, uint32_t dock, bool f_bound = false);
+//Whether a zeppelin may fly over `p`: the open chasm, ZEPPELIN_CLEAR inside the rift.
+bool EconomyFlyable(const ChasmWorld& w, const vec2& p);
+/*
+    Where a zeppelin comes alongside edge plot `plot` to set down by it: the nearest point within ZEPPELIN_SET_DOWN_REACH
+    of its middle that is inside the rift with nothing under the zeppelin as high as its keel, at the height that puts
+    its deck a step over the plot's ground; side-on to the plot, the way nearer `heading`. False, and `why` says it,
+    for a plot no zeppelin can come alongside - inland, the floor, bare rock, the water.
+*/
+bool EconomySetDownSpot(const ChasmWorld& w, int plot, float heading, vec2& at, float& y, float& end_heading,
+                        const char** why);
+//A zeppelin's word for where it is or is going: "the rim", "a balcony", "an island".
+const char* EconomyEdgeName(const ChasmWorld& w, int plot);
 //STOCK KEPT: the made good a building of kind `kind` makes - a builders' hut's provisions, a ropewalk's rope, a sail
 //loft's canvas - or -1.
 inline int EconomyMadeAt(int kind){
@@ -1764,6 +1838,8 @@ struct EconomySaved{
     uint32_t next_crate = 1;
     std::vector<std::pair<uint32_t,int>> guards;        //towers' guard counts: building, count
     std::vector<std::pair<uint32_t,int>> zeppelins;     //docks' zeppelins (steam_plan.md step 5): building, stages standing
+    std::vector<EconomyZeppelin> fleet;                 //FLIGHT: the zeppelins finished, as they are
+    uint32_t next_zeppelin = 1;
     std::vector<uint32_t> endless;                      //the endless WELLS, by building id
     std::vector<std::array<int,3>> kept;                //made goods' kept numbers (STOCK KEPT): colony, good, count - none, the start's
     std::vector<std::array<int,3>> ordered;             //...and their orders' levels: colony, good, level
@@ -1898,6 +1974,12 @@ public:
         `why` says it, on ground a zombie may not stand on: the water, the mountain, a building or a wall.
     */
     bool SpawnZombies(int plot, int count, const ZoneState& z, std::string* why);
+    /*
+        A ZEPPELIN SENT (FLIGHT, CHASM_CMD_ZEPPELIN): zeppelin `id` to moor on dock `dock`; else, with `plot` one of land,
+        to set down beside it; else to hover at `at` over the open chasm - a right click's three. Its way is found now,
+        and taken from where it is, in flight too. False, and `why` says it, where it cannot go.
+    */
+    bool SendZeppelin(uint32_t id, const vec2& at, int plot, uint32_t dock, const ZoneState& z, std::string* why);
     /*
         A PERSON PUT DOWN by the debug tools (CHASM_CMD_PERSON, test_maps_plan.md step 5): an ordinary villager on
         `plot`, grown up, who lives by the rules from then on - housed, given work, eating as anyone does. `house` a home
@@ -2304,6 +2386,11 @@ private:
     void Build(const ZoneState& z, uint32_t id);
     //A DOCK that stands whole, its zeppelin fitting and not finished: a site again, for its zeppelin (step 5).
     bool ZeppelinSite(const ZoneState& z, uint32_t id) const;
+    //FLIGHT (Flight.cpp): every zeppelin a tick on; one made, moored on the dock it was finished on.
+    void TickFleet(const ZoneState& z, float dt);
+    void ZeppelinFinished(uint32_t dock);
+    //A dock zeppelin `f` may moor on: standing whole, fitting, its own zeppelin finished, its berth nobody else's.
+    bool DockBerthFree(const ZoneState& z, uint32_t dock, const EconomyZeppelin& f, std::string* why) const;
     //Road works: the next piece to do (from home, or on a stint - near where he stands), and what he does when a
     //piece is done. The trees in a plot's way are RoadTrees, public.
     bool FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint);

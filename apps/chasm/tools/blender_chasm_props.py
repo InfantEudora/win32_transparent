@@ -1453,7 +1453,8 @@ bird.keep_origin = True
 # but slack between the hoops - no steam in it yet), 5 FILLED (taut, girthed, a pennant flying). The scaffold
 # holding it up while it is built is an asset of its own. All six share one origin, the ground under the middle,
 # and the nose is +Y - glTF -Z, the engine's forward. Sized for a dock of 2 x 4 of a field's cells: 14 long,
-# 7.4 high, a villager (0.86) up to the rail.
+# 7.4 high, a villager (0.86) up to the rail. Flying (flight_plan.md step 1) it is zeppelin_body, the fifth stage
+# with its propellers left off, and a zeppelin_propeller turning on each boom.
 # ---------------------------------------------------------------------------------------------
 
 PAL_CANVAS = cell(3, 9)             #PAL_CROPS' canvas (steam_plan.md step 4): undyed sailcloth...
@@ -1755,10 +1756,27 @@ def zep_blade(bm, hub, out, along, length, width, thick, col):
     colour(bm, faces, col)
 
 
-def zep_rigging(bm):
+def zep_prop_hub(sx):
+    """Where a propeller's hub is, on the boom off the stern quarter to `sx` (-1 port, 1 starboard). The game puts
+    zeppelin_propeller here on zeppelin_body (ApplicationChasmFleet.cpp, ZEPPELIN_PROP_HUB): keep the two in step."""
+    return Vector((sx * 1.95, ZEP_GONDOLA[0][0] + 0.2, ZEP_DECK_Z + 0.65))
+
+
+def zep_propeller(bm, hub, sx):
+    """A propeller round its `hub`: a brass hub along the shaft (y), four timber blades just aft of it."""
+    side, ends = rod(bm, hub + Vector((0, 0.12, 0)), hub - Vector((0, 0.18, 0)), 0.09, 6)
+    colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
+    for k in range(4):
+        a = math.pi / 4 + k * math.pi / 2 + 0.2 * sx
+        out = Vector((math.cos(a), 0.0, math.sin(a)))
+        zep_blade(bm, hub - Vector((0, 0.15, 0)), out, Vector((0, 1, 0)), 0.62, 0.16, 0.03, PAL_TIMBER)
+
+
+def zep_rigging(bm, propellers=True):
     """The gondola hung from the frame: from every rail post's top a line straight up to the envelope's flank and one
     slanting forward to the next; the steam pipe from the cabin's roof up into its belly; two propellers on booms
-    off the stern; and the brass caps at the nose and the tail."""
+    off the stern - the booms alone without `propellers`, for a body whose propellers turn apart from it; and the
+    brass caps at the nose and the tail."""
     posts = [(y, w) for y, w in ZEP_GONDOLA[1:-1]]
     for i, (y, w) in enumerate(posts):
         deck = zep_gondola_z(y)[1]
@@ -1780,18 +1798,13 @@ def zep_rigging(bm):
     side, ends = rod(bm, Vector((0.0, y, belly - 0.12)), Vector((0.0, y, belly + 0.15)), 0.16, 8)
     colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
     #The propellers, on booms off the stern quarters, their blades aft of a brass hub.
-    y0 = ZEP_GONDOLA[0][0] + 0.35
     for sx in (-1, 1):
-        root = Vector((sx * 0.85, y0, ZEP_DECK_Z + 0.25))
-        hub = Vector((sx * 1.95, y0 - 0.15, ZEP_DECK_Z + 0.65))
+        root = Vector((sx * 0.85, ZEP_GONDOLA[0][0] + 0.35, ZEP_DECK_Z + 0.25))
+        hub = zep_prop_hub(sx)
         side, ends = rod(bm, root, hub, 0.05, 4)
         colour(bm, side + ends, PAL_TIMBER)
-        side, ends = rod(bm, hub + Vector((0, 0.12, 0)), hub - Vector((0, 0.18, 0)), 0.09, 6)
-        colour_by_facing(bm, side + ends, PAL_BRASS_LIGHT, PAL_BRASS, PAL_BRASS_DARK)
-        for k in range(4):
-            a = math.pi / 4 + k * math.pi / 2 + (0.2 if sx > 0 else -0.2)
-            out = Vector((math.cos(a), 0.0, math.sin(a)))
-            zep_blade(bm, hub - Vector((0, 0.15, 0)), out, Vector((0, 1, 0)), 0.62, 0.16, 0.03, PAL_TIMBER)
+        if propellers:
+            zep_propeller(bm, hub, sx)
     #Brass at the ends: a cone over the nose's point, a cap over the tail's.
     for s0, s1 in ((ZEP_NOSE_RING, -0.12), (ZEP_LENGTH - 0.3, ZEP_LENGTH + 0.12)):
         r = zep_radius(s0) + 0.03
@@ -1844,8 +1857,9 @@ def flatten(bm):
         bmesh.ops.triangulate(bm, faces=bent)
 
 
-def zeppelin(stage):
-    """Stage `stage` (1-5) of the zeppelin, each the one before and more; the frame goes inside the canvas at 4."""
+def zeppelin(stage, propellers=True):
+    """Stage `stage` (1-5) of the zeppelin, each the one before and more; the frame goes inside the canvas at 4.
+    Without `propellers`, their booms bare: the flying zeppelin's body, its propellers turning apart from it."""
     def build(bm, rng):
         if stage < 4:
             zep_frame(bm)
@@ -1855,7 +1869,7 @@ def zeppelin(stage):
         else:
             zep_gondola_hull(bm, random.Random(1402))
         if stage >= 3:
-            zep_rigging(bm)
+            zep_rigging(bm, propellers)
         if stage >= 4:
             zep_skin(bm, slack=1.0 if stage == 4 else 0.0)
             zep_valve(bm)
@@ -1864,6 +1878,15 @@ def zeppelin(stage):
         flatten(bm)
     build.keep_origin = True
     return build
+
+
+def zeppelin_propeller(bm, rng):
+    """One of the flying zeppelin's two propellers (flight_plan.md step 1), round its hub at the origin and turning
+    about y - the game's z - so it spins on zeppelin_body's boom (zep_prop_hub)."""
+    zep_propeller(bm, Vector((0.0, 0.0, 0.0)), 1)
+
+
+zeppelin_propeller.keep_origin = True
 
 
 def zeppelin_scaffold(bm, rng):
@@ -2099,6 +2122,10 @@ ASSETS = [
     #The dock's mast and a finished zeppelin's mooring (steam_plan.md step 5, 2026-10-23), in the same frame.
     ("dock_mast", 147, dock_mast, (0, 11)),
     ("dock_mooring", 148, dock_mooring, (8, 11)),
+    #The finished zeppelin as it flies (flight_plan.md step 1, 2026-10-24): its body with the propellers' booms bare,
+    #and a propeller to turn on each.
+    ("zeppelin_body", 149, zeppelin(5, propellers=False), (10, 11)),
+    ("zeppelin_propeller", 150, zeppelin_propeller, (12, 11)),
 ]
 
 SPACING = 5.0

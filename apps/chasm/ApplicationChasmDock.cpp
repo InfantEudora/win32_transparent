@@ -14,15 +14,20 @@ static Debugger* debug = new Debugger("ChasmDock",DEBUG_ALL);
     rules' own reckoning of where the zeppelin lies. A dock too small for one has its mast and nothing more. A model
     the file lacks is not drawn, and says so in the log.
 
+    FINISHED, a zeppelin is a craft of its own (flight_plan.md), drawn where it is by UploadFleet - the dock draws its
+    mooring lines while one is moored on it, whichever.
+
     View only: the instances rebuilt when the zones or the economy change.
 */
 
 const char* dock_asset_names[DOCK_PROPS] = {"zeppelin_1","zeppelin_2","zeppelin_3","zeppelin_4","zeppelin_5",
-                                            "zeppelin_scaffold","dock_mast","dock_mooring"};
+                                            "zeppelin_scaffold","dock_mast","dock_mooring","zeppelin_body",
+                                            "zeppelin_propeller"};
 #define DOCK_SCAFFOLD   ZEPPELIN_STAGES     //after the stages, in dock_asset_names
 #define DOCK_MAST       (ZEPPELIN_STAGES + 1)
 #define DOCK_MOORING    (ZEPPELIN_STAGES + 2)
-static_assert(DOCK_PROPS == ZEPPELIN_STAGES + 3,"a model for every stage, the scaffold, the mast and the mooring");
+static_assert(DOCK_PROPS == ZEPPELIN_STAGES + 5,"a model for every stage, the scaffold, the mast and the mooring, and the "
+                                                "flying zeppelin's body and propeller (UploadFleet's, never a dock's set)");
 
 void ApplicationChasm::BuildDockScene(){
     for (int k = 0; k < DOCK_PROPS; k++){
@@ -106,11 +111,11 @@ void ApplicationChasm::UploadDocks(){
             int stage = f_stock ? EconomyZeppelinStage(*e,(uint32_t)id) : 0;
             if (stage < ZEPPELIN_STAGES){
                 sets[DOCK_SCAFFOLD].push_back(m);
-            }else{
+                if (stage >= 1){
+                    sets[stage - 1].push_back(m);
+                }
+            }else if (f_stock && EconomyZeppelinAtDock(*e,(uint32_t)id)){
                 sets[DOCK_MOORING].push_back(m);
-            }
-            if (stage >= 1){
-                sets[std::min(stage,ZEPPELIN_STAGES) - 1].push_back(m);
             }
         }
     }

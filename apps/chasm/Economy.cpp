@@ -6516,6 +6516,8 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
     Needs(z,walkers,tick);
     //THE FALLEN: whoever fell long enough ago is gone.
     TickFallen();
+    //FLIGHT (flight_plan.md): the zeppelins on their ways.
+    TickFleet(z,dt);
     //ICE: who would be cut off by the thaw, for their cards - a second's look is soon enough for a risk of days.
     if (tick % (uint64_t)ECONOMY_ICE_LOOK_TICKS == 0){
         IceHome(z,walkers);
@@ -9139,7 +9141,8 @@ void Economy::Build(const ZoneState& z, uint32_t id){
     /*
         A DOCK's zeppelin (steam_plan.md step 5): its next stage once all of its one good is there - the only good the
         site asks for (SiteNeed), so the steam goes in last and it is never left half-filled for want of canvas. Told,
-        every one. A later stage's good already there (set by hand, `set_stock`'s `site`) raises it in its turn.
+        every one. A later stage's good already there (set by hand, `set_stock`'s `site`) raises it in its turn. The
+        last makes it a craft of its own, moored there (FLIGHT).
     */
     if (ZeppelinSite(z,id)){
         while (state.zeppelin[id] < ZEPPELIN_STAGES){
@@ -9152,6 +9155,9 @@ void Economy::Build(const ZoneState& z, uint32_t id){
             state.zeppelin[id] = stage;
             state.version++;
             Event(EVENT_ZEPPELIN_STAGE,0,id,home_plot[id],dock_lie[id].centre,stage,GOOD_BIT(good));
+            if (stage == ZEPPELIN_STAGES){
+                ZeppelinFinished(id);
+            }
         }
         return;
     }
@@ -10682,6 +10688,8 @@ EconomySaved EconomySaveState(const EconomyState& state){
     }
     s.crates = state.crates;
     s.next_crate = state.next_crate;
+    s.fleet = state.fleet;
+    s.next_zeppelin = state.next_zeppelin;
     for (size_t id = 1; id < state.guards.size(); id++){
         if (state.guards[id] >= 0){
             s.guards.push_back(std::make_pair((uint32_t)id,state.guards[id]));
@@ -10870,6 +10878,12 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
         state.next_crate = std::max(state.next_crate,c.id + 1);
     }
     state.crates_version++;
+    //FLIGHT: the zeppelins where they were, on their ways. A save from before them has none.
+    state.fleet = saved.fleet;
+    state.next_zeppelin = saved.next_zeppelin;
+    for (const EconomyZeppelin& f : state.fleet){
+        state.next_zeppelin = std::max(state.next_zeppelin,f.id + 1);
+    }
     //ZOMBIES on their routes, as the people are. A save from before them has none.
     state.zombies = saved.zombies;
     state.harm = saved.harm;
@@ -10883,6 +10897,16 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     }
     state.arrows = saved.arrows;    //ARROWS in the air and come down, as they were
     Derive(z,walkers,false);
+    /*
+        FLIGHT: a dock whose zeppelin is finished with none in the fleet built on it - a save from before flight - has it
+        moored there, as it would be had it been finished since. Nothing loses a zeppelin yet, so no other save has one.
+    */
+    for (size_t id = 1; id < state.zeppelin.size(); id++){
+        if (state.zeppelin[id] >= ZEPPELIN_STAGES && std::none_of(state.fleet.begin(),state.fleet.end(),
+                [id](const EconomyZeppelin& f){ return f.built_at == id; })){
+            ZeppelinFinished((uint32_t)id);
+        }
+    }
     //A colony saved before its first tick (f_new_colony above): that tick follows the zones as a new colony's does - it
     //is where the supplies land (FollowZones) - so it runs as the first tick of the game it was saved from did.
     if (f_new_colony){

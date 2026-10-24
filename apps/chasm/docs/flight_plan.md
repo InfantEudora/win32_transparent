@@ -4,7 +4,7 @@ Talked through with the user 2026-10-24: step 6 of `steam_plan.md`, which built 
 flying it to a plan of its own. What came before it: `gameplay_plan.md` gives flight its jobs (the islands'
 floatstone, the far side, the desert beyond), `steam_plan.md` decided a zeppelin floats only over the chasm and is
 filled with steam once, not fuelled, and `settlements_plan.md` decided porters will work much as a zeppelin's route
-will. Nothing here is built.
+will. Step 1 is built (2026-10-24, "As built: step 1" below): the zeppelin flies.
 
 What flying is for, in the order the plan reaches it: **the islands** - floatstone for the next zeppelins and the
 best steam, several steps down; **supplying who lives there**, since an island, like a balcony, grows no food; and
@@ -113,10 +113,10 @@ hovering, set down), who is aboard and what it carries - saved, hashed and moved
 
 Each step is playable on the one before.
 
-1. **It flies.** Selected, its card; sent over the chasm to hover, to an edge to set down, home to moor; the clouds
-   cleared as it goes; saved and hashed. Its look: lift-off, bob, propellers, shadow. Tested on
-   `saves/zeppelin_dock_test.json`: across the chasm and back, the clouds cleared on the way, saved in flight and
-   reloaded.
+1. **(BUILT 2026-10-24, "As built: step 1" below)** **It flies.** Selected, its card; sent over the chasm to hover,
+   to an edge to set down, home to moor; the clouds cleared as it goes; saved and hashed. Its look: lift-off, bob,
+   propellers, shadow. Tested on `saves/zeppelin_dock_test.json`: across the chasm and back, the clouds cleared on the
+   way, saved in flight and reloaded.
 2. **People.** Aboard and off by order, the ladder, packs and tents, the cabin's stock kept full at the dock and
    eaten from aboard. Tested: four with tents flown to an island and set down, a tent pitched, a settlement there;
    passengers left hovering a day, eating from the cabin.
@@ -130,14 +130,61 @@ Each step is playable on the one before.
 7. **Later**: the far rim's village, and losing a zeppelin - the winter storm (`weather_plan.md`) is the favourite
    cause, grounding it in winter as winter closes the swamp.
 
+## As built: step 1 (2026-10-24)
+
+The rules are `Flight.cpp` (Economy's members and the free functions beside them), the view
+`ApplicationChasmFleet.cpp`; Economy.h's FLIGHT block says what it does. Page: `wiki/flight.md`.
+
+- **A craft of its own**: `EconomyZeppelin`, in `EconomyState::fleet` (saved as `fleet`, `next_zeppelin`, and
+  hashed). The dock's last stage standing makes one moored on it (`ZeppelinFinished`); a dock finished with none of
+  its own in the fleet - a save from before flight - gets one on load, since nothing loses a zeppelin yet. A finished
+  dock stays at its fifth stage: it builds no other until step 4's button.
+- **Sent** by `SendZeppelin` (`CHASM_CMD_ZEPPELIN`, a right click with it selected, `chasm_economy op zeppelin`):
+  a dock to moor on (`DockBerthFree`: standing whole, fitting, its own zeppelin finished, nobody else on or bound for
+  its berth); else a plot of land to set down by (`EconomySetDownSpot`); else a point over the open chasm to hover at
+  (`EconomyFlyable`: `ZEPPELIN_CLEAR` inside the rift). The view sends all three - the dock under the cursor, the plot
+  under it unless it is the floor, and where the cursor's ray is at `ZEPPELIN_CRUISE` - and the rules take the first
+  that applies. A refusal is told as an order's is.
+- **Its way** is found once, when sent: A* over the rift's raster points that are flyable, pulled straight wherever
+  it sees over the chasm - so one point or two for most flights, and round the bends for long ones. Off a dock or
+  onto one it goes **sideways to the nearest point over the chasm**, not along the dock's nose: built first along
+  the nose, the test dock - lying along the rim, as docks do - sent it 37 units over land before the chasm. Up at
+  `ZEPPELIN_MAST_CLEAR` or more over the dock's ground it clears the mast, and turns onto the dock's lie over the
+  berth before coming down.
+- **Flown** by the tick in legs (`FLIGHT_*`): rise where it is, cruise along the way - steering for the next point,
+  slowing as it turns and for the stop, sliding straight onto its end over the last two units so it never circles
+  it - turn to its last heading, and come down. Hovering ends at `ZEPPELIN_CRUISE`; set down, its deck is
+  `ZEPPELIN_SET_DOWN_STEP` over the plot's ground, side-on to it.
+- **Set down** (`EconomySetDownSpot`): the nearest point, ring by ring out to `ZEPPELIN_SET_DOWN_REACH` from the
+  plot's middle, inside the rift with nothing under the zeppelin as high as its keel, propellers or envelope there
+  (`BodyClear`'s samples, as modelled). An inland plot has none: "not at an edge".
+- **It sees from the air**: `TickExploration` looks round from every zeppelin as from a person, its eye over its
+  deck. A discovery made so is told as "someone's" for now.
+- **The look**: `zeppelin_body` - the finished stage with the propellers left off their booms - and
+  `zeppelin_propeller`, new in chasm_props.glb (`--add --merge`), as objects of their own so the selected one is
+  outlined; it bobs and leans into turns off its mooring, its propellers turn with its pace and idle while it holds
+  still. The dock draws its mooring lines while a zeppelin is moored on it. Picked by its body: an ellipsoid for the
+  envelope, a box for the gondola (`ChasmZeppelinAlongRay`).
+- **Its card**: what it is doing and where ("Set down by an island", "Flying, to moor at its dock"), and the right
+  click's three. A finished dock's card says whether its zeppelin is moored there or away, and its berth free.
+- **Tested** (2026-10-24, debug, `saves/zeppelin_dock_test.json`, the zeppelin finished by `set_stock site`): off the
+  dock to hover over the chasm, set down beside an island two steps down and by the home rim, home to moor, each
+  screenshot; refused onto its own berth, inland, and over land; a flight saved midway (`saves/zeppelin_fly_mid.json`),
+  reloaded and stepped 300 ticks - the same to the bit as without the reload; selected by a click on its envelope,
+  gondola, nose and tail in play mode, sent by right clicks over the chasm and on the dock; flown 100 units south,
+  clearing 1,600 cells of cloud.
+- **Not tested**: a dock erased under a moored zeppelin (it should hover where it is, and go out to the chasm when
+  sent); two zeppelins.
+
 ## Current tuning
 
 Figures to start from, each a named constant, none of them a rule (`tuning_numbers_not_rules`):
 
 | What | Starting figure |
 |---|---|
-| its pace | about 5 units a second, three times a walker's |
-| its cruise | a storey or two over the rim |
+| its pace (`ZEPPELIN_SPEED`) | 5 units a second, three times a walker's; turning 0.4 radians a second, climbing 1.5 |
+| its cruise (`ZEPPELIN_CRUISE`) | 8 over the rim; and 6.5 over a dock's ground, off it or onto it |
+| setting down (`ZEPPELIN_SET_DOWN_REACH`) | within 12 of the plot's middle |
 | passengers (`ZEPPELIN_PASSENGERS`) | 8 |
 | cargo (`ZEPPELIN_CARGO`) | 60 units, a frame's worth of wood |
 | a mast | wood and some rope, as a winch; its store by floor area, as a store's |

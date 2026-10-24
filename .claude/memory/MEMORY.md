@@ -134,7 +134,7 @@
 - [Farside space game concept](farside_space_game_concept.md) — apps/farside concept; scale bench on port 8770
 - [Chasm lifelines plan](chasm_lifelines_plan.md) — steps 1-4 + crowding BUILT; widows pairing NEXT; saves/old_age_test.json
 - [Chasm steam plan](chasm_steam_plan.md) — steps 1-5 BUILT (collector P, condenser L, sail loft I, dock no key); no letter keys left
-- [Chasm flight plan](chasm_flight_plan.md) — talked through 2026-10-24, not built: click orders, MAST for goods, no pilot
+- [Chasm flight plan](chasm_flight_plan.md) — step 1 BUILT 2026-10-24 (flies, Flight.cpp); people next; docks leave sideways
 - [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; step 0 (GOALS honours switches) built
 - [Chasm terraces plan](chasm_terraces_plan.md) — stages 1-3 BUILT; ZoneGroundAt/ZoneTerraceStep/ZoneUpperDoor are the single rules
 - [Chasm rainbow plan](chasm_rainbow_plan.md) — step 1 BUILT: angle-coloured light per fall's spray; sunlit-only next

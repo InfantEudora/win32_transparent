@@ -6,7 +6,7 @@ status: partial
 summary: Ground at heights in steps (the plateau, balconies on the chasm's walls, islands in it, and the floor under the clouds), framed by biomes, with slope and water limiting what goes where.
 plans: grid_plan.md > Columns; biomes_plan.md > Step 2: relief; gameplay_plan.md > Terraces; terraces_plan.md > Stage 1: foundations under buildings; water_tools_plan.md > Height painted by hand; water_tools_plan.md > Cliffs painted by hand
 code: Terrain.h: TERRAIN_PLATEAU TERRAIN_BIOME_SWAMP Buildable TerrainCliffPlots; Zones.cpp: PlotIsBuildable ZONE_RISE_HOUSE ZONE_RISE_FOUNDATION ZoneLandSays ZoneNeedsFoundation BuildingFootHalves; Zones.h: ZoneKindTakesFoundation; BuildingMesh.cpp: FOOTING_DEPTH; ApplicationChasmGhost.cpp: UpdateSlopeGrid SLOPE_GRID_RADIUS; Walkers.h: WALKER_SLOPE_COST; GridWater.h: GRID_RELIEF_HIGHEST ChasmPlaceRelief GRID_CLIFF_DEEPEST ChasmPlaceCliffs
-verified: 2026-10-22
+verified: 2026-10-24
 ---
 
 One valley, split down the middle by the **chasm**. Every [[Cells and plots|plot]] has a height in whole
@@ -16,7 +16,7 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
 |---|---|---|
 | Plateau | the valley either side of the chasm | anything |
 | Balcony | a ledge on the chasm's wall below the rim, reached by [[Winch|winch]] | anything but fields: its food comes down from the rim |
-| Island | shards, columns and ledges standing in the chasm | reached by zeppelin, not in the game yet |
+| Island | shards, columns and ledges standing in the chasm | reached by [[Flight|zeppelin]], which sets down by its edge; nobody steps off yet |
 | Floor | under the clouds, {TERRAIN_FLOOR_STEPS} steps down | never |
 | Bare | any flat patch smaller than {TERRAIN_MIN_PATCH} plots: crumbled rock | never |
 
@@ -59,4 +59,4 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
 
 ## Planned
 
-- [planned] Zeppelins to reach the islands.
+- [planned] People set down on the islands by zeppelin, with their tents (`flight_plan.md`, step 2).
