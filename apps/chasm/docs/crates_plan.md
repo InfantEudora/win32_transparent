@@ -452,3 +452,41 @@ dropping instead of holding (step 5) meeting a check made before the walk:
 - **Left as it is**: the old crate stays. Its food goes when a store has room, by PICK UP and the builders - or, once
   `spoilage_plan.md` is built, it rots. A miner digs before he knows the room is still there, as the woodcutter
   fells; so far that is only a race, with no hut walled in to make it last.
+
+## As built: the ghost goes yellow over a crate (2026-10-24)
+
+The user, trying to place a mine on a floatstone seam in play: refused, and nothing on screen said why. Every plot of a
+seam's foot carries a floatstone pile (`stone_plan.md`, third round), a pile is a crate, and play commands refuse a crate's
+plot - so a mine on a seam could never be placed until a pile was picked up, and the ghost (red, or for the mine nothing
+at all) gave no hint of it. The rule stays (option 3 of three put to the user); what changed is that it shows. The user:
+"placement over a crate should be yellow, so it's clear you can place there but an action is required."
+
+Files: `ApplicationChasmGhost.cpp`, `ApplicationChasm.h` (`GHOST_*`, `DRAG_REFUSED*`, `DragPlan::crates_gone`),
+`ApplicationChasmRoads.cpp` (`PlanDrag`), `ApplicationChasm.cpp` (`ApplyZoneCommand`'s `f_crates`, `chasm_tool`'s `ghost`),
+`Economy.h`/`.cpp` (`EconomyCrateInTheWay` returns the crate), `assets/shaders/chasm_ghost.frag`; the wiki's `crate.md`
+and `mine.md`.
+
+- **Yellow** where the rules would take it but for the crate, **red** where they refuse it anyway - a house at a seam's
+  foot is red (too close to the cliff), a mine there yellow. The tag, in the HUD's amber, adds what lies there as its
+  card names it: "COSTS 7 WOOD, 15 STONE - FLOATSTONE LIES THERE: PICK IT UP FIRST" (RUBBLE, A CRATE). Under the clouds
+  or outside the settlement it is red whatever lies there: picking it up would not help.
+- **Several at once** - a line, a drag, a terrace's square - each plot or cell by itself, yellow among the green and red
+  (u -2 in `chasm_ghost.frag`), the ghost green while any of it will be placed, and the tag counting the rest: "6 PLOTS -
+  1 PLOT LEFT OUT: PICK UP WHAT LIES THERE FIRST". A drag's preview runs its commands through the rules, which ask the
+  crates first, so a crate's refusal says nothing of the rest: `PlanDrag` runs them again on a second copy with the
+  crates left out (`ApplyZoneCommand(..., f_crates = false)`), and one refused on the first but taken on the second is
+  `DRAG_REFUSED_CRATE`. Only with a crate in the way of one; the copy is kept in the plan, as `after` is.
+- **The terrace's square never asked the crates**: green over a pile, then refused. It asks them now.
+- **The mine had no ghost at all**: `BuildingMesh` draws no body for it (its portal is a prop), so the ghost was empty
+  and hidden, and the tag with it. It is now its plot's tile, as the winch's is. It still has no slope grid - left out on
+  purpose, as the winch's, the collectors' and the bridge's (`UpdateSlopeGrid`).
+- **`chasm_tool`** returns `ghost`: green, yellow, red or none.
+- **Checked** (play, `terraces_test`, minimised, port 8771): the mine on all four plots of seam 4 yellow with the tag
+  above, on seam 3 red (outside the settlement), and placed in play once its plot's pile was picked up; a house over each
+  of the 97 crates - 3 yellow, each refused by the real command for its crate alone; of the 94 red, 58 under the clouds,
+  26 outside the settlement, 8 too close to a cliff, 1 on a road (crates may lie on one), 1 not told apart (the probes
+  before it had changed the map); a crate put down on open ground: house, store, field, garden, lot and wall yellow, road
+  green, mine red, terrace green with 2 plots left out; drags of house, garden, wall and field across it green with 1
+  plot or cell left out, and with no plot placeable, yellow. A crate dropped on its plot's very point lies on a cell
+  corner: the field's ghost there agreed with the command (both took the field, the crate in the next cell by the rules'
+  own pick). Not checked: a replay (view only).

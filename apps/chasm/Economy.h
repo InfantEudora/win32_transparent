@@ -1684,10 +1684,10 @@ int EconomyCoupleSurname(const EconomyState& e, uint32_t mother, uint32_t father
 bool EconomyCrateGround(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at);
 //The crate lying on `plot`, NULL for none.
 const EconomyCrate* EconomyCrateOn(const EconomyState& e, int plot);
-//Whether zone op `op` (ZoneOp) on `index` - a plot, or a coarse cell for a cell op - would cover a crate: a building
-//on its plot, ground other than road there (`value`, ZONE_GROUND_*, for ZONE_OP_GROUND_PAINT), a field or a range
-//over its cell. Play mode refuses it (the user's): the crate has to go first.
-bool EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, int index, int value);
+//The crate zone op `op` (ZoneOp) on `index` - a plot, or a coarse cell for a cell op - would cover, NULL for none: a
+//building on its plot, ground other than road there (`value`, ZONE_GROUND_*, for ZONE_OP_GROUND_PAINT), a field or a
+//range over its cell. Play mode refuses it (the user's): the crate has to go first.
+const EconomyCrate* EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, int index, int value);
 const char* EconomyCrateOriginName(int origin);
 
 //As a save holds it.

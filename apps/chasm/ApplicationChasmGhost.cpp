@@ -36,22 +36,42 @@
 
     A WINCH is a thin gantry, and none at all where there is no balcony below to lower to - which is most
     of the map, so most of where the cursor goes showed nothing. Its plot is laid as a tile under the
-    gantry, and the landing it lowers to as another.
+    gantry, and the landing it lowers to as another. A MINE has no body of its own at all - its portal
+    is a prop (ApplicationChasmMines.cpp) - so it is only its plot's tile.
+
+    OVER A CRATE (the user's, 2026-10-24): nothing is put over one in play, and red said only "no" - on a
+    seam's foot, where floatstone lies on every plot, a mine looked as if it could never go. So where only
+    the crate stops it the ghost is YELLOW, and the tag names what lies there and that it has to be picked
+    up first; a line's, a drag's or a terrace's plots or cells each so, by themselves.
 
     THE PRICE TAG (the user's, 2026-10-11): beside the cursor, what the ghost would cost - the goods its site
     will ask for, from the rules' own costs. A click's worth, as the ghost is: a new building's plot at the
     storeys it is painted with, and with the extension's corner plot that comes with it (ZoneJoinCorner); one
     storey more on what stands; a garden's, lot's or wall's plot; a field's or range's cell. A line being drawn
     or a bridge dragged, all of it. Nothing for what is that already - a lot painted on a lot is only claimed -
-    nor for erasing. Dim where the ghost is red, and under the clouds only that it is hidden.
+    nor for erasing. Dim where the ghost is red, amber where it is yellow, and under the clouds only that it is hidden.
 */
 
 #define GHOST_LIFT          0.06f       //a ground ghost over the ground's relief, clear of the ground's own fill
 #define GHOST_ALPHA         0.45f
 static const vec3 GHOST_OK(0.45f,0.95f,0.45f);
 static const vec3 GHOST_REFUSED(1.0f,0.35f,0.30f);
+static const vec3 GHOST_CRATE(1.0f,0.86f,0.30f);       //GHOST_YELLOW: yellower than the slope grid's foundation amber
 
 namespace {
+
+//A tile refused, from vertex `first` on: red - or yellow, refused only for a crate lying there (chasm_ghost.frag reads u).
+void GhostRefuse(std::vector<vertex>& verts, size_t first, bool f_crate){
+    for (size_t i = first; i < verts.size(); i++){
+        verts[i].uv = f_crate ? vec2(-2.0f,-2.0f) : vec2(-1.0f,-1.0f);
+    }
+}
+
+//What the tag says of a crate in the way, named as its card names it (CrateCard).
+std::string CrateWords(const EconomyCrate& c){
+    return std::string(EconomyCrateCrystal(c) ? "FLOATSTONE" : EconomyCrateRubble(c.origin) ? "RUBBLE" : "A CRATE")
+           + " LIES THERE: PICK IT UP FIRST";
+}
 
 //The quarters of the cells round plot v - its own ground - laid on the ground just over it (ZoneMesh.h).
 void GhostPlotTile(const ChasmWorld& w, const ZoneState& z, int v, std::vector<vertex>& out){
@@ -173,8 +193,10 @@ void ApplicationChasm::BuildGhostScene(){
 }
 
 void ApplicationChasm::SetGhostUniforms(){
-    ghost_shader->Setvec3("ghost_tint",f_ghost_ok ? GHOST_OK : GHOST_REFUSED);
+    ghost_shader->Setvec3("ghost_tint",(ghost_look == GHOST_GREEN) ? GHOST_OK : (ghost_look == GHOST_YELLOW) ? GHOST_CRATE
+                                                                                                        : GHOST_REFUSED);
     ghost_shader->Setvec3("ghost_refused",GHOST_REFUSED);
+    ghost_shader->Setvec3("ghost_crate",GHOST_CRATE);
     ghost_shader->Setfloat("ghost_alpha",GHOST_ALPHA);
     //Over what stands, never into the depth buffer: a ghost hides nothing, itself included.
     glDepthMask(GL_FALSE);
@@ -233,6 +255,7 @@ void ApplicationChasm::UpdateGhost(){
             ghost->SetOutline(vec4(0.0f,0.0f,0.0f,0.0f));
         }
         ghost_built = GhostKey();
+        ghost_cost_look = GHOST_NONE;
         std::lock_guard<std::mutex> lock(pick_mutex);
         ghost_cost_text.clear();
         return;
@@ -260,7 +283,7 @@ void ApplicationChasm::UpdateGhost(){
     key.drag_serial = f_area ? plan_serial : 0;
     key.bridge_from = from;
     key.owner = PaintOwner(tool);       //a yard being painted: whose (yards_plan.md)
-    //Nothing is put over a crate in play (crates_plan.md): red where the zone command would refuse it.
+    //Nothing is put over a crate in play (crates_plan.md): yellow where the zone command would refuse it for that alone.
     std::shared_ptr<const EconomyState> es = GetEconomy();
     bool f_crates = es && es->world == w && !es->crates.empty();
     key.crates_version = (es && es->world == w) ? es->crates_version : 0;
@@ -287,8 +310,8 @@ void ApplicationChasm::UpdateGhost(){
         int op = f_field ? ZONE_OP_FIELD_PAINT : (from >= 0) ? ZONE_OP_BRIDGE : ZONE_OP_BUILD_PAINT;
         key.f_settled = EconomyCommandInTerritory(*es,cw,op,f_field ? hover.coarse_quad : (from >= 0) ? from : hover.plot);
     }
-    auto crate_in_way = [&](int op, int index, int value){
-        return f_crates && EconomyCrateInTheWay(*es,cw,op,index,value);
+    auto crate_in_way = [&](int op, int index, int value) -> const EconomyCrate* {
+        return f_crates ? EconomyCrateInTheWay(*es,cw,op,index,value) : NULL;
     };
     if (key == ghost_built){
         return;
@@ -310,6 +333,8 @@ void ApplicationChasm::UpdateGhost(){
     int room_more = -1;         //a woodcutter's hut: the wood it would keep indoors the more, a collector its water; -1 neither
     bool f_room_new = false;    //...a new one's, all it keeps
     int room_kind = ZONE_KIND_NONE;     //...which of the two: the building under a click for a storey, not the tool's
+    const EconomyCrate* crate = NULL;   //what alone stops a click (GHOST_YELLOW), for the tag to name
+    int crated = 0;                     //...a line's, a drag's or a terrace's plots or cells only a crate stops
     if (f_line){
         //Each plot once, a tile each. Erasing, only what has road (or wall) to take up, all of it red - what goes.
         std::vector<int> drawn;
@@ -319,8 +344,9 @@ void ApplicationChasm::UpdateGhost(){
                 continue;
             }
             drawn.push_back(v);
-            bool f_plot_ok = LinePlotAllowed(cw,z,ex.get(),f_erase_line,line_ground_drawn,v,NULL)
-                             && (f_erase_line || !crate_in_way(ZONE_OP_GROUND_PAINT,v,line_ground_drawn));
+            bool f_allowed = LinePlotAllowed(cw,z,ex.get(),f_erase_line,line_ground_drawn,v,NULL);
+            bool f_crate = f_allowed && !f_erase_line && crate_in_way(ZONE_OP_GROUND_PAINT,v,line_ground_drawn);
+            bool f_plot_ok = f_allowed && !f_crate;
             if (f_erase_line && !f_plot_ok){
                 continue;
             }
@@ -338,9 +364,8 @@ void ApplicationChasm::UpdateGhost(){
                     laid++;
                 }
             }else{
-                for (size_t i = first; i < verts.size(); i++){
-                    verts[i].uv = vec2(-1.0f,-1.0f);
-                }
+                GhostRefuse(verts,first,f_crate);
+                crated += f_crate ? 1 : 0;
             }
         }
         f_cost = laid > 0;
@@ -510,7 +535,7 @@ void ApplicationChasm::UpdateGhost(){
             }
             note = area_note.c_str();
         }
-        //What the rules refuse: red, plot by plot or cell by cell.
+        //What the rules refuse: red, plot by plot or cell by cell - yellow what only a crate stops.
         for (size_t i = 0; i < plan->commands.size() && !plan->f_erase && plan->tool != CHASM_TOOL_ERASE; i++){
             if (!plan->refused[i]){
                 continue;
@@ -522,9 +547,9 @@ void ApplicationChasm::UpdateGhost(){
             }else{
                 GhostPlotTile(cw,z,c.index,verts);
             }
-            for (size_t j = first; j < verts.size(); j++){
-                verts[j].uv = vec2(-1.0f,-1.0f);
-            }
+            bool f_crate = plan->refused[i] == DRAG_REFUSED_CRATE;
+            GhostRefuse(verts,first,f_crate);
+            crated += f_crate ? 1 : 0;
         }
     }else if (tool == CHASM_TOOL_BRIDGE){
         //Not yet pressed, or back over where it was: the bank it would start from, dry and free.
@@ -582,8 +607,9 @@ void ApplicationChasm::UpdateGhost(){
             }
         }else{
             //With one of its kind selected, extending it: red where the plot would not join it.
-            f_ok = ZoneCanBuild(cw,z,plot,kind,key.owner,NULL) && ZoneCanExtend(cw,z,plot,kind,key.owner,NULL)
-                   && !crate_in_way(ZONE_OP_BUILD_ADD,plot,0);
+            bool f_can = ZoneCanBuild(cw,z,plot,kind,key.owner,NULL) && ZoneCanExtend(cw,z,plot,kind,key.owner,NULL);
+            crate = f_can ? crate_in_way(ZONE_OP_BUILD_ADD,plot,0) : NULL;
+            f_ok = f_can && !crate;
             GhostBuildingPlot(cw,z,plot,kind,ZoneKindPaintStoreys(kind),0,verts);
             for (int g = 0; g < GOOD_COUNT; g++){
                 cost[g] = EconomyKindStoreysCost(cw,z,kind,plot,g,0,ZoneKindPaintStoreys(kind));
@@ -623,6 +649,8 @@ void ApplicationChasm::UpdateGhost(){
             if (landing >= 0){
                 GhostPlotTile(cw,z,landing,verts);
             }
+        }else if (shown == ZONE_KIND_MINE){
+            GhostPlotTile(cw,z,plot,verts);     //its portal is a prop: GhostBuildingPlot drew nothing
         }
     }else if (tool == CHASM_TOOL_TERRACE){
         /*
@@ -637,6 +665,9 @@ void ApplicationChasm::UpdateGhost(){
         for (int v : square){
             bool f_there = ZoneTerraced(z,v);
             bool f_can = top != ZONE_NO_TERRACE && (f_there ? z.terrace[v] == top : ZoneCanTerrace(cw,z,v,top,NULL));
+            //A crate would be buried under it (EconomyCrateInTheWay), which the click refuses: yellow, never green.
+            bool f_crate = f_can && !f_there && crate_in_way(ZONE_OP_TERRACE,v,top);
+            f_can = f_can && !f_crate;
             size_t first = verts.size();
             if (top != ZONE_NO_TERRACE){
                 BuildPlotTile(cw,z,v,GHOST_LIFT,verts,(float)top * ZONE_STOREY_HEIGHT + GHOST_LIFT);
@@ -644,9 +675,8 @@ void ApplicationChasm::UpdateGhost(){
                 GhostPlotTile(cw,z,v,verts);
             }
             if (!f_can){
-                for (size_t i = first; i < verts.size(); i++){
-                    verts[i].uv = vec2(-1.0f,-1.0f);
-                }
+                GhostRefuse(verts,first,f_crate);
+                crated += f_crate ? 1 : 0;
             }else if (!f_there){
                 cost[GOOD_STONE] += EconomyTerraceStone(cw,v,top);
                 trees += trees_on(v,-1);
@@ -668,8 +698,9 @@ void ApplicationChasm::UpdateGhost(){
         f_ok = f_ok && !(PlayMode() && ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD
                          && z.ArchBuiltOf(plot) > 0);
         bool f_own = z.ground[plot] == ground && ZoneGroundOwner(z,plot) == key.owner;
-        f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL))
-               && !crate_in_way(ZONE_OP_GROUND_PAINT,plot,ground);
+        f_ok = f_ok && (!key.owner || f_own || ZoneCanYard(cw,z,plot,ground,key.owner,NULL));
+        crate = f_ok ? crate_in_way(ZONE_OP_GROUND_PAINT,plot,ground) : NULL;
+        f_ok = f_ok && !crate;
         GhostPlotTile(cw,z,plot,verts);
         //A plot of it - not over its own ground, which is only claimed, nor a wall over a road, which only gates it.
         if (z.ground[plot] != ground && !(ground == ZONE_GROUND_WALL && z.ground[plot] == ZONE_GROUND_ROAD)){
@@ -680,7 +711,9 @@ void ApplicationChasm::UpdateGhost(){
         }
     }else if (f_field){
         bool f_can = (tool == CHASM_TOOL_DOCK) ? ZoneCanDock(cw,z,hover.coarse_quad,NULL) : ZoneCanField(cw,z,hover.coarse_quad,NULL);
-        f_ok = (z.field[hover.coarse_quad] || f_can) && !crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0);
+        f_ok = z.field[hover.coarse_quad] || f_can;
+        crate = f_ok ? crate_in_way(ZONE_OP_FIELD_PAINT,hover.coarse_quad,0) : NULL;
+        f_ok = f_ok && !crate;
         GhostCellTile(cw,z,hover.coarse_quad,verts);
         if (!z.field[hover.coarse_quad]){
             int cell_kind = ChasmCellToolKind(tool);
@@ -706,7 +739,14 @@ void ApplicationChasm::UpdateGhost(){
     //per command.
     if (!f_line && !f_area && (!key.f_explored || !key.f_settled) && tool != CHASM_TOOL_ERASE){
         f_ok = false;
+        //...red, whatever lies there: picking it up would not make it go (a terrace's yellow plots too).
+        crate = NULL;
+        crated = 0;
+        for (vertex& v : verts){
+            v.uv = (v.uv.x < -1.5f) ? vec2(-1.0f,-1.0f) : v.uv;
+        }
     }
+    int look = f_ok ? GHOST_GREEN : (crate || crated > 0) ? GHOST_YELLOW : GHOST_RED;
     {
         std::lock_guard<std::mutex> lock(pick_mutex);
         ghost_cost_text = (f_cost && !verts.empty()) ? CostTag(cost,lead,plots,trees) : std::string();
@@ -724,25 +764,36 @@ void ApplicationChasm::UpdateGhost(){
         if (!ghost_cost_text.empty() && note){
             ghost_cost_text += note;
         }
+        //What waits on a crate (the user's, 2026-10-24): a click's, named; a line's, a drag's or a terrace's, how much of it
+        //is left out until what lies there is picked up.
+        std::string sep = ghost_cost_text.empty() ? "" : " - ";
+        if (crate){
+            ghost_cost_text += sep + CrateWords(*crate);
+        }else if (crated > 0){
+            const char* unit = (f_area && ChasmCellTool(plan->tool)) ? "CELL" : "PLOT";
+            ghost_cost_text += sep + std::to_string(crated) + " " + unit + (crated == 1 ? "" : "S")
+                               + " LEFT OUT: PICK UP WHAT LIES THERE FIRST";
+        }
         //Under the clouds the tag says only that (the user's, 2026-10-17): the trees to fell, the room, the ice a bridge
         //waits for are the hidden ground's, and gave it away. A line is held to them per plot, so it keeps its tag.
         if (!f_line && !f_area && !key.f_explored && tool != CHASM_TOOL_ERASE && !verts.empty()){
             ghost_cost_text = "HIDDEN UNDER THE CLOUDS";
         }
     }
-    f_ghost_cost_ok = f_ok;
     if (verts.empty()){
+        ghost_cost_look = GHOST_NONE;
         ghost->SetVisibility(false);
         ghost->SetOutline(vec4(0.0f,0.0f,0.0f,0.0f));
         return;
     }
-    f_ghost_ok = f_ok;
+    ghost_cost_look = look;
+    ghost_look = look;
     Mesh* mesh = ghost->GetMesh();
     mesh->SetMeshData(verts.data(),(int)verts.size());
     //SetMeshData puts a mesh back to MESH_MODE_NORMAL, so the shader tag goes after it.
     mesh->mesh_mode = MESH_MODE_SHADER;
     mesh->custom_shader_index = ghost_shader_index;
-    vec3 c = f_ok ? GHOST_OK : GHOST_REFUSED;
+    vec3 c = (look == GHOST_GREEN) ? GHOST_OK : (look == GHOST_YELLOW) ? GHOST_CRATE : GHOST_REFUSED;
     ghost->SetOutline(vec4(c.x,c.y,c.z,1.0f));
     ghost->SetVisibility(true);
 }
@@ -1087,5 +1138,6 @@ void ApplicationChasm::DrawCostTips(float s){
     if (x + w > (float)main_window->width - 8.0f * s){
         x = (float)mx - 12.0f * s - w;
     }
-    tag(text,vec2(x,(float)my + 14.0f * s),f_ghost_cost_ok ? HUD_TEXT : HUD_TEXT_DIM);
+    int look = ghost_cost_look.load();
+    tag(text,vec2(x,(float)my + 14.0f * s),(look == GHOST_GREEN) ? HUD_TEXT : (look == GHOST_YELLOW) ? HUD_AMBER : HUD_TEXT_DIM);
 }

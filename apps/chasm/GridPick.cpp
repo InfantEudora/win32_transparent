@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#define PICK_OUTLINE_SLACK  1e-3f   //how near the map's outline a point in no quad still picks the quad there
+
 namespace {
 
 float PolyArea(const vec2* p, int n){
@@ -136,15 +138,7 @@ GridPick GridPicker::Pick(const vec2& p) const{
     }
     const GridLevel& fine = grid->fine;
     int b = bz * buckets_x + bx;
-    for (int i = bucket_start[b]; i < bucket_start[b + 1]; i++){
-        int q = bucket_quads[i];
-        vec2 corners[4];
-        for (int k = 0; k < 4; k++){
-            corners[k] = fine.pos[fine.quads[q].v[k]];
-        }
-        if (!InPolygon(p,corners,4)){
-            continue;
-        }
+    auto take = [&](int q){
         pick.f_hit = true;
         pick.fine_quad = q;
         pick.coarse_quad = fine.quads[q].parent;
@@ -160,7 +154,7 @@ GridPick GridPicker::Pick(const vec2& p) const{
                 best = -1.0f;
                 break;
             }
-            vec2 d = corners[k] - p;
+            vec2 d = fine.pos[fine.quads[q].v[k]] - p;
             if (d.dot(d) < best){
                 best = d.dot(d);
                 nearest = k;
@@ -168,7 +162,42 @@ GridPick GridPicker::Pick(const vec2& p) const{
         }
         pick.corner = nearest;
         pick.plot = fine.quads[q].v[nearest];
-        return pick;
+    };
+    for (int i = bucket_start[b]; i < bucket_start[b + 1]; i++){
+        int q = bucket_quads[i];
+        vec2 corners[4];
+        for (int k = 0; k < 4; k++){
+            corners[k] = fine.pos[fine.quads[q].v[k]];
+        }
+        if (InPolygon(p,corners,4)){
+            take(q);
+            return pick;
+        }
+    }
+    /*
+        ON THE OUTLINE: watertight between two quads, the crossing test gives a point on their shared edge to one of them
+        - but on the map's outline there is no other, and on two of its sides a point exactly on it is in none. A plot on
+        the outline has its point there: someone ordered onto one stood on it, picked no plot, and found no way anywhere,
+        not even home (a bug report, 2026-10-24: Kaat De Wit, posted on the east edge). So a point in no quad, within
+        PICK_OUTLINE_SLACK of one's edge, is that quad's - the nearest. Inside the map every point is in a quad already.
+    */
+    int best_q = -1;
+    float best_d = PICK_OUTLINE_SLACK;
+    for (int i = bucket_start[b]; i < bucket_start[b + 1]; i++){
+        int q = bucket_quads[i];
+        for (int k = 0; k < 4; k++){
+            const vec2& a = fine.pos[fine.quads[q].v[k]];
+            vec2 ab = fine.pos[fine.quads[q].v[(k + 1) % 4]] - a;
+            float t = std::max(0.0f,std::min(1.0f,(p - a).dot(ab) / std::max(1e-12f,ab.dot(ab))));
+            float d = (a + ab * t - p).length();
+            if (d <= best_d && (best_q < 0 || d < best_d)){
+                best_d = d;
+                best_q = q;
+            }
+        }
+    }
+    if (best_q >= 0){
+        take(best_q);
     }
     return pick;
 }

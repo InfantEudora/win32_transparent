@@ -1702,7 +1702,7 @@ int ZoneCastleLevelFor(const ChasmWorld& w, const ZoneState& z, int plot, uint32
     float lowest = 0.0f;
     float highest = 0.0f;
     ZonePlotGroundRange(w,plot,lowest,highest);
-    return (int)std::ceil(highest / ZONE_STOREY_HEIGHT - 1e-4f);
+    return (int)std::ceil((highest - ZONE_CASTLE_SETTLE) / ZONE_STOREY_HEIGHT - 1e-4f);
 }
 
 bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape, int storeys, int base, const char** why){
@@ -1738,13 +1738,13 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
     if (shape == ZONE_CASTLE_ARCH && storeys < ZONE_CASTLE_ARCH_LOWEST){
         return refuse("an arch is two storeys at least - its passage clears a gate");
     }
-    //LEVEL (ZoneCastleBase): a storey over all the ground under it - an arch two, its passage's - or the hill has risen
-    //past the drag's level there.
+    //LEVEL (ZoneCastleBase): a storey over all the ground under it - an arch two, its passage's - less what it may settle
+    //into it, or the hill has risen past the drag's level there.
     float lowest = 0.0f;
     float highest = 0.0f;
     ZonePlotGroundRange(w,plot,lowest,highest);
     int least = (shape == ZONE_CASTLE_ARCH) ? ZONE_CASTLE_ARCH_LOWEST : 1;
-    if (highest > (float)(base + storeys - least) * ZONE_STOREY_HEIGHT + 1e-3f){
+    if (highest > (float)(base + storeys - least) * ZONE_STOREY_HEIGHT + ZONE_CASTLE_SETTLE + 1e-3f){
         return refuse("the ground rises past this level - start a new drag up there, or a stair");
     }
     //A road's rules: it may stand beside the wet, on a road's slope - an arch is where a road goes.

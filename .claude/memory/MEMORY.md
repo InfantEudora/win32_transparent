@@ -112,7 +112,7 @@
 - [Chasm cracks prototype](chasm_cracks_prototype.md) — cracked-mud plates, ported as map kind `cracks` (MudCracks.cpp)
 - [Chasm zombies plan](chasm_zombies_plan.md) — steps 1-3b, 4a/4b/4d, 6 BUILT; 4c, 4e, alarm next
 - [The Void plan](void_plan.md) — llm app advises a running Chasm over MCP; advice only; step 0 done
-- [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O)
+- [Chasm stone plan](chasm_stone_plan.md) — steps 1-5 BUILT by 2026-10-16 (rubble, PICK UP, stonecutter, deposits, the mine on O); a play mine waits for its plot's pile (yellow ghost)
 - [Chasm stone props](chasm_stone_props.md) — 10 stone props in chasm_props.glb (--add --merge); floatstone = PAL_MINERALS row 10
 - [Chasm sound plan](chasm_sound_plan.md) — step 2 BUILT: cues/chasm.json on the physics thread; voices
 - [Chasm statistics](chasm_statistics.md) — v1 BUILT: EconomyEvent shared with sound, saved journal + day rows, Tab page, chasm_stats

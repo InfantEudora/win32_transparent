@@ -4,9 +4,9 @@ aliases: mines, miner, miners, digging, mine portal
 kind: buildings
 status: built
 summary: One plot on a deposit - a floatstone seam's foot, the mountain's foot, an outcrop - where a miner digs floatstone or stone a load at a time and carries it to a store. A seam is dug out at last; the mountain and the outcrops never are.
-plans: stone_plan.md > 5. The mine; stone_plan.md > As built: step 5 (2026-10-15)
-code: Zones.h: ZONE_KIND_MINE; Zones.cpp: MineIsBuildable; Economy.h: WORKER_JOB_MINER ECONOMY_MINE_SECONDS ECONOMY_MINE_STONE ECONOMY_MINE_FACE; Economy.cpp: GoDig DugOut EconomyDepositLeft; Deposits.cpp: DepositDigWay; ApplicationChasmMines.cpp: UploadMines
-verified: 2026-10-18
+plans: stone_plan.md > 5. The mine; stone_plan.md > As built: step 5 (2026-10-15); crates_plan.md > As built: the ghost goes yellow over a crate (2026-10-24)
+code: Zones.h: ZONE_KIND_MINE; Zones.cpp: MineIsBuildable; Economy.h: WORKER_JOB_MINER ECONOMY_MINE_SECONDS ECONOMY_MINE_STONE ECONOMY_MINE_FACE EconomyCrateInTheWay; Economy.cpp: GoDig DugOut EconomyDepositLeft; Deposits.cpp: DepositDigWay; ApplicationChasmMines.cpp: UploadMines
+verified: 2026-10-24
 ---
 
 A mine is one plot, one storey, placed with a click of its tool (**O**) - never dragged. It costs a storey's [[Wood|wood]] and
@@ -25,6 +25,11 @@ Only **on a [[Deposit|deposit]]**, and with the [[Winch|winch]] the only buildin
 The ground it digs into is left out; the rest round it must be its own level, dry, gentle, off the mountain and
 with no field - and never where a winch lands. Elsewhere it is refused: "no seam in this wall" at the foot of a
 bare wall, "a mine is dug into a seam's wall, the mountain or an outcrop" anywhere else.
+
+**A seam's piles come first.** Every plot of a seam's foot has its fallen [[Floatstone|floatstone]] lying on it, and
+in play nothing is built over a [[Crate|crate]]: the mine's ghost is yellow there, "FLOATSTONE LIES THERE: PICK IT UP
+FIRST". PICK UP one plot's pile, and once it is carried off the mine goes on that plot. Its ghost is the plot's tile:
+the portal is drawn only once the mine stands.
 
 ## The miner
 

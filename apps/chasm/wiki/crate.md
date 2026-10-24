@@ -4,9 +4,9 @@ aliases: crates, find, finds
 kind: goods
 status: partial
 summary: Goods lying on the ground - the load of someone sent to a post, or one nobody would take - a store villagers take from, and builders carry off to a store.
-plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; crates_plan.md > As built: step 5, dropping instead of holding (2026-10-18); stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14); stone_plan.md > As built: PICK UP by anyone free (2026-10-18)
+plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; crates_plan.md > As built: step 5, dropping instead of holding (2026-10-18); crates_plan.md > As built: the ghost goes yellow over a crate (2026-10-24); stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14); stone_plan.md > As built: PICK UP by anyone free (2026-10-18)
 code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE CRATE_SITE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble Derive; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
-verified: 2026-10-18
+verified: 2026-10-24
 ---
 
 A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a [[Posts|post]]:
@@ -31,10 +31,9 @@ crate lies goes into it.
 
 ## Taking from it
 
-A crate is a store that villagers only take from: nothing is ever delivered to one, and it is gone once
-empty. People take from it wherever they would take from a store - goods for
-[[Construction|building sites]], what a house [[Fetching home|fetches]], and a pressing [[Thirst|thirst]]
-or hunger - standing beside it, by the same nearest-first rules.
+A crate is a store that villagers only take from: nothing is ever delivered to one, and it is gone once empty. People
+take from it wherever they would take from a store - goods for [[Construction|building sites]], what a house
+[[Fetching home|fetches]], and a pressing [[Thirst|thirst]] or hunger - standing beside it, by the same nearest-first rules.
 
 ## Moving it
 
@@ -54,8 +53,9 @@ far to fetch. A store nearer to it brings it in reach.
 
 ## Building over it
 
-In play mode nothing may be built over a crate - a building, a garden, a lot, a wall, a field or a range: "a crate
-lies there", and the ghost shows red. A road may run under it. A debug placement goes ahead, and the crate is lost.
+In play mode nothing may be built over a crate - a building, a garden, a lot, a wall, a field, a range or a terrace:
+"a crate lies there". The ghost is **yellow** where only the crate stops it, its tag naming what to pick up first; red
+where the rules refuse anyway. A road may run under a crate. A debug placement goes ahead, and the crate is lost.
 
 ## Seeing it
 

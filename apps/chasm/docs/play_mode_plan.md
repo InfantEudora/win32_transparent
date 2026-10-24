@@ -146,6 +146,13 @@ placed or built any more; only what people see.
   +1 per unit of height, at most 40.
 - `chasm_pick sight:true` returns what a person standing at a point would see, on a blank raster of its
   own (read only); `chasm_view` returns how many cells are explored.
+- **Puffs past the raster** (fixed 2026-10-24, the bug report `saves/bug_stuck_character.json`): the clouds' lattice
+  starts at the map's corner and is jittered by `CLOUD_JITTER`, so its first row and column, and a few of its last,
+  stand off the exploration's raster, where `Explored` is false for good - on seed 12, 33 puffs along the west edge,
+  65 along the north and 2 on the east stayed with everything round them seen. The clouds now ask
+  `Exploration::ExploredNearest`, the nearest cell's, so a puff past the edge clears with the edge it hangs over. The
+  rules (`Explored`) are as they were. Checked: the two on the east edge gone in the save; nothing left along the
+  west and north edges with the map revealed.
 
 ## The ghost (2026-10-06)
 

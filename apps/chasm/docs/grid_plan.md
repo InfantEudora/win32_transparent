@@ -309,6 +309,12 @@ cut by the quad's centre and the two edge midpoints at that corner.
   picks too (where a walker stands, `RouteTo`), and a villager stopped on such a point by a re-plan had no
   plot, so no way anywhere: he stood there until he died of thirst (the user's woutveen recording). Each
   edge is now worked out from its lower end, so the quads either side get the same crossing to the bit.
+- **The outline** (fixed 2026-10-24, the bug report `saves/bug_stuck_character.json`): on the map's outline there is
+  no quad on the far side, and on two of its sides - max x, max z - a point exactly on it was in no quad. An outline
+  plot's point is there: Kaat De Wit, ordered onto one on the east edge (x 272.0), stood on it with no plot under her,
+  refused every order ("no way there") and stranded when released. A point in no quad now takes the quad whose edge
+  it lies within `PICK_OUTLINE_SLACK` (0.001) of; inside the map every point was in one already. Checked on the save:
+  her point picks plot 49994, she walks to an order, back to the edge, and home when released.
 - **Checked:** world and pixel picks agree; four- and six-sided plots and an outline half-plot
   outline correctly; hover confirmed by hand with the mouse.
 

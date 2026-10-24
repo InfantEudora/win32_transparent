@@ -229,6 +229,11 @@ toward it. Asked: the castle's height as a terrace's.
   counted from it - its ground built up to it. A drag is one level (`ZoneCastleLevelFor`): its first piece takes the
   level of the piece it is painted on, else the highest ground under its plot rounded up; every piece after takes the
   same. A piece over a piece stands on its level.
+- **Settling** (the user, 2026-10-24: a one-storey wall on flat ground came out two): the plateau lies a few centimetres
+  either side of a whole storey, so rounding up lifted a piece a whole storey for 0.02 of ground - beside one at 1.0
+  storeys, one at 1.97. A piece may now stand up to `ZONE_CASTLE_SETTLE` (a quarter storey) into its ground, in the level
+  and in the check below alike; its walls go on down to the ground, so nothing shows. A terrace does not settle: the
+  terrain would show through its top.
 - **Up a hill**: a piece stands a storey over all the ground under it, an arch two (`ZoneCanCastle`) - so a level drag
   uphill stops where the hill rises past it ("the ground rises past this level - start a new drag up there, or a
   stair"); a two-storey wall climbs a storey further. Downhill it grows taller.

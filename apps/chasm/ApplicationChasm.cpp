@@ -881,7 +881,7 @@ void ApplicationChasm::SubmitZone(int op, int index, int kind, uint32_t stroke, 
 }
 
 bool ApplicationChasm::ApplyZoneCommand(Zones& zones, const Exploration& ex, const EconomyState* e, int op, uint32_t index,
-                                        int value1, uint32_t stroke, bool f_play, uint32_t owner){
+                                        int value1, uint32_t stroke, bool f_play, uint32_t owner, bool f_crates){
     std::shared_ptr<const ChasmWorld> zw = zones.GetWorld();
     if (e && e->world != zw){
         e = NULL;
@@ -902,7 +902,7 @@ bool ApplicationChasm::ApplyZoneCommand(Zones& zones, const Exploration& ex, con
         }
         //Nor over a crate (crates_plan.md, the user's): it has to be cleared away first. Play commands only, like the
         //clouds; a debug placement goes ahead, and the crate under it is lost (Economy::LoseCoveredCrates).
-        if (e && EconomyCrateInTheWay(*e,*zw,op,(int)index,value1)){
+        if (f_crates && e && EconomyCrateInTheWay(*e,*zw,op,(int)index,value1)){
             return refuse("a crate lies there");
         }
         //Nor outside every settlement's territory (settlements_plan.md): play commands only, as for the clouds.
@@ -4717,7 +4717,8 @@ void ApplicationChasm::RegisterMCPTools(){
         "woodcutter, water, winch, camp, bridge, builders, wall, range, tower, ropewalk - and the debug panel's castle, well, river, "
         "pond, height and cliff, never in play (water_tools_plan.md: `width`, `height`, `radius` and `depth` set the map tools' "
         "sizes, as the panel's sliders do). With a paint tool the hover outline goes green where a click would "
-        "paint and red where the rules refuse - in play mode, the ghost of what it would place, and `cost` its price "
+        "paint and red where the rules refuse - in play mode, the ghost of what it would place, `ghost` its colour (green, "
+        "yellow where only a crate lying there stops it, red, or none) and `cost` its price "
         "tag as last drawn (empty for none; the ghost follows a frame behind, so ask again after moving the hover), "
         "`slope_grid` how many plots or cells the grid round it shows the land allowing, allowing on a foundation "
         "(stone, docs/terraces_plan.md) and refusing the tool - "
@@ -4818,6 +4819,7 @@ void ApplicationChasm::RegisterMCPTools(){
             size_t band = 0;
             std::string cost;
             int slope[3];
+            int look = ghost_cost_look.load();
             {
                 std::lock_guard<std::mutex> lock(pick_mutex);
                 line = line_chain.size();
@@ -4833,6 +4835,7 @@ void ApplicationChasm::RegisterMCPTools(){
                         {"button",(left < 0) ? "mouse" : (left ? "down" : "up")},
                         {"line_plots",line},
                         {"drag_steps",drag},
+                        {"ghost",(look == GHOST_GREEN) ? "green" : (look == GHOST_YELLOW) ? "yellow" : (look == GHOST_RED) ? "red" : "none"},
                         {"cost",cost},
                         {"slope_grid",{{"allowed",slope[ZONE_LAND_ALLOWED]},{"foundation",slope[ZONE_LAND_FOUNDATION]},
                                        {"refused",slope[ZONE_LAND_REFUSED]}}}};

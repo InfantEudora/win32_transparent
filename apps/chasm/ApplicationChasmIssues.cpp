@@ -171,14 +171,15 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         }
     }
     int placed[ZONE_KIND_COUNT] = {};
-    bool f_producing = false;   //a woodcutter or collector standing: goods are being made
+    bool f_producing = false;   //a woodcutter, collector or condenser standing: goods are being made
     for (size_t id = 1; id < n; id++){
         const ZoneBuilding& b = z.buildings[id];
         if (b.size <= 0 || b.kind >= ZONE_KIND_COUNT || !ours((uint32_t)id)){
             continue;
         }
         placed[b.kind]++;
-        f_producing = f_producing || ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER) && stands[id] && !b.f_stopped);
+        f_producing = f_producing || ((b.kind == ZONE_KIND_WOODCUTTER || b.kind == ZONE_KIND_WATER || b.kind == ZONE_KIND_CONDENSER)
+                                      && stands[id] && !b.f_stopped);
     }
 
     //1. A field left without a crop, counting down to AUTO.
@@ -213,11 +214,21 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
         i.tool = tool;
         out.push_back(i);
     };
-    //Its tool comes with a river found (demo_plan.md step 6): until then the hint is to find one.
-    if (!placed[ZONE_KIND_WATER] && f_locked(CHASM_TOOL_WATER)){
-        hint("find_river",2,"FIND A RIVER",DaysText("WATER",water_days),-1,water_days);
-    }else if (!placed[ZONE_KIND_WATER]){
-        hint("build_water",2,"BUILD A WATER COLLECTOR",DaysText("WATER",water_days),CHASM_TOOL_WATER,water_days);
+    /*
+        WATER MADE (the user's, 2026-10-24): a collector at a river, or a condenser from steam - a colony on the rim makes
+        its water the second way, and was still told to build a collector. Either does, so the row names neither. A click
+        takes up the condenser where a steam collector of the colony's already catches steam for one - on the rim, where
+        a river may be nowhere near - else the collector while its tool is offered. Their tools come with a river found
+        and with the chasm (demo_plan.md step 6): until either, the hint is to find a river.
+    */
+    if (!placed[ZONE_KIND_WATER] && !placed[ZONE_KIND_CONDENSER]){
+        bool f_condenser = !f_locked(CHASM_TOOL_CONDENSER) && (placed[ZONE_KIND_STEAM] || f_locked(CHASM_TOOL_WATER));
+        if (f_locked(CHASM_TOOL_WATER) && f_locked(CHASM_TOOL_CONDENSER)){
+            hint("find_river",2,"FIND A RIVER",DaysText("WATER",water_days),-1,water_days);
+        }else{
+            hint("build_water",2,"BUILD A WATER SOURCE",DaysText("WATER",water_days),
+                 f_condenser ? CHASM_TOOL_CONDENSER : CHASM_TOOL_WATER,water_days);
+        }
     }
     if (!placed[ZONE_KIND_FIELD]){
         hint("build_field",3,"BUILD A FIELD",DaysText("FOOD",food_days),CHASM_TOOL_FIELD,food_days);

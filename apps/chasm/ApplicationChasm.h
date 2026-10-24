@@ -51,6 +51,18 @@ struct PlayPick{
     bool operator!=(const PlayPick& o) const { return !(*this == o); }
 };
 
+/*
+    THE GHOST's colour (ApplicationChasmGhost.cpp): green where a click places it, red where the rules refuse - and YELLOW
+    (the user's, 2026-10-24) where only a crate lying there stops it: picked up, the rules would take it. A drag's
+    commands (DragPlan::refused) are told apart the same way.
+*/
+#define GHOST_NONE              -1      //no ghost shown
+#define GHOST_GREEN             0
+#define GHOST_YELLOW            1
+#define GHOST_RED               2
+#define DRAG_REFUSED            1       //DragPlan::refused: the rules refuse it
+#define DRAG_REFUSED_CRATE      2       //...only a crate lying there does
+
 //The people's figures in chasm_props.glb, by sex: the adults, then the children (lifeline_plan.md).
 #define PERSON_FIGURES          4
 #define PERSON_ADULT_MALE       0
@@ -697,10 +709,11 @@ private:
     };
     struct DragPlan{
         std::vector<DragCommand> commands;      //what the release sends, in order
-        std::vector<uint8_t> refused;           //...each refused by the rules: left out, and drawn red
+        std::vector<uint8_t> refused;           //...each refused (DRAG_REFUSED*): left out, and drawn red - or yellow, a crate's
         std::string why;                        //the first refusal
         std::shared_ptr<const ZoneState> before;
         Zones after;                            //the zones with all of it applied
+        Zones crates_gone;                      //...and again with the crates left out, when one is in the way
         int tool = CHASM_TOOL_SELECT;
         bool f_erase = false;
     };
@@ -957,10 +970,11 @@ private:
         the clouds, over a crate, outside every settlement - the camp a camp plot joins, then Zones::Apply. The handler
         runs it on the live zones and a drag's preview on a copy (DragPlan), so the preview is what the release does.
         `e` the economy, NULL for none of this world. True if anything changed; else zones.last_refusal says why, or
-        is empty for nothing to do. Any thread, on a Zones of its own.
+        is empty for nothing to do. Any thread, on a Zones of its own. `f_crates` false leaves the crates out: what the
+        rules would make of it with them picked up, which a drag's preview shows in yellow (PlanDrag).
     */
     static bool ApplyZoneCommand(Zones& zones, const Exploration& ex, const EconomyState* e, int op, uint32_t index,
-                                 int value1, uint32_t stroke, bool f_play, uint32_t owner);
+                                 int value1, uint32_t stroke, bool f_play, uint32_t owner, bool f_crates = true);
     std::atomic<bool> f_view_clouds{false};     //debug mode: the clouds drawn anyway (play mode always draws them)
     Mesh* cloud_meshes[2] = {};
     std::vector<Object*> cloud_sets;            //chunk * 2 + shade
@@ -1009,13 +1023,13 @@ private:
     void UploadSteamPlumes();                   //render thread, from PreRender
     /*
         THE GHOST (ApplicationChasmGhost.cpp): in play mode, what the tool in hand would place under the
-        cursor - see-through, green where the rules allow it and red where they refuse, with an outline
-        in the same colour - in place of the debug line mesh.
+        cursor - see-through, green where the rules allow it, yellow where only a crate lying there stops it and
+        red where they refuse, with an outline in the same colour - in place of the debug line mesh.
     */
     Shader* ghost_shader = NULL;
     int ghost_shader_index = -1;
     Object* ghost = NULL;
-    bool f_ghost_ok = true;                     //render thread: the tint the shader is given
+    int ghost_look = GHOST_GREEN;               //render thread: the tint the shader is given (GHOST_*)
     struct GhostKey{
         const void* world = NULL;
         uint32_t zones_version = 0;
@@ -1071,7 +1085,7 @@ private:
         hovering a tool on the build bar, what one plot or cell of it costs, about: a plot's cost goes by its area.
     */
     std::string ghost_cost_text;                //under pick_mutex: the tag as drawn, empty for none (chasm_tool reads it)
-    bool f_ghost_cost_ok = true;                //render thread: whether the ghost is green, for the tag's colour
+    std::atomic<int> ghost_cost_look{GHOST_NONE};   //render thread: the ghost's colour (GHOST_*) for the tag's; chasm_tool reads it
     int bar_tip_tool = -1;                      //render thread: the tool hovered on the build bar, -1 none
     vec2 bar_tip_a, bar_tip_b;                  //...and its cell
     const ChasmWorld* cost_typical_world = nullptr;     //render thread: the map cost_typical_plot was found on

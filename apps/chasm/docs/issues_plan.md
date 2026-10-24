@@ -29,7 +29,7 @@ proposed, as are the first 8 issues").
 | # | Row | Shown while | Timer / value | Click |
 |---|---|---|---|---|
 | 1 | FIELD: CHOOSE A CROP | a field built, never sown, with no starting crop | the countdown, then AUTO | selects the field |
-| 2 | BUILD A WATER COLLECTOR | no collector placed | WATER n DAYS | the WATER tool |
+| 2 | BUILD A WATER SOURCE (was BUILD A WATER COLLECTOR) | neither a water collector nor a condenser placed - either makes water (the user's, 2026-10-24: a colony on the rim makes its water with a condenser) | WATER n DAYS | the CONDENSER tool where a steam collector of the colony's stands (the user's, 2026-10-24), else the WATER tool - or the CONDENSER's while WATER waits for a river |
 | 3 | BUILD A FIELD | no field placed | FOOD n DAYS | the FIELD tool |
 | 4 | BUILD A WOODCUTTER | no woodcutter's hut placed | WOOD n | the WOODCUTTER tool |
 | 5 | BUILD HOUSES | anyone living in the camp (or nowhere) | n IN THE CAMP | the HOUSE tool |
@@ -40,7 +40,7 @@ proposed, as are the first 8 issues").
 | 10 | HOUSE CROWDED | a house standing with more living in it than it holds - a child born into a full house (`lifeline_plan.md`) | n IN ROOM FOR m | selects it |
 | 11 | ...: NEEDS ROPE | a site that takes rope the colony lacks and makes none (`goods_plan.md`) | GROW HEMP / BUILD A ROPEWALK | a field, or the tool |
 | 12 | ...: TREES IN THE WAY | a site with a tree in its way that no woodcutter reaches over dry land - only a woodcutter fells (`woodcutting_plan.md`) - one row a building, named (the user's, 2026-10-16: "it's not obvious it's the bridge"); roads, walls, gardens and lots one row, "TREES IN THE WAY: ..." | NO WOODCUTTER NEAR, WAITS FOR THE ICE (reached over the river once it freezes: `bridge_plan.md`), OVER THE ICE NOW; a road's n PLACES | selects it; a road's, the view to its first plot - no longer the WOODCUTTER tool |
-| 2b | FIND A RIVER | play mode, row 2 while the WATER tool waits for a river to be found (`done/demo_plan.md`, "As built: discoveries"); row 11b's NEEDS STONE says FIND THE CHASM before a winch the same way | WATER n DAYS | - |
+| 2b | FIND A RIVER | play mode, row 2 while the WATER tool waits for a river to be found and the CONDENSER's for the chasm (`done/demo_plan.md`, "As built: discoveries"); row 11b's NEEDS STONE says FIND THE CHASM before a winch the same way | WATER n DAYS | - |
 | 13 | FIELD LIES FALLOW / n FIELDS LIE FALLOW | a field standing whose share has no farmer (`land_plan.md`), one row a land | BUILD HOUSES (the camp's), TOO FEW HANDS (a family's), NOBODY CAN REACH IT (no owner) | selects its first field |
 
 Rows 9 and 10 are the user's (2026-10-09, with births: "a house that holds 3, getting a kid would mean we need to

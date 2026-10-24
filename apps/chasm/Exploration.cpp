@@ -155,6 +155,20 @@ bool Exploration::Explored(const vec2& p) const{
     return cell >= 0 && cells[(size_t)cell] != 0;
 }
 
+/*
+    A puff of the clouds' lattice (ApplicationChasmExplore.cpp) is jittered past the raster on every side, and off it
+    Explored says no for good: a hundred puffs on seed 12 stood on the map's edge with everything round them explored
+    (a bug report, 2026-10-24). One there takes the nearest cell's, so it clears with the edge it hangs over.
+*/
+bool Exploration::ExploredNearest(const vec2& p) const{
+    if (cells.empty()){
+        return true;
+    }
+    int x = std::max(0,std::min(width - 1,(int)std::floor((p.x - origin.x) / EXPLORATION_CELL)));
+    int z = std::max(0,std::min(height - 1,(int)std::floor((p.y - origin.y) / EXPLORATION_CELL)));
+    return cells[(size_t)z * width + x] != 0;
+}
+
 int Exploration::CountExplored() const{
     return (int)std::count(cells.begin(),cells.end(),(uint8_t)1);
 }

@@ -614,6 +614,10 @@ pick badge, the mine's card), `ApplicationChasmIssues.cpp` (NEEDS STONE, MINE: W
   strata, brown against the mountain's grey - the props' note foresaw it. `UploadMines` makes a copy of the portal
   with those cells (columns 5, 6, 8) moved to the frozen row for mines against the mountain. On the plateau's gentle
   foot the portal stands as a block a little out from the slope - "a portal into the slope", as decided.
+- **In play** (found 2026-10-24 - every test above was debug, which builds over a crate and loses it): a seam's foot has a
+  floatstone pile on every plot, and play refuses a crate's plot, so a mine on a seam waits for one plot's pile to be
+  picked up. Kept as the rule; the ghost now shows it - yellow, "FLOATSTONE LIES THERE: PICK IT UP FIRST" - and the mine,
+  which had no ghost at all, is its plot's tile (`crates_plan.md`, "As built: the ghost goes yellow over a crate").
 
 ## As built: PICK UP by anyone free (2026-10-18)
 

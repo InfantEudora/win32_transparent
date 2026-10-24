@@ -9444,27 +9444,27 @@ const EconomyCrate* EconomyCrateOn(const EconomyState& e, int plot){
     return NULL;
 }
 
-bool EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, int index, int value){
+const EconomyCrate* EconomyCrateInTheWay(const EconomyState& e, const ChasmWorld& w, int op, int index, int value){
     switch (op){
         case ZONE_OP_BUILD_PAINT:
         case ZONE_OP_BUILD_ADD:
-            return EconomyCrateOn(e,index) != NULL;
+            return EconomyCrateOn(e,index);
         case ZONE_OP_GROUND_PAINT:
-            return value != ZONE_GROUND_ROAD && EconomyCrateOn(e,index) != NULL;
+            return (value != ZONE_GROUND_ROAD) ? EconomyCrateOn(e,index) : NULL;
         case ZONE_OP_TERRACE:
-            return EconomyCrateOn(e,index) != NULL;     //it would be buried (terraces_plan.md stage 2)
+            return EconomyCrateOn(e,index);     //it would be buried (terraces_plan.md stage 2)
         case ZONE_OP_FIELD_PAINT:
         case ZONE_OP_RANGE_PAINT:
             //A cell holds a crate whose point lies in it (EconomyCrateGround asks the same).
             for (const EconomyCrate& c : e.crates){
                 GridPick p = w.picker->Pick(c.pos);
                 if (p.f_hit && p.coarse_quad == index){
-                    return true;
+                    return &c;
                 }
             }
-            return false;
+            return NULL;
         default:
-            return false;     //a bridge's plots are wet, where no crate lies; the rest put nothing down
+            return NULL;     //a bridge's plots are wet, where no crate lies; the rest put nothing down
     }
 }
 

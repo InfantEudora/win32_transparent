@@ -625,7 +625,7 @@ void ApplicationChasm::UploadClouds(){
         for (const CloudSpot& spot : cloud_lattice){
             uint32_t h = spot.hash;
             const vec2& p = spot.p;
-            if (ex->Explored(p)){
+            if (ex->ExploredNearest(p)){
                 continue;
             }
             float ground = spot.ground;
@@ -645,7 +645,7 @@ void ApplicationChasm::UploadClouds(){
                 would show through. Puffs stacked down the drop, toward the low side, close it.
             */
             float drop = ground - spot.low;
-            int stack = ex->Explored(spot.low_at) ? 0 : (int)(drop / (CLOUD_RADIUS_MIN * 1.1f));
+            int stack = ex->ExploredNearest(spot.low_at) ? 0 : (int)(drop / (CLOUD_RADIUS_MIN * 1.1f));
             for (int k = 1; k <= stack; k++){
                 float f = (float)k / (float)(stack + 1);
                 MistPuff more = puff;

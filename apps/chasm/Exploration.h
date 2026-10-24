@@ -81,6 +81,8 @@ public:
     void Reset(const vec2& lo, const vec2& hi);
     void RevealAll();
     bool Explored(const vec2& p) const;
+    //...and for the clouds, whose lattice runs a little past the raster: a point off it takes the nearest cell's.
+    bool ExploredNearest(const vec2& p) const;
     //The cell holding p, -1 off the raster; and a cell's middle.
     int CellAt(const vec2& p) const;
     vec2 CellCentre(int cell) const;

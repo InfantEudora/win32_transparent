@@ -462,9 +462,31 @@ bool ApplicationChasm::PlanDrag(int tool, const std::vector<int>& chain, const s
         bool f_changed = ApplyZoneCommand(out.after,exs ? *exs : none,(e && e->world == w) ? e.get() : NULL,
                                           c.op,(uint32_t)c.index,c.value1,stroke,f_play,c.owner);
         bool f_refused = !f_changed && !out.after.last_refusal.empty();
-        out.refused.push_back(f_refused ? 1 : 0);
+        out.refused.push_back(f_refused ? DRAG_REFUSED : 0);
         if (f_refused && out.why.empty()){
             out.why = out.after.last_refusal;
+        }
+    }
+    /*
+        What only a crate stops is yellow, not red (the user's, 2026-10-24). The crates are asked before the rules, so a
+        crate's refusal says nothing of them: the commands run again on a second copy with the crates left out, and one
+        refused on the first that goes through there waits only on its crate being picked up. Only with a crate in the
+        way of one, since the second copy is the whole zones again.
+    */
+    bool f_crate = false;
+    for (size_t i = 0; i < out.commands.size() && f_play && e && e->world == w && !f_crate; i++){
+        const DragCommand& c = out.commands[i];
+        f_crate = out.refused[i] && EconomyCrateInTheWay(*e,*w,c.op,c.index,c.value1);
+    }
+    if (f_crate){
+        out.crates_gone.Adopt(*z);
+        for (size_t i = 0; i < out.commands.size(); i++){
+            const DragCommand& c = out.commands[i];
+            bool f_gone = ApplyZoneCommand(out.crates_gone,exs ? *exs : none,e.get(),c.op,(uint32_t)c.index,c.value1,
+                                           stroke,f_play,c.owner,false);
+            if (f_gone && out.refused[i] && EconomyCrateInTheWay(*e,*w,c.op,c.index,c.value1)){
+                out.refused[i] = DRAG_REFUSED_CRATE;
+            }
         }
     }
     return true;
