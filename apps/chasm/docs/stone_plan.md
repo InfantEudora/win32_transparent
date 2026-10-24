@@ -617,7 +617,8 @@ pick badge, the mine's card), `ApplicationChasmIssues.cpp` (NEEDS STONE, MINE: W
 - **In play** (found 2026-10-24 - every test above was debug, which builds over a crate and loses it): a seam's foot has a
   floatstone pile on every plot, and play refuses a crate's plot, so a mine on a seam waits for one plot's pile to be
   picked up. Kept as the rule; the ghost now shows it - yellow, "FLOATSTONE LIES THERE: PICK IT UP FIRST" - and the mine,
-  which had no ghost at all, is its plot's tile (`crates_plan.md`, "As built: the ghost goes yellow over a crate").
+  which had no ghost and no selection outline at all, has both: its plot's tile and its props where they would stand, and
+  its props outlined (`MinePropsAt`; `crates_plan.md`, "As built: the ghost goes yellow over a crate").
 
 ## As built: PICK UP by anyone free (2026-10-18)
 

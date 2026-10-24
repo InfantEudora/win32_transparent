@@ -4,9 +4,9 @@ aliases: fields, farmer, farmers, land, harvest, sowing, fallow
 kind: buildings
 status: built
 summary: Painted on coarse cells and farmed by the family whose land it is. Sown with a crop, grown through the warm seasons, harvested home first.
-plans: fields_plan.md > Decided; fields_plan.md > The frost; land_plan.md > As built; land_plan.md > Fair shares
-code: Economy.cpp: SettleLand LandPlaces Tending GoSow FetchHarvest PickHarvest EconomyFieldSowNow; Economy.h: EconomyField ECONOMY_CROP_GRACE ECONOMY_CAMP_FARMERS; ApplicationChasmIssues.cpp: ChasmIssues
-verified: 2026-10-18
+plans: fields_plan.md > Decided; fields_plan.md > The frost; land_plan.md > As built; land_plan.md > Fair shares; spoilage_plan.md > As built (2026-10-24)
+code: Economy.cpp: SettleLand LandPlaces Tending GoSow FetchHarvest PickHarvest EconomyFieldSowNow; Economy.h: EconomyField EconomyFresh ECONOMY_CROP_GRACE ECONOMY_CAMP_FARMERS; ApplicationChasmIssues.cpp: ChasmIssues
+verified: 2026-10-24
 ---
 
 A field is dragged over **coarse cells**, at most {ZONE_FIELD_MAX_CELLS} to a field - a longer drag goes on with the next - each on flat ground, and buildings keep a plot away from it.
@@ -46,3 +46,7 @@ The land's farmers carry it in, {ECONOMY_LOAD} at a time, **home first**: into t
 is short of food and not ahead of the colony (fair shares, [[Fetching home]]). The camp's land goes
 into the camp's supplies. The rest goes to a [[Store]] that takes food (a store beside a field takes every
 crop's good), where other houses fetch it. Anyone with pressing hunger may eat straight from a harvest ([[Health]]).
+
+A harvest waiting there **lies out**: it keeps {ECONOMY_ROT_GRACE_DAYS:#days}, then [[Food|rots]], a share each dawn.
+The farmer sows over it all the same - by the next harvest most of it is gone. The card says how it keeps, and with
+no store room for a day's rot of it NEEDS ATTENTION says FIELD: HARVEST ROTTING.

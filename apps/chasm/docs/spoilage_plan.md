@@ -82,9 +82,10 @@ none of its greens a year on, from the old piles alone.
   The Statistics page and `chasm_stats` show it.
 - **A field's card and a crate's** say what lies there and how it is keeping: "fresh for one more day", or "rotting:
   about 3 wheat a day".
-- **NEEDS ATTENTION**: "FIELD: HARVEST ROTTING" for a field with food rotting on it that no store of its colony has
-  room for - what the bug report's colony needed telling. Not for a field whose harvest is only slow to carry: that
-  is the cost of a store far from the fields.
+- **NEEDS ATTENTION**: "FIELD: HARVEST ROTTING" for a field with food rotting on it where its settlement's stores have
+  no room for even a day's rot of it (a load at the least) - what the bug report's colony needed telling: its store
+  a load short of full, so "no room at all" would never have fired. Not for a field whose harvest is only slow to carry,
+  with the room there: that is the cost of a store far from the fields.
 - **FOOD in the top bar** keeps its sum. Its hover gains a line for what lies out on fields and in crates, beside
   provisions, which are not in the sum either.
 - `chasm_economy`: each field and crate reports its fresh food and what lies.
@@ -104,3 +105,39 @@ none of its greens a year on, from the old piles alone.
   little each season, beans not at all, provisions keeping long. Stored food keeps, for now.
 - **The cold**: whether rot slows in winter or under the snow. The same all year, for now.
 - **A rotting look** on a field's harvest or a crate.
+
+## As built (2026-10-24)
+
+All four steps, as planned. Provisions rot at the proposed 1% a dawn, still to be talked through.
+
+- **The rule** (`Economy.h`, SPOILAGE): `ECONOMY_ROT_GRACE_DAYS` and `ECONOMY_ROT_*` per mille (`EconomyRotPerMille`);
+  `EconomyFresh`, the days as an array of `ECONOMY_ROT_GRACE_DAYS`, so the grace is a tuning figure like the shares;
+  on `EconomyField` and `EconomyCrate`. `EconomyFreshCame` at a harvest (`Economy::Tick`) and in `AddToCrate`, every
+  way into a crate. `EconomySpoil` is a place's dawn, in the plan's order; `Economy::Spoil` runs it for every field and
+  crate at dawn, after `FruitAtDawn`, and drops a crate it leaves empty. A harvest landing on the dawn tick itself is
+  the day before's at once, so it lies exactly its two days; one a tick later, up to three.
+- **The count**: `EVENT_ROTTED` (29; `EVENT_COUNT` 30), one a food a colony a dawn - so a colony of many crates cannot
+  flush the 64 events the readers look through - `ev.plot` the first place it rotted. COUNTED (`EconomyDay::rotted`, by
+  good, and by colony), never journaled, no notice, no cue. `ChasmStatsTotals::rotted`; the colonies' rows add up to
+  the whole's rot too (`ChasmStatsCheck`). The page's tile FOOD ROTTED once there is any; `chasm_stats` `totals.rotted`
+  and a day row's `rotted`.
+- **Saves and hash**: a field's record gains a 10th member, its fresh days (frost and wait then written too); a crate
+  `fresh`; a ledger row its rot as a 9th (zombies and an empty colonies list then written). Each only when there is any,
+  and hashed likewise, so a colony with none saves and hashes as before.
+- **The signals**: `RotLines` (`ApplicationChasmSelect.cpp`) on the field's and the crate's card; NEEDS ATTENTION's
+  `harvest_rotting`, "FIELD: HARVEST ROTTING" / "N FIELDS: ...", NO STORE ROOM; FOOD's hover "N more lying out, on
+  fields and in crates" (`ApplicationChasmTime.cpp`); `chasm_economy`'s `rot` on each field and crate, `fresh` and
+  `rots_next_dawn`.
+- **Checked** (debug, a copy linked under another name, port 8771, paused and stepped):
+  - a crate of 100 wheat, greens and beans put down on a flat map: none rotted at its first two dawns; at the third
+    4 / 10 / 2, at the fourth 4 / 9 / 2 - as the arithmetic says; 20 wheat put on it then, fresh, through a save and a
+    load as it was; the ledger 8 wheat, 19 greens, 4 beans; the statistics' check empty;
+  - the bug report's `saves/now.json` (no fresh days, so all of it lies): at the first dawn crate 103 lost 34 wheat,
+    16 beans and 39 greens and field 3 nine beans, exactly; field 3's wheat 28, its 23 and a load carried off; the
+    colony 75 wheat, 39 beans and 71 greens in the day's row; the check empty, its colonies adding up;
+  - a harvest in it (148 wheat on field 26, day 653) all fresh, nothing due at the next dawn;
+  - the cards: field 3 "Rotting: about 23 wheat and 9 beans a day"; a crate put down "Fresh for 2 more days", a dawn
+    on "Fresh for 1 more day", then "Rotting: about 2 wheat and 1 greens a day"; NEEDS ATTENTION on `now.json`
+    "2 FIELDS: HARVEST ROTTING", NO STORE ROOM - its store 8 short of full.
+- **Not checked**: the FOOD hover on screen (a minimised window draws no UI); a replay across the change; the taking
+  from oldest first with someone taking mid-grace (the arithmetic of `EconomySpoil` read through, not run).

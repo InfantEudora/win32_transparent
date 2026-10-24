@@ -1458,6 +1458,46 @@ void PersonCard(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, 
 }
 
 /*
+    SPOILAGE (Economy.h): a place lying out - a field's harvest, a crate - says how its food keeps. Rotting, what the next
+    dawn takes of it, in amber: "Rotting: about 22 wheat and 9 beans a day". All of it still fresh, how long before it
+    starts: food on its freshest day stays so through ECONOMY_ROT_GRACE_DAYS dawns, the day before's through one fewer.
+*/
+void RotLines(const std::array<int,GOOD_COUNT>& stock, const EconomyFresh& fresh, Card& c){
+    auto list = [](const std::vector<std::string>& parts){
+        std::string s;
+        for (size_t i = 0; i < parts.size(); i++){
+            s += (i == 0) ? "" : (i + 1 == parts.size()) ? " and " : ", ";
+            s += parts[i];
+        }
+        return s;
+    };
+    std::vector<std::string> rotting;
+    int fresh_food = 0;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        int r = EconomyRotNext(stock,fresh,g);
+        if (r > 0){
+            rotting.push_back(Format("%i %s",r,GoodName(g)));
+        }
+        fresh_food += std::min(std::max(0,stock[g]),fresh.Of(g));
+    }
+    if (!rotting.empty()){
+        c.Text("Rotting: about " + list(rotting) + " a day",HUD_AMBER);
+        return;
+    }
+    if (fresh_food <= 0){
+        return;
+    }
+    int oldest = 0;
+    for (int d = 0; d < ECONOMY_ROT_GRACE_DAYS; d++){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            oldest = (std::min(std::max(0,stock[g]),fresh.days[d][g]) > 0) ? d : oldest;
+        }
+    }
+    int days = ECONOMY_ROT_GRACE_DAYS - oldest;     //dawns it stays fresh through: one at the least
+    c.Text(Format("Fresh for %i more day%s, then it starts to rot",days,days == 1 ? "" : "s"),HUD_TEXT_DIM);
+}
+
+/*
     A house's or a hut's YARD (yards_plan.md): what it owns, and the chips that take up the tool to add to it -
     the building staying selected, so what is painted is its own. A house's EXTEND (the user's, 2026-10-10) is
     the same for its plots: the house tool up, painting on from the house - while it has room for one more.
@@ -2206,6 +2246,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                 c.Text(z.buildings[owner].kind == ZONE_KIND_CAMP ? "Its farmer carries it to the camp's supplies"
                                                                  : "Its family's first - the rest is carried to a store",HUD_TEXT_DIM);
             }
+            if (land){
+                RotLines(held,land->fresh,c);
+            }
         }else if (AnyGoods(held)){
             c.Text("Waiting to be carried: " + GoodsList(*e,id),HUD_TEXT_DIM);
         }
@@ -2468,6 +2511,7 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
             : (crate.origin == CRATE_SITE) ? "A site's goods"
             : EconomyCrateCrystal(crate) ? "Floatstone" : EconomyCrateRubble(crate.origin) ? "Rubble" : "Crate";
     c.StockByGroup("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
+    RotLines(crate.stock,crate.fresh,c);
     CalendarDate when = CalendarDateOf(crate.tick);
     std::string date = std::string(CalendarSeasonName(when.season)) + " " + std::to_string(when.day)
                        + ((when.year != CalendarDateOf(tick).year) ? Format(", year %i",when.year) : std::string());
@@ -3796,6 +3840,17 @@ void ApplicationChasm::UploadSelection(){
         }
     }
     std::vector<vertex> verts;
+    //A standing mine has no body for BuildSelectionMesh to draw (stone_plan.md step 5): its props, where they stand.
+    auto add_mine = [&](uint32_t id, std::vector<vertex>& out){
+        if (id >= z->buildings.size() || z->buildings[id].kind != ZONE_KIND_MINE){
+            return;
+        }
+        for (size_t v = 0; v < z->building.size(); v++){
+            if (z->building[v] == id && z->standing[v] > 0){
+                AppendMineProps(*w,(int)v,out);
+            }
+        }
+    };
     /*
         Slots 2 and 3: every related building in one mesh, and every related ground plot in another - one
         outline round the lot, however many plots - rebuilt when the list or the zones change.
@@ -3840,6 +3895,7 @@ void ApplicationChasm::UploadSelection(){
                 std::vector<vertex> one;
                 for (uint32_t id : related_places.buildings){
                     BuildSelectionMesh(*w,*z,id,one);
+                    add_mine(id,one);
                     verts.insert(verts.end(),one.begin(),one.end());
                 }
             }
@@ -3866,6 +3922,7 @@ void ApplicationChasm::UploadSelection(){
             select_outline_id[i] = want[i];
             select_outline_zones[i] = z->version;
             BuildSelectionMesh(*w,*z,want[i],verts);
+            add_mine(want[i],verts);
             if (verts.empty()){
                 o->SetVisibility(false);
                 select_outline_id[i] = 0;

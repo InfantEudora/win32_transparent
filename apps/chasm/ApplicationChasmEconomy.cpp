@@ -266,6 +266,11 @@ void ApplicationChasm::HashEconomy(StateHash& h){
     for (const EconomyField& f : e.fields){
         int32_t pair[9] = {(int32_t)f.building,f.crop,f.grown,(int32_t)f.f_sown,f.yield,f.last,(int32_t)f.owner,f.frost,f.wait};
         h.Bytes(pair,sizeof(pair));
+        //Its harvest's fresh days (SPOILAGE) - only while it has any, so a field with none hashes as before.
+        if (f.fresh.Any()){
+            h.Add(((uint64_t)f.building << 32) | 0xF4E5u);
+            h.Bytes(f.fresh.days.data(),sizeof(f.fresh.days));
+        }
     }
     n = (uint32_t)e.site.size();
     h.Bytes(&n,sizeof(n));
@@ -287,6 +292,9 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         h.Bytes(c.stock.data(),sizeof(int) * GOOD_COUNT);
         uint8_t pick_up = c.f_pick_up ? 1 : 0;
         h.Bytes(&pick_up,sizeof(pick_up));
+        if (c.fresh.Any()){
+            h.Bytes(c.fresh.days.data(),sizeof(c.fresh.days));      //its food's fresh days (SPOILAGE), likewise
+        }
     }
     //The towers' guard counts (defence_plan.md, step 8), the player's: only towers', by id.
     for (size_t id = 1; id < e.guards.size(); id++){
@@ -412,6 +420,11 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         if (d.zombies > 0){
             h.Bytes(&d.zombies,sizeof(d.zombies));
         }
+        //What rotted (SPOILAGE) only on a day some did, likewise.
+        if (std::any_of(d.rotted.begin(),d.rotted.end(),[](int n){ return n != 0; })){
+            h.Add(0x2077EDu);
+            h.Bytes(d.rotted.data(),sizeof(int) * GOOD_COUNT);
+        }
         //Its colonies' rows (BY COLONY, settlements_plan.md step 4) only on a day with a second colony, so a colony of
         //one hashes as before: its row and nobody's are the whole's, split by what is hashed already.
         bool f_second = std::any_of(d.colonies.begin(),d.colonies.end(),[](const EconomyDay& r){ return r.colony > 1; });
@@ -421,6 +434,9 @@ void ApplicationChasm::HashEconomy(StateHash& h){
             h.Bytes(rc,sizeof(rc));
             h.Bytes(r.people.data(),sizeof(int) * ECONOMY_STAGES);
             h.Bytes(r.held.data(),sizeof(int) * GOOD_COUNT);
+            if (std::any_of(r.rotted.begin(),r.rotted.end(),[](int n){ return n != 0; })){
+                h.Bytes(r.rotted.data(),sizeof(int) * GOOD_COUNT);
+            }
         }
     };
     uint64_t head[5] = {hist.from,hist.journal.size(),hist.days.size(),(uint64_t)hist.felled_from,(uint64_t)hist.broken_from};
@@ -933,6 +949,24 @@ json StockJson(const std::array<int,GOOD_COUNT>& s){
         }
     }
     return out;
+}
+
+//SPOILAGE (Economy.h): of what lies out at a place - a field's harvest, a crate - what is still fresh, and what the next
+//dawn takes of the rest.
+json RotJson(const std::array<int,GOOD_COUNT>& stock, const EconomyFresh& fresh){
+    json now = json::object();
+    json next = json::object();
+    for (int g = 0; g < GOOD_COUNT; g++){
+        int f = std::min(std::max(0,stock[g]),fresh.Of(g));
+        if (f > 0){
+            now[GoodName(g)] = f;
+        }
+        int r = EconomyRotNext(stock,fresh,g);
+        if (r > 0){
+            next[GoodName(g)] = r;
+        }
+    }
+    return json{{"fresh",now},{"rots_next_dawn",next}};
 }
 
 json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
@@ -1679,7 +1713,9 @@ void ApplicationChasm::RegisterEconomyTools(){
         "there if one is; refused off open ground (docs/crates_plan.md). `crates` lists every crate lying "
         "about: id, plot, x, z, goods, origin (dropped, found, camp, rubble, broken - docs/stone_plan.md - or site: what a "
         "site taken off was brought), who put it down, "
-        "the day, pick_up and too_far (the last to look turned it down: past ECONOMY_PICK_UP_WATER of a water bar's walk); a worker taking from one, or moving it to a store (to_crate, lifting), names it "
+        "the day, pick_up and too_far (the last to look turned it down: past ECONOMY_PICK_UP_WATER of a water bar's walk), and "
+        "`rot` (docs/spoilage_plan.md): its food still `fresh`, and what of the rest `rots_next_dawn` - a field has `rot` "
+        "too, beside its `waiting` harvest; a worker taking from one, or moving it to a store (to_crate, lifting), names it "
         "as `crate`. op pick_up: crate `crate` (an id) fetched first by anyone free - builders and the jobless - from "
         "anywhere (`on`, default true), "
         "or back in the queue - RECORDED (CHASM_CMD_PICK_UP), `refusal` for no such crate. op rocks - the rocks and "
@@ -2487,7 +2523,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                                       {"frost",frost},
                                       {"site_cells",ZoneBuildingFigures(*w,*z,f.building).site_cells},
                                       {"growth",EconomyFieldGrowth(*e,*z,f.building)},
-                                      {"waiting",StockJson(*e,f.building)}});
+                                      {"waiting",StockJson(*e,f.building)},
+                                      {"rot",RotJson((f.building < e->stock.size()) ? e->stock[f.building]
+                                                                                   : std::array<int,GOOD_COUNT>{},f.fresh)}});
             }
             result["fields"] = fields;
             json sites = json::array();
@@ -2935,7 +2973,8 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 crates.push_back(json{{"id",c.id},{"plot",c.plot},{"x",c.pos.x},{"z",c.pos.y},{"goods",StockJson(c.stock)},
                                       {"origin",EconomyCrateOriginName(c.origin)},{"by",c.by},{"by_name",by},
-                                      {"day",(double)c.tick / CALENDAR_DAY_TICKS},{"pick_up",c.f_pick_up},{"too_far",c.f_too_far}});
+                                      {"day",(double)c.tick / CALENDAR_DAY_TICKS},{"pick_up",c.f_pick_up},{"too_far",c.f_too_far},
+                                      {"rot",RotJson(c.stock,c.fresh)}});
             }
             result["crates"] = crates;
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));

@@ -37,6 +37,7 @@ struct ChasmStatsTotals{
     int broken = 0;
     int storeys = 0;
     int zombies = 0;                //killed (KILLS)
+    std::array<int,GOOD_COUNT> rotted = {};     //lying out, by good (SPOILAGE)
 };
 ChasmStatsTotals ChasmStatsSum(const EconomyHistory& h);
 

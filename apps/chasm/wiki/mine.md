@@ -5,7 +5,7 @@ kind: buildings
 status: built
 summary: One plot on a deposit - a floatstone seam's foot, the mountain's foot, an outcrop - where a miner digs floatstone or stone a load at a time and carries it to a store. A seam is dug out at last; the mountain and the outcrops never are.
 plans: stone_plan.md > 5. The mine; stone_plan.md > As built: step 5 (2026-10-15); crates_plan.md > As built: the ghost goes yellow over a crate (2026-10-24)
-code: Zones.h: ZONE_KIND_MINE; Zones.cpp: MineIsBuildable; Economy.h: WORKER_JOB_MINER ECONOMY_MINE_SECONDS ECONOMY_MINE_STONE ECONOMY_MINE_FACE EconomyCrateInTheWay; Economy.cpp: GoDig DugOut EconomyDepositLeft; Deposits.cpp: DepositDigWay; ApplicationChasmMines.cpp: UploadMines
+code: Zones.h: ZONE_KIND_MINE; Zones.cpp: MineIsBuildable; Economy.h: WORKER_JOB_MINER ECONOMY_MINE_SECONDS ECONOMY_MINE_STONE ECONOMY_MINE_FACE EconomyCrateInTheWay; Economy.cpp: GoDig DugOut EconomyDepositLeft; Deposits.cpp: DepositDigWay; ApplicationChasmMines.cpp: UploadMines MinePropsAt AppendMineProps
 verified: 2026-10-24
 ---
 
@@ -28,8 +28,8 @@ bare wall, "a mine is dug into a seam's wall, the mountain or an outcrop" anywhe
 
 **A seam's piles come first.** Every plot of a seam's foot has its fallen [[Floatstone|floatstone]] lying on it, and
 in play nothing is built over a [[Crate|crate]]: the mine's ghost is yellow there, "FLOATSTONE LIES THERE: PICK IT UP
-FIRST". PICK UP one plot's pile, and once it is carried off the mine goes on that plot. Its ghost is the plot's tile:
-the portal is drawn only once the mine stands.
+FIRST". PICK UP one plot's pile, and once it is carried off the mine goes on that plot. Its ghost is the plot's tile
+with the portal and cart - or the crane - where they would stand.
 
 ## The miner
 
@@ -52,7 +52,7 @@ shows in NEEDS ATTENTION as **NEEDS STONE**, pointing at the first link missing:
 ## Seeing it
 
 Dug into rock, a timber portal with a black mouth and a cart on its rails - its rock grey against the mountain, as
-the mountain's own; on an outcrop, a crane over the beds, the outcrop left in sight.
+the mountain's own; on an outcrop, a crane over the beds, the outcrop left in sight. Selected, those are outlined.
 
 ## Planned
 

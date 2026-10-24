@@ -32,8 +32,8 @@ crate lies goes into it.
 ## Taking from it
 
 A crate is a store that villagers only take from: nothing is ever delivered to one, and it is gone once empty. People
-take from it wherever they would take from a store - goods for [[Construction|building sites]], what a house
-[[Fetching home|fetches]], and a pressing [[Thirst|thirst]] or hunger - standing beside it, by the same nearest-first rules.
+take from it as from a store - for [[Construction|building sites]], what a house [[Fetching home|fetches]], a pressing
+[[Thirst|thirst]] or hunger - nearest first, from beside it. Its food lies out: it [[Food|rots]] after {ECONOMY_ROT_GRACE_DAYS:#days}.
 
 ## Moving it
 
@@ -60,7 +60,7 @@ where the rules refuse anyway. A road may run under a crate. A debug placement g
 ## Seeing it
 
 A small wooden crate, the same whatever it holds. **Clicked** in play mode, it is outlined and its card
-says what it holds (striped where someone is already on the way to take it), who dropped it and when - or
+says what it holds (striped where someone is already on the way to take it) and how its food keeps, who dropped it and when - or
 when it was found - and everyone on the way to it and what for, pinned on the map. In debug mode the panel
 shows the crate on the selected plot and can put one down there; `chasm_economy` lists every crate.
 

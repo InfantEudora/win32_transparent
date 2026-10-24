@@ -64,6 +64,9 @@ ChasmStatsTotals ChasmStatsSum(const EconomyHistory& h){
         t.broken += d.broken;
         t.storeys += d.storeys;
         t.zombies += d.zombies;
+        for (int g = 0; g < GOOD_COUNT; g++){
+            t.rotted[g] += d.rotted[g];
+        }
     };
     for (const EconomyDay& d : h.days){
         add(d);
@@ -226,6 +229,7 @@ EconomyHistory ChasmColonyHistory(const EconomyHistory& h, uint32_t colony){
         if (!f_started){
             c.start = r;
             c.start.felled = c.start.broken = c.start.storeys = c.start.zombies = 0;
+            c.start.rotted.fill(0);
             c.from = (uint64_t)std::max(0,d.day) * CALENDAR_DAY_TICKS;
             f_started = true;
         }
@@ -383,8 +387,12 @@ std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
             sum.broken += r.broken;
             sum.storeys += r.storeys;
             sum.zombies += r.zombies;
+            for (int g = 0; g < GOOD_COUNT; g++){
+                sum.rotted[g] += r.rotted[g];
+            }
         }
-        bool f_counts = sum.felled == d.felled && sum.broken == d.broken && sum.storeys == d.storeys && sum.zombies == d.zombies;
+        bool f_counts = sum.felled == d.felled && sum.broken == d.broken && sum.storeys == d.storeys && sum.zombies == d.zombies
+                        && sum.rotted == d.rotted;
         bool f_level = !f_levels || (sum.people == d.people && sum.held == d.held);
         if (!f_counts || !f_level){
             auto total = [](const EconomyDay& x){

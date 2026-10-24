@@ -10,7 +10,8 @@
     mountain a copy of the portal whose rock is the frozen row's grey, the mountain's own: modelled in the walls'
     temperate strata, it stood out brown on grey (the props' note, stone_plan.md "The props"). On an
     outcrop, `quarry_crane` beside the beds, its boom over them, the outcrop itself left in sight (PropHidden). One
-    instance set of each, rebuilt when the zones change.
+    instance set of each, rebuilt when the zones change. Where they stand is MinePropsAt's alone: the play ghost and the
+    selection's outline draw the same props there (AppendMineProps), since a mine has no house body to draw them from.
 
     And every floatstone seam's BAND (TerrainSeamBand): kept out of the terrain's chunks, an object of its crystal and
     one of the rock it would be, the crystal shown while the seam has floatstone left and the rock once it is dug out -
@@ -25,6 +26,60 @@
 #define MINE_CRANE_OFF      1.5f    //an outcrop's crane, from the outcrop's middle: its boom reaches 1.43
 
 static const char* mine_asset_names[MINE_PROPS] = {"mine_portal","mine_cart","quarry_crane"};
+
+int ApplicationChasm::MinePropsAt(const ChasmWorld& w, int plot, MineProp out[2]){
+    if (!w.deposits || plot < 0 || plot >= (int)w.grid->fine.pos.size() || w.deposits->At(plot) < 0){
+        return 0;
+    }
+    const Grid& g = *w.grid;
+    const Terrain& t = *w.terrain;
+    vec2 at = g.fine.pos[plot];
+    float level = t.Height(plot);
+    vec2 way = DepositDigWay(g,*w.picker,t,*w.deposits,plot);
+    if (way.dot(way) < 1e-6f){
+        //An outcrop: the crane on a side of its own, by a hash of the plot, its boom (+X) over the beds.
+        float a = (float)(MeshHash((uint32_t)plot,0x6372616Eu) % 6283u) / 1000.0f;
+        vec2 side(cosf(a),sinf(a));
+        vec2 crane = at - side * MINE_CRANE_OFF;
+        out[0].prop = 2;
+        out[0].at = vec3(crane.x,t.GroundHeight(crane,level),crane.y);
+        out[0].facing = quat(vec3(0.0f,1.0f,0.0f),atan2f(-side.y,side.x));
+        out[0].f_mountain = false;
+        return 1;
+    }
+    //The model's -Z along `way`, into the rock.
+    quat facing(vec3(0.0f,1.0f,0.0f),atan2f(-way.x,-way.y));
+    vec2 sill = at + way * MINE_PORTAL_TOWARD;
+    out[0].prop = 0;
+    out[0].at = vec3(sill.x,t.GroundHeight(sill,level),sill.y);
+    out[0].facing = facing;
+    out[0].f_mountain = w.deposits->deposits[w.deposits->At(plot)].kind == DEPOSIT_MOUNTAIN;
+    vec2 cart = sill - way * MINE_CART_OUT;
+    out[1].prop = 1;
+    out[1].at = vec3(cart.x,t.GroundHeight(cart,level) + MINE_CART_LIFT,cart.y);
+    out[1].facing = facing;
+    out[1].f_mountain = false;
+    return 2;
+}
+
+void ApplicationChasm::AppendMineProps(const ChasmWorld& w, int plot, std::vector<vertex>& out){
+    MineProp props[2];
+    int n = MinePropsAt(w,plot,props);
+    for (int k = 0; k < n; k++){
+        //The asset's own triangles - the mountain's copy is the same shape - turned and moved as its instance is.
+        Mesh* m = assetmanager->GetMeshFromAsset(mine_asset_names[props[k].prop]);
+        if (!m || m->GetVertices().size() % 3 != 0){
+            continue;
+        }
+        for (const vertex& v : m->GetVertices()){
+            vertex o = v;
+            o.pos = props[k].at + props[k].facing * v.pos;
+            o.normal = props[k].facing * v.normal;
+            o.tangent = props[k].facing * v.tangent;
+            out.push_back(o);
+        }
+    }
+}
 
 //RENDER THREAD, from PreRender.
 void ApplicationChasm::UploadMines(){
@@ -82,37 +137,18 @@ void ApplicationChasm::UploadMines(){
     }
     if (z && z->world == w && z != mines_built_for){
         mines_built_for = z;
-        const Grid& g = *w->grid;
-        const Terrain& t = *w->terrain;
         std::vector<fmat4> looks[MINE_PROPS];
         std::vector<fmat4> mountain;
         for (size_t v = 0; v < z->building.size(); v++){
             if (z->KindOf((int)v) != ZONE_KIND_MINE || z->standing[v] <= 0){
                 continue;
             }
-            vec2 at = g.fine.pos[v];
-            float level = t.Height((int)v);
-            vec2 way = w->deposits ? DepositDigWay(g,*w->picker,t,*w->deposits,(int)v) : vec2(0.0f,0.0f);
-            if (way.dot(way) < 1e-6f){
-                //An outcrop: the crane on a side of its own, by a hash of the plot, its boom (+X) over the beds.
-                float a = (float)(MeshHash((uint32_t)v,0x6372616Eu) % 6283u) / 1000.0f;
-                vec2 side(cosf(a),sinf(a));
-                vec2 crane = at - side * MINE_CRANE_OFF;
-                looks[2].push_back(Object::ComposeTransformScale(vec3(crane.x,t.GroundHeight(crane,level),crane.y),
-                                                                 quat(vec3(0.0f,1.0f,0.0f),atan2f(-side.y,side.x)),
-                                                                 vec3(1.0f,1.0f,1.0f)));
-                continue;
+            MineProp props[2];
+            int n = MinePropsAt(*w,(int)v,props);
+            for (int k = 0; k < n; k++){
+                fmat4 m = Object::ComposeTransformScale(props[k].at,props[k].facing,vec3(1.0f,1.0f,1.0f));
+                ((props[k].f_mountain && mine_mountain_set) ? mountain : looks[props[k].prop]).push_back(m);
             }
-            //The model's -Z along `way`, into the rock.
-            quat facing(vec3(0.0f,1.0f,0.0f),atan2f(-way.x,-way.y));
-            vec2 sill = at + way * MINE_PORTAL_TOWARD;
-            int d = w->deposits->At((int)v);
-            bool f_mountain = d >= 0 && w->deposits->deposits[d].kind == DEPOSIT_MOUNTAIN && mine_mountain_set;
-            (f_mountain ? mountain : looks[0]).push_back(Object::ComposeTransformScale(vec3(sill.x,t.GroundHeight(sill,level),sill.y),
-                                                                                       facing,vec3(1.0f,1.0f,1.0f)));
-            vec2 cart = sill - way * MINE_CART_OUT;
-            looks[1].push_back(Object::ComposeTransformScale(vec3(cart.x,t.GroundHeight(cart,level) + MINE_CART_LIFT,cart.y),
-                                                             facing,vec3(1.0f,1.0f,1.0f)));
         }
         for (int i = 0; i < MINE_PROPS; i++){
             if (mine_sets[i]){

@@ -37,7 +37,8 @@
     A WINCH is a thin gantry, and none at all where there is no balcony below to lower to - which is most
     of the map, so most of where the cursor goes showed nothing. Its plot is laid as a tile under the
     gantry, and the landing it lowers to as another. A MINE has no body of its own at all - its portal
-    is a prop (ApplicationChasmMines.cpp) - so it is only its plot's tile.
+    and cart are props (ApplicationChasmMines.cpp) - so it is its plot's tile and those props where they
+    would stand (AppendMineProps): an outcrop's crane, or nothing but the tile off a deposit.
 
     OVER A CRATE (the user's, 2026-10-24): nothing is put over one in play, and red said only "no" - on a
     seam's foot, where floatstone lies on every plot, a mine looked as if it could never go. So where only
@@ -650,7 +651,9 @@ void ApplicationChasm::UpdateGhost(){
                 GhostPlotTile(cw,z,landing,verts);
             }
         }else if (shown == ZONE_KIND_MINE){
-            GhostPlotTile(cw,z,plot,verts);     //its portal is a prop: GhostBuildingPlot drew nothing
+            //Its portal and cart are props, which GhostBuildingPlot does not draw: they, where they would stand, on its tile.
+            GhostPlotTile(cw,z,plot,verts);
+            AppendMineProps(cw,plot,verts);
         }
     }else if (tool == CHASM_TOOL_TERRACE){
         /*

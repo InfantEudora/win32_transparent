@@ -815,14 +815,23 @@ void ApplicationChasm::DrawStats(float s){
         y += 28.0f * s;
         //The totals, a tile each: summed from the journal and the ledger now, never kept.
         int harvested = 0;
+        int rotted = 0;
         for (int g = 0; g < GOOD_COUNT; g++){
             harvested += totals.harvested[g];
+            rotted += totals.rotted[g];
         }
         struct Tile{ const char* label; int value; };
-        const Tile tiles[] = {{"BORN",totals.born},{"DIED",totals.died},{"HARVESTED",harvested},{"TREES FELLED",totals.felled},
-                              {"BUILT",totals.finished},{"ZOMBIES KILLED",totals.zombies}};
-        //The last, zombies killed (KILLS), only once there were any: a colony that never met one is not told of them.
-        const int tile_count = (int)(sizeof(tiles) / sizeof(tiles[0])) - ((totals.zombies > 0) ? 0 : 1);
+        std::vector<Tile> tiles = {{"BORN",totals.born},{"DIED",totals.died},{"HARVESTED",harvested},{"TREES FELLED",totals.felled},
+                                   {"BUILT",totals.finished}};
+        //Zombies killed (KILLS) and food rotted (SPOILAGE) only once there were any: a colony that never met either is
+        //not told of it.
+        if (totals.zombies > 0){
+            tiles.push_back({"ZOMBIES KILLED",totals.zombies});
+        }
+        if (rotted > 0){
+            tiles.push_back({"FOOD ROTTED",rotted});
+        }
+        const int tile_count = (int)tiles.size();
         float tg = 8.0f * s;
         float tw = (x1 - x0 - tg * (tile_count - 1)) / tile_count;
         float th = 50.0f * s;
@@ -972,6 +981,16 @@ json DayJson(const EconomyDay& d){
                                           {"old",d.people[LIFE_OLD]}}},
              {"held",held},{"food_days",food},{"water_days",water},{"felled",d.felled},{"broken",d.broken},
              {"storeys",d.storeys},{"zombies",d.zombies}};
+    //What rotted lying out (SPOILAGE), by good - on a day some did.
+    if (std::any_of(d.rotted.begin(),d.rotted.end(),[](int n){ return n != 0; })){
+        json rotted = json::object();
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (d.rotted[g]){
+                rotted[GoodName(g)] = d.rotted[g];
+            }
+        }
+        row["rotted"] = rotted;
+    }
     //Its colonies' rows (BY COLONY), each the same with its `colony` - 0 nobody's.
     if (!d.colonies.empty()){
         json colonies = json::array();
@@ -1011,10 +1030,12 @@ void ApplicationChasm::RegisterStatsTools(){
         "by stage, expecting, in_camp, homes, beds, goods held anywhere, food_days and water_days for everyone at their "
         "shares, buildings standing and being built by kind, settlements, the dead by cause); `totals` since the history "
         "began, summed from the journal and the ledger now (born, died and of what, harvests and what they gave, buildings "
-        "finished by kind, settlements founded, seams seen, trees felled, rocks broken, storeys raised, zombies killed); "
+        "finished by kind, settlements founded, seams seen, trees felled, rocks broken, storeys raised, zombies killed, "
+        "and `rotted`, the food that rotted lying out by good - docs/spoilage_plan.md); "
         "`seasons` (born, died, harvested, felled - each season from the first); `from` (the tick it began: 0 a colony's "
         "landing, else the load of a save from before it), `start`, `today` and the last `days` ledger rows (default all, "
-        "a row a day: day, people by stage, held, food_days, water_days, felled, broken, storeys, zombies); the last "
+        "a row a day: day, people by stage, held, food_days, water_days, felled, broken, storeys, zombies, rotted on a day "
+        "some did); the last "
         "`journal` lines (default 40, -1 all: tick, date, kind, person, building, plot, x, z, what, amount, text); and "
         "`check` - empty, or what in the history disagrees with the state it was kept beside (statistics_plan.md: the "
         "dead, the born, the forest, the zombies killed against everyone's kills, each row's people, each row's colonies "
@@ -1113,9 +1134,16 @@ void ApplicationChasm::RegisterStatsTools(){
             for (int c = 0; c < CHASM_STATS_CAUSES; c++){
                 died_of[CauseKey(c)] = t.died_of[c];
             }
+            json rotted = json::object();
+            for (int g = 0; g < GOOD_COUNT; g++){
+                if (t.rotted[g]){
+                    rotted[GoodName(g)] = t.rotted[g];
+                }
+            }
             json totals{{"born",t.born},{"died",t.died},{"died_of",died_of},{"harvests",t.harvests},{"harvested",harvested},
                         {"finished",t.finished},{"finished_kind",finished},{"settled",t.settled},{"seams_seen",t.seams},
-                        {"felled",t.felled},{"broken",t.broken},{"storeys",t.storeys},{"zombies",t.zombies}};
+                        {"felled",t.felled},{"broken",t.broken},{"storeys",t.storeys},{"zombies",t.zombies},
+                        {"rotted",rotted}};
             json seasons = json::array();
             for (const ChasmStatsSeason& se : ChasmStatsSeasons(h)){
                 seasons.push_back(json{{"season",se.season},{"name",ChasmStatsSeasonName(se.season)},{"born",se.born},

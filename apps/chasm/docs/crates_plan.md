@@ -478,8 +478,13 @@ and `mine.md`.
   `DRAG_REFUSED_CRATE`. Only with a crate in the way of one; the copy is kept in the plan, as `after` is.
 - **The terrace's square never asked the crates**: green over a pile, then refused. It asks them now.
 - **The mine had no ghost at all**: `BuildingMesh` draws no body for it (its portal is a prop), so the ghost was empty
-  and hidden, and the tag with it. It is now its plot's tile, as the winch's is. It still has no slope grid - left out on
-  purpose, as the winch's, the collectors' and the bridge's (`UpdateSlopeGrid`).
+  and hidden, and the tag with it. It is now its plot's tile, as the winch's is, and - the user's, the same day - its
+  props where they would stand: the portal and cart, or an outcrop's crane (`AppendMineProps`, from `MinePropsAt`, which
+  `UploadMines` now places them by too). A selected or hovered mine had no OUTLINE for the same reason; `UploadSelection`
+  adds the same props to its outline. It still has no slope grid - left out on purpose, as the winch's, the collectors'
+  and the bridge's (`UpdateSlopeGrid`). Seen on seam 4 of `terraces_test` (port 8772): the yellow portal and cart over
+  the pile; a mine put down there by debug, the red ghost over it tracing the real portal exactly; selected, its portal
+  and cart outlined, the card beside. Not seen on screen: an outcrop's crane (no outcrop explored on the save).
 - **`chasm_tool`** returns `ghost`: green, yellow, red or none.
 - **Checked** (play, `terraces_test`, minimised, port 8771): the mine on all four plots of seam 4 yellow with the tag
   above, on seam 3 red (outside the settlement), and placed in play once its plot's pile was picked up; a house over each

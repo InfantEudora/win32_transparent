@@ -12,6 +12,49 @@ using json = nlohmann::json;
 
 #define CHASM_SAVE_DIR  "saves"
 
+namespace {
+
+//Goods by name, those it has any of.
+json GoodsJson(const std::array<int,GOOD_COUNT>& goods){
+    json out = json::object();
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (goods[g]){
+            out[GoodName(g)] = goods[g];
+        }
+    }
+    return out;
+}
+
+void GoodsFromJson(const json& j, std::array<int,GOOD_COUNT>& goods){
+    if (!j.is_object()){
+        return;
+    }
+    for (auto it = j.begin(); it != j.end(); ++it){
+        int g = GoodByName(it.key());
+        if (g >= 0 && it.value().is_number_integer()){
+            goods[g] = it.value().get<int>();
+        }
+    }
+}
+
+//FRESH FOOD (Economy.h, SPOILAGE): a place's days, today's first, each its goods by name. Fewer days than
+//ECONOMY_ROT_GRACE_DAYS load as none fresh after them; more, the extra are dropped.
+json FreshJson(const EconomyFresh& f){
+    json days = json::array();
+    for (const std::array<int,GOOD_COUNT>& d : f.days){
+        days.push_back(GoodsJson(d));
+    }
+    return days;
+}
+
+void FreshFromJson(const json& j, EconomyFresh& f){
+    for (size_t d = 0; j.is_array() && d < j.size() && d < f.days.size(); d++){
+        GoodsFromJson(j[d],f.days[d]);
+    }
+}
+
+}
+
 json ChasmSaveToJson(const ChasmSave& s){
     const GridSettings& g = s.settings;
     //A building by name of kind and crop, so a person can read a save, and an id that never changes.
@@ -207,15 +250,20 @@ json ChasmSaveToJson(const ChasmSave& s){
         }
         json fields = json::array();
         //[building, crop growing, grown, sown, yield %, last crop harvested (fields_plan.md), owner (land_plan.md),
-        //and the crop the frost took while it waits to be sown again, and how long it has waited for a crop
-        //(issues_plan.md) - each only while it has one].
+        //and the crop the frost took while it waits to be sown again, how long it has waited for a crop
+        //(issues_plan.md), and its harvest's fresh days (SPOILAGE) - each only while it has one, and those before it
+        //then too].
         for (const EconomyField& f : e.fields){
             json one = json::array({f.building,f.crop,f.grown,f.f_sown,f.yield,f.last,f.owner});
-            if (f.frost >= 0 || f.wait > 0){
+            bool f_fresh = f.fresh.Any();
+            if (f.frost >= 0 || f.wait > 0 || f_fresh){
                 one.push_back(f.frost);
             }
-            if (f.wait > 0){
+            if (f.wait > 0 || f_fresh){
                 one.push_back(f.wait);
+            }
+            if (f_fresh){
+                one.push_back(FreshJson(f.fresh));
             }
             fields.push_back(one);
         }
@@ -253,6 +301,9 @@ json ChasmSaveToJson(const ChasmSave& s){
                                   {"origin",c.origin},{"by",c.by},{"tick",c.tick}});
             if (c.f_pick_up){
                 crates.back()["pick_up"] = true;    //PICK UP (stone_plan.md)
+            }
+            if (c.fresh.Any()){
+                crates.back()["fresh"] = FreshJson(c.fresh);    //its food's fresh days (SPOILAGE)
             }
         }
         //The towers' guard counts (defence_plan.md, step 8): [building, count].
@@ -374,25 +425,24 @@ json ChasmSaveToJson(const ChasmSave& s){
         /*
             A row: [day, people, held, felled, broken, storeys], then zombies killed once there are some - and BY COLONY
             (settlements_plan.md step 4) its colonies' rows after that, each the same array with its colony's number in
-            the day's place (zombies then always written, so the rows have their place).
+            the day's place (zombies then always written, so the rows have their place) - and what ROTTED, by good, on a
+            day some did (SPOILAGE: the two before it then written too, the colonies an empty list if none).
         */
         std::function<json(const EconomyDay&, int)> day_json = [&](const EconomyDay& d, int first){
-            json held = json::object();
-            for (int g = 0; g < GOOD_COUNT; g++){
-                if (d.held[g]){
-                    held[GoodName(g)] = d.held[g];
-                }
-            }
-            json row = json::array({first,d.people,held,d.felled,d.broken,d.storeys});
-            if (d.zombies > 0 || !d.colonies.empty()){
+            json row = json::array({first,d.people,GoodsJson(d.held),d.felled,d.broken,d.storeys});
+            bool f_rotted = std::any_of(d.rotted.begin(),d.rotted.end(),[](int n){ return n != 0; });
+            if (d.zombies > 0 || !d.colonies.empty() || f_rotted){
                 row.push_back(d.zombies);
             }
-            if (!d.colonies.empty()){
+            if (!d.colonies.empty() || f_rotted){
                 json colonies = json::array();
                 for (const EconomyDay& r : d.colonies){
                     colonies.push_back(day_json(r,(int)r.colony));
                 }
                 row.push_back(colonies);
+            }
+            if (f_rotted){
+                row.push_back(GoodsJson(d.rotted));
             }
             return row;
         };
@@ -906,6 +956,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             c.by = cj.value("by",0u);
             c.tick = cj.value("tick",(uint64_t)0);
             c.f_pick_up = cj.value("pick_up",false);
+            FreshFromJson(cj.value("fresh",json()),c.fresh);     //SPOILAGE: none in a save from before - all of it lies
             out.economy.crates.push_back(c);
         }
         out.economy.next_crate = e.value("next_crate",1u);
@@ -1033,6 +1084,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
                 d.broken = dj[4].get<int>();
                 d.storeys = dj[5].get<int>();
                 d.zombies = (dj.size() > 6 && dj[6].is_number_integer()) ? dj[6].get<int>() : 0;     //KILLS: none before
+                if (dj.size() > 8){
+                    GoodsFromJson(dj[8],d.rotted);      //SPOILAGE: none before
+                }
                 return true;
             };
             h.from = hj.value("from",(uint64_t)0);
@@ -1115,6 +1169,9 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             fd.owner = (f.size() > 6) ? f[6].get<uint32_t>() : 0;
             fd.frost = (f.size() > 7) ? f[7].get<int>() : -1;
             fd.wait = (f.size() > 8) ? f[8].get<int>() : 0;
+            if (f.size() > 9){
+                FreshFromJson(f[9],fd.fresh);    //SPOILAGE: none in a save from before - its harvest all lies
+            }
             out.economy.f_before_land = out.economy.f_before_land || f.size() <= 6;
             out.economy.fields.push_back(fd);
         }

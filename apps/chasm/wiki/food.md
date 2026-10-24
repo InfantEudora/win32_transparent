@@ -3,10 +3,10 @@ title: Food
 aliases: crop, crops, wheat, greens, beans, rotation
 kind: goods
 status: built
-summary: Three crops (wheat, greens and beans), each grown on fields, eaten for health, and best grown in rotation - and fruit from the wild.
-plans: fields_plan.md > Decided; fields_plan.md > AUTO by food; needs_plan.md > Current tuning
-code: Economy.cpp: crop_days crop_yield crop_after EconomyFoodWorth EconomyCropYield EconomyAutoCrop
-verified: 2026-10-22
+summary: Three crops (wheat, greens and beans), each grown on fields, eaten for health, and best grown in rotation - and fruit from the wild. Lying out, it rots.
+plans: fields_plan.md > Decided; fields_plan.md > AUTO by food; needs_plan.md > Current tuning; spoilage_plan.md > Decided (the user, 2026-10-24); spoilage_plan.md > As built (2026-10-24)
+code: Economy.cpp: crop_days crop_yield crop_after EconomyFoodWorth EconomyCropYield EconomyAutoCrop EconomySpoil EconomyRotPerMille
+verified: 2026-10-24
 ---
 
 | Crop | Grows for | Harvest per unit of field area | Worth eaten |
@@ -42,16 +42,25 @@ harvests waiting to be carried in - and [[Fruit|fruit]], picked from the wild. T
 {ECONOMY_START_BEANS} beans. People eat the food that keeps worst first: [[Fruit|fruit]], then greens, then wheat, then beans -
 and [[Provisions|provisions]] last of all, a food made from a wheat and a beans for people on posts.
 
+## Lying out, it rots
+
+A harvest waiting on its [[Field|field]] and food in a [[Crate|crate]] lie out. What came there keeps for
+{ECONOMY_ROT_GRACE_DAYS:#days}; after that, at every dawn, a share of each food rots, rounded up: fruit
+{= ECONOMY_ROT_FRUIT / 10}%, greens {= ECONOMY_ROT_GREENS / 10}%, wheat {= ECONOMY_ROT_WHEAT / 10}%, beans
+{= ECONOMY_ROT_BEANS / 10}% and [[Provisions|provisions]] {= ECONOMY_ROT_PROVISIONS / 10}%. Whatever is taken goes from
+what has lain longest. Food in a [[Store|store]], a house or the [[Camp|camp]] keeps. A field's or crate's card says
+how its food keeps, the [[Statistics|statistics]] count what rotted, and NEEDS ATTENTION says when a field's harvest
+rots faster than its stores have room to take it in: HARVEST ROTTING, NO STORE ROOM.
+
 ## In the top bar
 
 FOOD at the top is the foods summed - wheat, greens, beans and fruit - since any of them feeds someone; it counts
 what lies in [[Store|stores]] and the [[Camp|camp's]] supplies - of the [[Settlement|colony]] in view, once there
 is more than one. Hovering it lists each food on its own, and
-[[Provisions|provisions]] beside them, which are the posted people's and not in the sum.
+[[Provisions|provisions]] beside them, which are the posted people's and not in the sum - and, also apart, the food
+lying out on fields and in crates.
 
 ## Planned
 
-- [planned] Rotting while lying out: a harvest on a [[Field|field]] or food in a [[Crate|crate]] loses a share at every
-  dawn after two days - greens and fruit fastest, beans slowest (`spoilage_plan.md`).
 - [planned] Keeping in a store: fruit and greens rotting when winter comes, wheat a little each season, beans not at all.
 - [idea] Animals for meat and leather.

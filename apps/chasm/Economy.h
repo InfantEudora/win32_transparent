@@ -646,6 +646,20 @@ inline uint32_t EconomyCrateOfStore(uint32_t store){ return store & ~ECONOMY_STO
 //The health a unit of food gives - beans most, then wheat, greens least (the user's order; the amounts are
 //tuning); 0 for no food.
 int EconomyFoodWorth(int good);
+/*
+    SPOILAGE (spoilage_plan.md; the user's, 2026-10-24): food LYING OUT - a field's harvest, a crate's - rots. What came to
+    such a place stays fresh for ECONOMY_ROT_GRACE_DAYS (EconomyFresh, below); past that, at every dawn, a share of each
+    food goes, rounded up, so a small pile goes too. Stored food keeps: a store, a home, the camp, a hut, a tower. The
+    order is the order food is eaten in, the one that keeps worst first - but beans rot too. Current tuning.
+*/
+#define ECONOMY_ROT_GRACE_DAYS      2       //days food lies out before it starts to rot
+#define ECONOMY_ROT_FRUIT           100     //a dawn, per mille of what lies past its days
+#define ECONOMY_ROT_GREENS          100
+#define ECONOMY_ROT_WHEAT           40
+#define ECONOMY_ROT_BEANS           20
+#define ECONOMY_ROT_PROVISIONS      10
+//What of good `good` lying out rots at a dawn, per mille of what lies; 0 for what never rots.
+int EconomyRotPerMille(int good);
 //What a person died of. Never renumber: saves hold these.
 #define NEEDS_DIED_HUNGER           0
 #define NEEDS_DIED_THIRST           1       //dry when his health ran out
@@ -987,6 +1001,45 @@ struct EconomyDeath{
     A field's growing (fields_plan.md): EMPTY until its farmer sows it, then its crop grows; at harvest it is
     empty again, that crop remembered as the LAST, which decides the next one's yield (EconomyCropYield).
 */
+/*
+    FRESH FOOD (SPOILAGE): what of each good came to a place lying out on each of its last ECONOMY_ROT_GRACE_DAYS days -
+    [0] since this morning's dawn, [1] the day before. Whatever else of a food the place holds lies past them, and rots.
+    Kept per place and by the day, never per unit: food is counts, not items (spoilage_plan.md). Taken from oldest first
+    with no word from the taking - at dawn the days are held to what the stock still has, the oldest first (EconomySpoil).
+*/
+struct EconomyFresh{
+    std::array<std::array<int,GOOD_COUNT>,ECONOMY_ROT_GRACE_DAYS> days = {};
+    bool Any() const{
+        for (const std::array<int,GOOD_COUNT>& d : days){
+            for (int n : d){
+                if (n){
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    //Of good `g`, what is still fresh.
+    int Of(int g) const{
+        int n = 0;
+        for (const std::array<int,GOOD_COUNT>& d : days){
+            n += d[g];
+        }
+        return n;
+    }
+};
+//`amount` of good `good` come to a place lying out: today's, if it is a good that rots.
+void EconomyFreshCame(EconomyFresh& fresh, int good, int amount);
+/*
+    A place's DAWN (SPOILAGE), in order: its fresh days held to what `stock` still has, the oldest first - what was taken
+    came out of what lay longest; what lies past them rots, of each food its share, rounded up, into `rotted`; then each
+    day a day older, the oldest joining what lies. So food first rots at the dawn ECONOMY_ROT_GRACE_DAYS + 1 after the one
+    before it came: never sooner than its days.
+*/
+void EconomySpoil(std::array<int,GOOD_COUNT>& stock, EconomyFresh& fresh, std::array<int,GOOD_COUNT>& rotted);
+//...and what the next dawn would take of good `g` from such a place, as it stands now: for the cards and the tools.
+int EconomyRotNext(const std::array<int,GOOD_COUNT>& stock, const EconomyFresh& fresh, int g);
+
 struct EconomyField{
     uint32_t building = 0;
     int crop = -1;              //what is growing, -1 none
@@ -997,6 +1050,7 @@ struct EconomyField{
     uint32_t owner = 0;         //whose land it is: a house or the camp, 0 none yet (land_plan.md)
     int frost = -1;             //the crop the last frost took (EconomyGrowingTicksLeft), -1 none - until it is sown again
     int wait = 0;               //ticks it has stood built and never sown with no starting crop, 0 not waiting (ECONOMY_CROP_GRACE)
+    EconomyFresh fresh;         //of its harvest lying there (its stock), what is still fresh (SPOILAGE)
 };
 
 //Where a crate came from (CRATES). Never renumber: saves hold these.
@@ -1034,6 +1088,7 @@ struct EconomyCrate{
     uint32_t by = 0;            //who put it down, a person's id - 0 for a find
     uint64_t tick = 0;          //the calendar tick it was put down or placed
     bool f_pick_up = false;     //PICK UP: builders and the jobless fetch it before building, from anywhere (stone_plan.md)
+    EconomyFresh fresh;         //of its food, what is still fresh: a crate lies out (SPOILAGE)
     //...and turned down at the last look anyone took: too far to walk without water (ECONOMY_PICK_UP_WATER). For the card
     //only - never saved or hashed, nothing in the rules reads it - so after a load it waits for the next look.
     bool f_too_far = false;
@@ -1085,7 +1140,9 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_RANKED            26      //`person` rose to rank `amount` (RANKS) by that kill
 #define EVENT_GREW_OLD          27      //`person` is old (OLD AGE): his work given up, from now on at home
 #define EVENT_ZEPPELIN_STAGE    28      //a stage of the zeppelin on dock `building` stands, `amount` which (steam_plan.md step 5)
-#define EVENT_COUNT             29
+#define EVENT_ROTTED            29      //at dawn, `amount` of the food in `what` rotted lying out on a colony's land - one a food
+                                        //a colony a dawn, at `plot`, the first place it rotted (SPOILAGE)
+#define EVENT_COUNT             30
 //The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
 //chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
 #define CHASM_GOAL_WINTER       0
@@ -1134,6 +1191,7 @@ struct EconomyDay{
     int broken = 0;                             //EVENT_ROCK_BROKEN
     int storeys = 0;                            //EVENT_STOREY_RAISED
     int zombies = 0;                            //EVENT_ZOMBIE_FELLED
+    std::array<int,GOOD_COUNT> rotted = {};     //EVENT_ROTTED, by good (SPOILAGE)
     uint32_t colony = 0;                        //a colony's own row: its number, 0 nobody's - the whole's row leaves it 0
     std::vector<EconomyDay> colonies;           //the whole's row: the same by colony, in number order (BY COLONY)
 };
@@ -2204,6 +2262,8 @@ private:
     //HEAT (above): every home's fire at dawn; what house h has room for of `good` (its woodshed for wood, the
     //rest of its room for food and water); whether it fetches firewood now; and its fair share of it.
     void Heat(const ZoneState& z, uint64_t calendar_tick);
+    //SPOILAGE: at dawn, what lies out on the fields and in the crates past its days rots (EconomySpoil).
+    void Spoil();
     int HouseRoom(const ZoneState& z, uint32_t h, int good) const;
     //WHOSE IT IS (STORES, above): building `id`'s stock a family's own - a house somebody lives in - so nobody
     //else may take from it. A camp's stock is its supplies, never private; its families' own is its pantry.

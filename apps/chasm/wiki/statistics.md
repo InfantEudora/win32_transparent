@@ -24,7 +24,7 @@ they happen - so a replay keeps the same history, and a load shows what was save
   found, someone grown up, a couple expecting, a crop the frost took, someone risen a [[Kills|rank]], and the firsts the [[Discoveries|discoveries]]
   read: a boulder found, someone on a balcony.
 - **A row a day** holds the [[Person|people]] by stage and every good the colony has at the day's end, and how many
-  [[Tree|trees]] were felled, rocks broken, storeys raised and [[Zombie|zombies]] killed that day. *Has* means gathered: stores, homes, packs and
+  [[Tree|trees]] were felled, rocks broken, storeys raised and [[Zombie|zombies]] killed that day, and what [[Food|food rotted]] lying out, by good. *Has* means gathered: stores, homes, packs and
   loads, and [[Crate|crates]] people put down or a camp or site left - not rubble or finds still lying out there.
 - **By colony**, each row holds the same again for every [[Settlement|colony]]: its people by their homes, its goods
   by where they lie, its counts by where they happened - and *nobody's*, the homeless off every colony's land and
@@ -39,7 +39,7 @@ A save from before the history starts it at its load; the page then says "kept s
 
 - **Now**: the people by stage, food and water in days for everyone at their shares, homes and beds, the goods
   held, buildings by kind, each settlement's people and beds, and the dead by cause.
-- **Over time**: the totals - zombies killed among them once there has been one; a chart by day of people, food and water, wood and stone, the day's values under the
+- **Over time**: the totals - zombies killed and food rotted among them once there has been any; a chart by day of people, food and water, wood and stone, the day's values under the
   mouse; and bars by season of births, deaths, the harvest and trees felled, for the last two years.
 - **The journal**, newest first. The wheel scrolls it.
 - **All, or one colony**: with more than one, chips beside the title choose. One colony's page is its own now, totals,

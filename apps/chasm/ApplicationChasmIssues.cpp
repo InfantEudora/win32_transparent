@@ -412,6 +412,51 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
     }
 
     /*
+        A HARVEST ROTTING (spoilage_plan.md; the user's, 2026-10-24): a field with food lying past its days where its
+        settlement's stores have no room for even a day's rot of it - a load at the least - so it goes into the ground
+        faster than it could be carried in: what a colony with one full store did for years, unseen (its store a load
+        short of full, the rest rotting). Not a field whose harvest is only slow to carry, with the room there: that is
+        the price of a store far from the fields. One row, its first field selected on a click, as land lying fallow has.
+    */
+    int rotting = 0;
+    uint32_t rotting_first = 0;
+    for (const EconomyField& f : e.fields){
+        uint32_t id = f.building;
+        if (id >= n || id >= e.stock.size() || z.buildings[id].size <= 0 || !ours(id)){
+            continue;
+        }
+        uint32_t settlement = EconomySettlementOf(e,id);
+        bool f_stuck = false;
+        for (int g = 0; g < GOOD_COUNT && !f_stuck; g++){
+            int rot = EconomyRotNext(e.stock[id],f.fresh,g);
+            if (rot <= 0){
+                continue;
+            }
+            int room = 0;
+            for (size_t s = 1; s < e.accepts.size() && s < e.room.size(); s++){
+                if ((e.accepts[s] & GOOD_BIT(g)) && EconomySettlementOf(e,(uint32_t)s) == settlement){
+                    room += std::max(0,e.room[s] - EconomyStockTotal(e,(uint32_t)s));
+                }
+            }
+            f_stuck = room < std::max(rot,(int)ECONOMY_LOAD);
+        }
+        if (f_stuck){
+            rotting++;
+            rotting_first = rotting_first ? rotting_first : id;
+        }
+    }
+    if (rotting){
+        ChasmIssue i;
+        i.kind = "harvest_rotting";
+        i.tier = ISSUE_STUCK;
+        i.order = (float)rotting_first;
+        i.text = (rotting == 1) ? "FIELD: HARVEST ROTTING" : std::to_string(rotting) + " FIELDS: HARVEST ROTTING";
+        i.value = "NO STORE ROOM";
+        i.building = rotting_first;
+        out.push_back(i);
+    }
+
+    /*
         11. A site that takes ROPE when the colony has too little and makes none (goods_plan.md; the user's: no
         first rope - "you have to set up production for it"): pointed at the first link missing, hemp - a field to
         choose it on, or the field tool with none - then a ropewalk. Once both are there the rope is coming, and
@@ -741,7 +786,7 @@ void ApplicationChasm::RegisterIssueTools(){
     MCPServer::Get()->RegisterTool("chasm_issues",
         "NEEDS ATTENTION (docs/issues_plan.md): everything the panel over the tools' grid would list, in its order - "
         "the panel shows the first five, in play mode. Each: kind (choose_crop, build_water, build_field, "
-        "build_woodcutter, build_houses, build_store, find_river (play mode, no river found yet), nobody_at, no_room, ropewalk_short, shut_in, house_shut_in, house_crowded, field_fallow, tower_unkept, site_needs_rope, site_needs_stone, mine_worked_out, trees_unreached), tier (danger: a deadline under two days; "
+        "build_woodcutter, build_houses, build_store, find_river (play mode, no river found yet), nobody_at, no_room, ropewalk_short, shut_in, house_shut_in, house_crowded, field_fallow, harvest_rotting, tower_unkept, site_needs_rope, site_needs_stone, mine_worked_out, trees_unreached), tier (danger: a deadline under two days; "
         "countdown: a choice the game makes when it runs out; stuck; next: a next step), text and value as drawn, "
         "left (a countdown's share still to run, 1 to 0) and wait/grace ticks for a field, building (what a click "
         "selects), plot (where a click takes the view: trees_unreached's roads and walls) or tool (what it takes up). "

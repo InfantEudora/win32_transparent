@@ -233,6 +233,7 @@ const char* EconomyEventName(int kind){
         case EVENT_RANKED:              return "ranked";
         case EVENT_GREW_OLD:            return "grew_old";
         case EVENT_ZEPPELIN_STAGE:      return "zeppelin_stage";
+        case EVENT_ROTTED:              return "rotted";
         default:                        return "unknown";
     }
 }
@@ -312,7 +313,8 @@ std::string EconomyKillsTold(const std::array<int,KILL_HOWS>& kills){
 }
 
 bool EconomyCounted(int kind){
-    return kind == EVENT_TREE_FELLED || kind == EVENT_ROCK_BROKEN || kind == EVENT_STOREY_RAISED || kind == EVENT_ZOMBIE_FELLED;
+    return kind == EVENT_TREE_FELLED || kind == EVENT_ROCK_BROKEN || kind == EVENT_STOREY_RAISED || kind == EVENT_ZOMBIE_FELLED
+           || kind == EVENT_ROTTED;
 }
 
 /*
@@ -381,6 +383,7 @@ void EconomyDayLevels(const EconomyState& e, uint64_t tick, EconomyDay& row){
     row.colonies.erase(std::remove_if(row.colonies.begin(),row.colonies.end(),[&](const EconomyDay& r){
         bool f_standing = r.colony && EconomyColonySettlement(e,r.colony) != 0;
         bool f_any = r.felled || r.broken || r.storeys || r.zombies
+                     || std::any_of(r.rotted.begin(),r.rotted.end(),[](int n){ return n != 0; })
                      || std::any_of(r.people.begin(),r.people.end(),[](int n){ return n != 0; })
                      || std::any_of(r.held.begin(),r.held.end(),[](int n){ return n != 0; });
         return !f_standing && !f_any;
@@ -475,6 +478,9 @@ void Economy::Event(EconomyEvent ev, uint64_t tick){
             d->broken += (ev.kind == EVENT_ROCK_BROKEN) ? 1 : 0;
             d->storeys += (ev.kind == EVENT_STOREY_RAISED) ? 1 : 0;
             d->zombies += (ev.kind == EVENT_ZOMBIE_FELLED) ? 1 : 0;
+            for (int g = 0; g < GOOD_COUNT && ev.kind == EVENT_ROTTED; g++){
+                d->rotted[g] += (ev.what & GOOD_BIT(g)) ? ev.amount : 0;     //by good: what rotted, not how often
+            }
         }
     }
     state.version++;
@@ -6368,6 +6374,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             float area = ZoneBuildingFigures(w,z,f.building).floor_area;
             int reaped = (int)std::floor(area * crop_yield[crop] * (float)f.yield / 100.0f);
             state.stock[f.building][GoodOfCrop(crop)] += reaped;
+            EconomyFreshCame(f.fresh,GoodOfCrop(crop),reaped);     //SPOILAGE: lying out from now, fresh for its days
             uint32_t farmer = (f.building < state.farmer_of.size()) ? state.farmer_of[f.building] : 0;
             vec2 at;
             if (f.building < cells_of.size() && !cells_of[f.building].empty()){
@@ -6469,6 +6476,7 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
         Heat(z,tick);
         ChancesOfChildren(z,tick);
         FruitAtDawn(tick);      //FORAGING: the frost's, and what grows back
+        Spoil();                //SPOILAGE: after this tick's harvests - one landing on the dawn lies its two days exactly
     }
     //WITH THE GROWN: the children going along posted beside their grown-up, the babies carried - before anyone moves.
     WithTheGrown(z,walkers);
@@ -6530,6 +6538,122 @@ int EconomyFoodWorth(int good){
         //Made from a wheat and a beans, and worth the two together (defence_plan.md, PROVISIONS).
         case GOOD_PROVISIONS: return EconomyFoodWorth(GOOD_WHEAT) + EconomyFoodWorth(GOOD_BEANS);
         default:            return 0;
+    }
+}
+
+//--- Spoilage (Economy.h, SPOILAGE; spoilage_plan.md) -----------------------------------------------
+
+int EconomyRotPerMille(int good){
+    switch (good){
+        case GOOD_FRUIT:        return ECONOMY_ROT_FRUIT;
+        case GOOD_GREENS:       return ECONOMY_ROT_GREENS;
+        case GOOD_WHEAT:        return ECONOMY_ROT_WHEAT;
+        case GOOD_BEANS:        return ECONOMY_ROT_BEANS;
+        case GOOD_PROVISIONS:   return ECONOMY_ROT_PROVISIONS;
+        default:                return 0;
+    }
+}
+
+void EconomyFreshCame(EconomyFresh& fresh, int good, int amount){
+    if (good >= 0 && good < GOOD_COUNT && amount > 0 && EconomyRotPerMille(good) > 0){
+        fresh.days[0][good] += amount;
+    }
+}
+
+void EconomySpoil(std::array<int,GOOD_COUNT>& stock, EconomyFresh& fresh, std::array<int,GOOD_COUNT>& rotted){
+    for (int g = 0; g < GOOD_COUNT; g++){
+        int share = EconomyRotPerMille(g);
+        if (share <= 0){
+            continue;
+        }
+        //Held to the stock, the oldest day first: what was taken since came out of what lay longest.
+        int over = fresh.Of(g) - std::max(0,stock[g]);
+        for (int d = ECONOMY_ROT_GRACE_DAYS - 1; d >= 0 && over > 0; d--){
+            int cut = std::min(over,fresh.days[d][g]);
+            fresh.days[d][g] -= cut;
+            over -= cut;
+        }
+        //What lies past its days: its share, rounded up.
+        int lying = stock[g] - fresh.Of(g);
+        if (lying > 0){
+            int rot = (lying * share + 999) / 1000;
+            stock[g] -= rot;
+            rotted[g] += rot;
+        }
+        //A day older: the oldest joins what lies.
+        for (int d = ECONOMY_ROT_GRACE_DAYS - 1; d > 0; d--){
+            fresh.days[d][g] = fresh.days[d - 1][g];
+        }
+        fresh.days[0][g] = 0;
+    }
+}
+
+int EconomyRotNext(const std::array<int,GOOD_COUNT>& stock, const EconomyFresh& fresh, int g){
+    int share = (g >= 0 && g < GOOD_COUNT) ? EconomyRotPerMille(g) : 0;
+    int lying = (share > 0) ? stock[g] - std::min(std::max(0,stock[g]),fresh.Of(g)) : 0;
+    return (lying > 0) ? (lying * share + 999) / 1000 : 0;
+}
+
+/*
+    THE DAWN'S ROT (SPOILAGE): every field's harvest and every crate, each a place lying out (EconomySpoil). What rotted is
+    told once a food a colony - the colony of the first place it rotted on, which the event's plot names - for the ledger
+    (EVENT_ROTTED, counted, never journaled or noticed). A crate left empty is gone, as one emptied by hand.
+*/
+void Economy::Spoil(){
+    struct Rot{
+        uint32_t colony;
+        int good;
+        int amount;
+        int plot;
+    };
+    std::vector<Rot> rots;
+    auto tell = [&](const std::array<int,GOOD_COUNT>& rotted, uint32_t settlement, int plot){
+        uint32_t colony = EconomyColonyNumber(state,settlement);
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (rotted[g] <= 0){
+                continue;
+            }
+            auto it = std::find_if(rots.begin(),rots.end(),[&](const Rot& r){ return r.colony == colony && r.good == g; });
+            if (it == rots.end()){
+                rots.push_back(Rot{colony,g,rotted[g],plot});
+            }else{
+                it->amount += rotted[g];
+            }
+        }
+    };
+    for (EconomyField& f : state.fields){
+        if (f.building >= state.stock.size()){
+            continue;
+        }
+        std::array<int,GOOD_COUNT> rotted{};
+        EconomySpoil(state.stock[f.building],f.fresh,rotted);
+        int plot = (f.building < home_plot.size()) ? home_plot[f.building] : -1;
+        tell(rotted,EconomySettlementOf(state,f.building),plot);
+    }
+    bool f_emptied = false;
+    for (EconomyCrate& c : state.crates){
+        std::array<int,GOOD_COUNT> rotted{};
+        EconomySpoil(c.stock,c.fresh,rotted);
+        tell(rotted,(c.plot >= 0 && c.plot < (int)state.settlement.size()) ? state.settlement[c.plot] : 0,c.plot);
+        f_emptied = f_emptied || (CarryTotal(c.stock) <= 0 && std::any_of(rotted.begin(),rotted.end(),[](int n){ return n > 0; }));
+    }
+    if (f_emptied){
+        state.crates.erase(std::remove_if(state.crates.begin(),state.crates.end(),[](const EconomyCrate& c){
+            return CarryTotal(c.stock) <= 0;
+        }),state.crates.end());
+        state.crates_version++;
+    }
+    for (const Rot& r : rots){
+        EconomyEvent ev;
+        ev.kind = EVENT_ROTTED;
+        ev.plot = r.plot;
+        ev.amount = r.amount;
+        ev.what = GOOD_BIT(r.good);
+        ev.colony = r.colony;
+        Event(ev,now);
+    }
+    if (!rots.empty()){
+        state.version++;
     }
 }
 
@@ -9472,6 +9596,7 @@ void Economy::AddToCrate(int plot, const vec2& at, int good, int amount, int ori
     for (EconomyCrate& c : state.crates){
         if (c.plot == plot){
             c.stock[good] += amount;
+            EconomyFreshCame(c.fresh,good,amount);      //SPOILAGE: today's, whatever lay there before
             state.crates_version++;
             state.version++;
             return;
@@ -9482,6 +9607,7 @@ void Economy::AddToCrate(int plot, const vec2& at, int good, int amount, int ori
     c.plot = plot;
     c.pos = at;
     c.stock[good] = amount;
+    EconomyFreshCame(c.fresh,good,amount);
     c.origin = origin;
     c.by = by;
     c.tick = state.tick;
@@ -9705,11 +9831,28 @@ void Economy::CrateTouched(uint32_t store){
     state.version++;
 }
 
-//Beside it, on the side he comes from - not in it, as he would stand at the foot of a tree (GoForWood).
+/*
+    Beside it, on the side he comes from - not in it, as he would stand at the foot of a tree (GoForWood) - and ON ITS
+    PLOT. The side he comes from is reckoned from where he sets out, and from up on the rim that side of rubble at the
+    foot of a balcony's wall is across the cliff: a stonecutter stood on the plateau to take it, and walked on from there
+    as if he had climbed up (the user's, 2026-10-24). Off its plot, it is the side of the plot's point instead, where a
+    walk to the plot comes in; failing that, the plot's point.
+*/
 vec2 Economy::CrateStand(const EconomyCrate& c, const vec2& from) const{
-    vec2 to = c.pos - from;
-    float l = to.length();
-    return (l > ECONOMY_CRATE_STAND * 2.0f) ? c.pos - to * (ECONOMY_CRATE_STAND / l) : c.pos;
+    auto beside = [&](const vec2& side){
+        vec2 to = c.pos - side;
+        float l = to.length();
+        return (l > ECONOMY_CRATE_STAND * 2.0f) ? c.pos - to * (ECONOMY_CRATE_STAND / l) : c.pos;
+    };
+    const vec2& home = state.world->grid->fine.pos[c.plot];
+    for (const vec2& side : {from,home}){
+        vec2 at = beside(side);
+        GridPick p = state.world->picker->Pick(at);
+        if (p.f_hit && p.plot == c.plot){
+            return at;
+        }
+    }
+    return home;
 }
 
 vec2 Economy::SourcePoint(uint32_t id, int plot, const vec2& from) const{

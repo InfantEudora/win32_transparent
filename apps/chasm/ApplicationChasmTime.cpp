@@ -630,6 +630,27 @@ void ApplicationChasm::DrawOverlay(void){
                     food_tip.push_back(std::make_pair(g,std::string(buf)));
                 }
             }
+            /*
+                ...and what lies OUT (SPOILAGE, spoilage_plan.md), not in FOOD, which is what is stored: the fields' harvests
+                and the crates', rotting once past their days. A bug report's colony showed FOOD 100 with 4,000 out there.
+            */
+            auto ours = [&](uint32_t settlement){ return colony == ECONOMY_EVERY_SETTLEMENT || settlement == colony; };
+            int lying = 0;
+            for (const EconomyField& f : e->fields){
+                for (int g = 0; g < GOOD_COUNT && f.building < e->stock.size() && ours(EconomySettlementOf(*e,f.building)); g++){
+                    lying += (GOODS_FOOD & GOOD_BIT(g)) ? e->stock[f.building][g] : 0;
+                }
+            }
+            for (const EconomyCrate& c : e->crates){
+                uint32_t settlement = (c.plot >= 0 && c.plot < (int)e->settlement.size()) ? e->settlement[c.plot] : 0;
+                for (int g = 0; g < GOOD_COUNT && ours(settlement); g++){
+                    lying += (GOODS_FOOD & GOOD_BIT(g)) ? c.stock[g] : 0;
+                }
+            }
+            if (lying > 0){
+                snprintf(buf,sizeof(buf),"%i more lying out, on fields and in crates",lying);
+                food_tip.push_back(std::make_pair((int)GOOD_WHEAT,std::string(buf)));
+            }
             food_tip_at = vec2(food_x - side,q1.y + 6.0f * s);
         }
     }

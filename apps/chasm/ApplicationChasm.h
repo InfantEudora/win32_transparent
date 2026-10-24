@@ -1307,6 +1307,16 @@ private:
     std::vector<Object*> seam_objects;                  //by seam band: its crystal, then its rock
     std::shared_ptr<const TerrainMeshData> seams_built_for;
     void UploadMines();                                 //from PreRender
+    //Where a mine on `plot` has its props, one or two of them: by MINE_PROPS index, at its base, facing - none off a deposit.
+    struct MineProp{
+        int prop = 0;
+        vec3 at;
+        quat facing;
+        bool f_mountain = false;                        //the portal against the mountain, drawn as its grey copy
+    };
+    static int MinePropsAt(const ChasmWorld& w, int plot, MineProp out[2]);
+    //...their triangles into `out`, where they stand: the ghost and the selection's outline (a mine has no body). Render thread.
+    void AppendMineProps(const ChasmWorld& w, int plot, std::vector<vertex>& out);
     /*
         The archery ranges (ApplicationChasmRange.cpp, range_plan.md): targets, hay bales and arrows, an instance
         set each - chasm_props.glb's prop by its name in range_asset_names, or a stand-in until it is modelled.
