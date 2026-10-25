@@ -85,6 +85,8 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_STONE_LIGHT,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,100},            //condenser: a water collector's stone, a brass tank on every plot
     {PAL_BARK_DARK,{PAL_STONE_DARK,PAL_STONE_DARK},2,DOOR_W * 1.6f,1,0}, //sail loft: tarred planks under slate, so its pale canvas shows;
                                                                           //wide doors, and a window every wall for the sewing
+    {PAL_TIMBER,{PAL_FIELD,PAL_FIELD},2,DOOR_W,2,0},                      //dock: on cells, drawn by CropMesh and its own
+    {PAL_TIMBER,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,0},                    //mast: the dock's mast, drawn with the docks instead
 };
 static_assert(sizeof(kind_looks) / sizeof(kind_looks[0]) == ZONE_KIND_COUNT,"a look for every kind");
 
@@ -378,6 +380,62 @@ void Opening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3&
 }
 
 /*
+    An ARCHED opening, Opening's way - a pane a hair in front of the wall a->b, `half_w` either side of `t` along it,
+    in a surround standing out of the wall - but round-headed: from y0 up to its crown, its head a half circle of
+    `half_w`, the surround's jambs carried on round it as a ring. A stone tower's windows and doorways.
+*/
+#define ARCHED_SEGS         6       //round the half circle
+
+void ArchedOpening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3& outward, float t, float half_w,
+                   float y0, float crown, int column, int row, int surround_column, bool f_sill){
+    vec2 dir = b - a;
+    float len = dir.length();
+    if (len < 1e-4f){
+        return;
+    }
+    dir = dir / len;
+    half_w = std::min(half_w,len * 0.38f);
+    float spring = std::max(y0,crown - half_w);
+    vec2 c = a + (b - a) * t;
+    vec2 out2(outward.x,outward.z);
+    auto P = [&](float u, float y, float d){
+        vec2 q = c + dir * u + out2 * d;
+        return vec3(q.x,y,q.y);
+    };
+    auto curve = [&](int j, float r, float d){
+        float th = 3.1415927f * (float)j / ARCHED_SEGS;
+        return P(r * std::cos(th),spring + r * std::sin(th),d);
+    };
+    MeshQuad(out,P(-half_w,y0,FACE_OUT),P(half_w,y0,FACE_OUT),P(half_w,spring,FACE_OUT),P(-half_w,spring,FACE_OUT),outward,
+             column,row);
+    vec3 middle = P(0.0f,spring,FACE_OUT);
+    for (int j = 0; j < ARCHED_SEGS; j++){
+        MeshTri(out,middle,curve(j,half_w,FACE_OUT),curve(j + 1,half_w,FACE_OUT),outward,column,row);
+    }
+    //The surround: two jambs to the springing, and the ring over them.
+    const float w = SURROUND_W;
+    const float d = SURROUND_DEPTH;
+    WallSlab(out,c,dir,out2,outward,-half_w - w,-half_w,y0,spring,d,surround_column);
+    WallSlab(out,c,dir,out2,outward,half_w,half_w + w,y0,spring,d,surround_column);
+    vec3 centre = P(0.0f,spring,0.0f);
+    for (int j = 0; j < ARCHED_SEGS; j++){
+        vec3 i0 = curve(j,half_w,0.0f);
+        vec3 i1 = curve(j + 1,half_w,0.0f);
+        vec3 o0 = curve(j,half_w + w,0.0f);
+        vec3 o1 = curve(j + 1,half_w + w,0.0f);
+        vec3 by(out2.x * d,0.0f,out2.y * d);
+        vec3 in = centre - (i0 + i1) * 0.5f;
+        MeshQuad(out,i0 + by,i1 + by,o1 + by,o0 + by,outward,surround_column);
+        MeshQuad(out,i0,i1,i1 + by,i0 + by,in,surround_column);
+        MeshQuad(out,o0,o1,o1 + by,o0 + by,in * -1.0f,surround_column);
+    }
+    if (f_sill){
+        WallSlab(out,c,dir,out2,outward,-half_w - w - SILL_OVERHANG,half_w + w + SILL_OVERHANG,y0 - SILL_H,y0,SILL_DEPTH,
+                 surround_column);
+    }
+}
+
+/*
     STEPS DOWN FROM A DOOR (terraces_plan.md): where a door stands over the ground outside it - on a foundation's
     plinth, or on a floor rounded up a little - a short flight of stone straight out from it, each step a block from
     a little into the ground up to its tread, one STEP_RISE under the last. Each is measured against the ground under
@@ -599,6 +657,12 @@ float BuildingDoorStepsRun(float drop){
         n++;
     }
     return n * STEP_TREAD;
+}
+
+//...and ArchedOpening: the castle's arrow slits (CastleMesh.cpp).
+void BuildingArchedOpening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3& outward, float t, float half_w,
+                           float y0, float crown, int column, int row, int surround_column, bool f_sill){
+    ArchedOpening(out,a,b,outward,t,half_w,y0,crown,column,row,surround_column,f_sill);
 }
 
 namespace {
@@ -941,6 +1005,268 @@ vec2 SideOut(const vec2& p, const vec2& a, const vec2& b){
     return (n.dot((a + b) * 0.5f - p) < 0.0f) ? n * -1.0f : n;
 }
 
+#define STONE_TOWER_PLINTH      0.30f   //a footing course round its foot, over the highest ground under it...
+#define STONE_TOWER_PLINTH_OUT  0.06f   //...this much wider, chamfered back to the wall
+#define STONE_TOWER_BAND        0.07f   //a string course round each storey's top
+#define STONE_TOWER_BAND_OUT    0.04f
+#define STONE_TOWER_CORBEL      0.26f   //the corbelled course under the guard room, sloping out...
+#define STONE_TOWER_OUT         0.13f   //...this far: the room stands out over the shaft
+#define STONE_TOWER_ROOM        1.15f   //the guard room's walls over its floor (the deck): over a villager's head (0.86)
+#define STONE_TOWER_EAVE        0.16f   //the roof past the room's walls...
+#define STONE_TOWER_EAVE_DROP   0.10f   //...and down
+#define STONE_TOWER_ROOF        1.75f   //eaves to point: steep, so it reads as a tower from far off
+#define STONE_TOWER_WINDOW_W    0.12f   //half a window's width
+#define STONE_TOWER_WINDOW_SILL 0.40f   //over the room's floor - chest-high, for a bow
+#define STONE_TOWER_WINDOW_TOP  0.88f
+#define STONE_TOWER_SLIT_W      0.045f  //an arrow slit in the shaft, half its width
+#define STONE_TOWER_SLIT_H      0.42f
+#define STONE_TOWER_DOOR_W      0.21f   //half the doorway's width
+#define STONE_TOWER_DOOR_H      1.02f   //its crown over the ground
+
+#define STONE_TOWER_CREN_OUT    0.08f   //a crenellated top's parapet, set out over the shaft on its corbel table...
+#define STONE_TOWER_CREN_W      0.18f   //...this thick...
+#define STONE_TOWER_CREN_SILL   0.42f   //...up to its crenels' sills, waist-high on a villager (0.86)...
+#define STONE_TOWER_MERLON_H    0.34f   //...its merlons this much over them...
+#define STONE_TOWER_MERLON      0.34f   //...about this long, by turns with...
+#define STONE_TOWER_CRENEL      0.26f   //...a crenel about this long
+#define STONE_TOWER_OPENING     0.6f    //a doorway's or a window's wall, either side of its middle
+
+}
+
+/*
+    A STONE GUARD TOWER (Zones.h, ZoneTowerStone; castle_plan.md): the guard tower's rules in a castle's geometry, a quarter
+    at a time with the castle (CastleMesh.h) - its plot's whole tile, as a castle piece's, so its walls and a wall-walk's
+    share their edges. A shaft on a plinth from the ground to its storeys over its LEVEL (ZoneTowerLevel), a string
+    course at each storey, arrow slits on its free sides. On top, on a plot of three cells, a CRENELLATED parapet on a
+    corbel table, its guards behind the merlons; on every other the GUARD ROOM corbelled out over the shaft, a window in
+    each wall, and a pointed roof over it to a spike over the plot's point. A doorway wherever a castle's deck meets one of
+    its floors (Walkers.h, WalkJoin) - on top the room's door, or a gap in the parapet - and its own door at the foot of
+    the side its ladder would stand on (ZoneBuilding::ladder). An opening is drawn whole by the lower-numbered of the two
+    cells either side of its middle, where the wall crosses the fine edge. While a site, the shaft to what stands, its
+    scaffold over it (BuildSite).
+*/
+void BuildStoneTowerQuarter(const ChasmWorld& w, const ZoneState& z, int fine_quad, int k, std::vector<vertex>& out){
+    const Grid& g = *w.grid;
+    const GridPicker& picker = *w.picker;
+    const GridQuad& quad = g.fine.quads[fine_quad];
+    int v = quad.v[k];
+    int standing = z.standing[v];
+    if (standing <= 0){
+        return;
+    }
+    bool f_whole = standing >= z.storeys[v];
+    const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
+    const vec3 up(0.0f,1.0f,0.0f);
+    vec2 p = g.fine.pos[v];
+    vec2 c = g.FineQuadCentre(fine_quad);
+    float base = ZoneTowerLevel(w,z,v) * ZONE_STOREY_HEIGHT;
+    float top = base + standing * ZONE_STOREY_HEIGHT;      //its top floor: the guard room's, or the crenellated top's
+    int ladder = ZoneTowerLadder(z,v);
+    //Its two sides in this cell, from where its walls cross the fine edges to the cell's middle, each facing a neighbour;
+    //and how each end steps out - at a crossing as the cell across has it, at the corner the mitre of the two.
+    int nb[2] = {quad.v[(k + 1) % 4],quad.v[(k + 3) % 4]};
+    vec2 m[2];
+    vec2 n[2];
+    vec2 out_m[2];
+    for (int i = 0; i < 2; i++){
+        m[i] = BuildingWallCrossing(w,v,nb[i]);
+        n[i] = SideOut(p,m[i],c);
+        out_m[i] = BuildingWallOut(w,v,nb[i]);
+    }
+    vec2 out_c = MeshMitre(n[0],n[1]);
+    //Side i's point s of the way from its crossing to the corner, stood `by` out from the wall.
+    auto side_at = [&](int i, float s, float by){
+        vec2 a = m[i] + out_m[i] * by;
+        vec2 b = c + out_c * by;
+        return a + (b - a) * s;
+    };
+    auto at = [](const vec2& q, float y){
+        return vec3(q.x,y,q.y);
+    };
+    //A band round both sides, `by` out, y0 to y1: its faces, its top and its underside back to the wall.
+    auto band = [&](float by, float y0, float y1, int column){
+        for (int i = 0; i < 2; i++){
+            vec2 a0 = side_at(i,0.0f,0.0f);
+            vec2 b0 = side_at(i,1.0f,0.0f);
+            vec2 a1 = side_at(i,0.0f,by);
+            vec2 b1 = side_at(i,1.0f,by);
+            MeshQuad(out,at(a1,y0),at(b1,y0),at(b1,y1),at(a1,y1),vec3(n[i].x,0.0f,n[i].y),column);
+            MeshQuad(out,at(a0,y1),at(b0,y1),at(b1,y1),at(a1,y1),up,column);
+            MeshQuad(out,at(a0,y0),at(b0,y0),at(b1,y0),at(a1,y0),up * -1.0f,column);
+        }
+    };
+    //An opening in side i's wall `by` out from the shaft, centred where the wall crosses the fine edge.
+    auto opening = [&](int i, float by, float half_w, float y0, float crown, int column, int row, bool f_sill){
+        vec2 o = out_m[i];
+        vec2 along(-o.y,o.x);
+        vec2 middle = m[i] + o * by;
+        ArchedOpening(out,middle - along * STONE_TOWER_OPENING,middle + along * STONE_TOWER_OPENING,vec3(o.x,0.0f,o.y),0.5f,
+                      half_w,y0,crown,column,row,PAL_STONE_LIGHT,f_sill);
+    };
+    //What meets each side: the height in half storeys a castle's deck meets one of its floors at, or none; and whether
+    //this cell draws that side's openings - the lower-numbered of the two either side of its middle.
+    int meet[2];
+    bool f_mine[2];
+    for (int i = 0; i < 2; i++){
+        meet[i] = (f_whole && ladder >= 0) ? WalkJoinAny(w,z,v,2 * standing,nb[i]) : WALK_NO_JOIN;
+        int other = -1;
+        for (int j = 0; j < picker.PlotQuadCount(v); j++){
+            int q = picker.PlotQuadCorner(v,j) / 4;
+            const GridQuad& gq = g.fine.quads[q];
+            if (q != fine_quad && (gq.v[0] == nb[i] || gq.v[1] == nb[i] || gq.v[2] == nb[i] || gq.v[3] == nb[i])){
+                other = q;
+            }
+        }
+        f_mine[i] = other < 0 || fine_quad < other;
+    }
+    auto onto_top = [&](int i){
+        return meet[i] != WALK_NO_JOIN && meet[i] * HALF >= top - 0.01f;
+    };
+
+    //--- The shaft, its plinth, its courses and its lower openings -------------------------------------------
+    float lowest = 0.0f;
+    float highest = 0.0f;
+    ZonePlotGroundRange(w,v,lowest,highest);
+    if (ZoneTerraceStands(z,v)){
+        highest = ZoneTerraceTop(z,v);
+    }
+    float plinth = highest + STONE_TOWER_PLINTH;
+    for (int i = 0; i < 2; i++){
+        vec2 a = m[i];
+        vec2 b = c;
+        vec3 want(n[i].x,0.0f,n[i].y);
+        float ya = ZoneGroundHeight(w,z,v,a) - TOWER_LOG_SINK;
+        float yb = ZoneGroundHeight(w,z,v,b) - TOWER_LOG_SINK;
+        MeshQuad(out,at(a,ya),at(b,yb),at(b,top),at(a,top),want,PAL_STONE);
+        vec2 pa = side_at(i,0.0f,STONE_TOWER_PLINTH_OUT);
+        vec2 pb = side_at(i,1.0f,STONE_TOWER_PLINTH_OUT);
+        MeshQuad(out,at(pa,ya),at(pb,yb),at(pb,plinth),at(pa,plinth),want,PAL_STONE_DARK);
+        MeshQuad(out,at(pa,plinth),at(pb,plinth),at(b,plinth + STONE_TOWER_PLINTH_OUT),at(a,plinth + STONE_TOWER_PLINTH_OUT),
+                 vec3(n[i].x,1.0f,n[i].y),PAL_STONE_DARK);
+        if (!f_mine[i]){
+            continue;
+        }
+        //Its own door, at the foot of the side its ladder stands toward: the way in from the ground.
+        if (nb[i] == ladder){
+            float sill = ZoneGroundHeight(w,z,nb[i],m[i] + out_m[i] * 0.2f);
+            opening(i,0.0f,STONE_TOWER_DOOR_W,sill,sill + STONE_TOWER_DOOR_H,PAL_BARK_DARK,PAL_TEMPERATE,false);
+            continue;
+        }
+        //A doorway onto a castle's deck at a floor under the top one - the top's is the room's door, or the parapet's gap.
+        if (meet[i] != WALK_NO_JOIN){
+            float floor_y = meet[i] * HALF;
+            if (floor_y < top - 0.01f){
+                opening(i,0.0f,STONE_TOWER_DOOR_W,floor_y,floor_y + STONE_TOWER_DOOR_H,PAL_VOID,PAL_EFFECTS,false);
+            }
+            continue;
+        }
+        //An arrow slit in each storey over the first, where nothing stands against this side.
+        bool f_against = z.KindOf(nb[i]) != ZONE_KIND_NONE || z.ground[nb[i]] == ZONE_GROUND_WALL
+                         || ZoneCastleShape(z,nb[i]) != ZONE_CASTLE_NONE;
+        for (int s = 2; s <= standing && !f_against; s++){
+            float y0 = base + (s - 0.5f) * ZONE_STOREY_HEIGHT - STONE_TOWER_SLIT_H * 0.5f;
+            opening(i,0.0f,STONE_TOWER_SLIT_W,y0,y0 + STONE_TOWER_SLIT_H,PAL_VOID,PAL_EFFECTS,false);
+        }
+    }
+    for (int s = 1; s < standing; s++){
+        float y = base + s * ZONE_STOREY_HEIGHT;
+        band(STONE_TOWER_BAND_OUT,y - STONE_TOWER_BAND,y,PAL_STONE_LIGHT);
+    }
+    if (!f_whole){
+        return;     //the rest is a site: its scaffold stands over what is built (BuildSite)
+    }
+
+    if (ZoneTowerCrenellated(w,v)){
+        //--- A crenellated top: a parapet on a corbel table round the floor its guards stand on ---------------
+        const float out_by = STONE_TOWER_CREN_OUT;
+        const float in_by = STONE_TOWER_CREN_OUT - STONE_TOWER_CREN_W;
+        float sill = top + STONE_TOWER_CREN_SILL;
+        float crest = sill + STONE_TOWER_MERLON_H;
+        MeshQuad(out,at(p,top),at(m[0],top),at(c,top),at(m[1],top),up,PAL_STONE_LIGHT);
+        for (int i = 0; i < 2; i++){
+            vec3 want(n[i].x,0.0f,n[i].y);
+            MeshQuad(out,at(side_at(i,0.0f,0.0f),top - STONE_TOWER_CORBEL),at(side_at(i,1.0f,0.0f),top - STONE_TOWER_CORBEL),
+                     at(side_at(i,1.0f,out_by),top),at(side_at(i,0.0f,out_by),top),vec3(n[i].x,-1.0f,n[i].y),PAL_STONE_LIGHT);
+            if (onto_top(i)){
+                continue;   //a deck comes in level with the top here: the parapet opens onto it
+            }
+            vec2 oa = side_at(i,0.0f,out_by);
+            vec2 ob = side_at(i,1.0f,out_by);
+            vec2 ia = side_at(i,0.0f,in_by);
+            vec2 ib = side_at(i,1.0f,in_by);
+            MeshQuad(out,at(oa,top),at(ob,top),at(ob,sill),at(oa,sill),want,PAL_STONE);
+            MeshQuad(out,at(ia,top),at(ib,top),at(ib,sill),at(ia,sill),want * -1.0f,PAL_STONE);
+            MeshQuad(out,at(oa,sill),at(ob,sill),at(ib,sill),at(ia,sill),up,PAL_STONE_LIGHT);
+            vec2 d = ob - oa;
+            vec3 along(d.x,0.0f,d.y);
+            if (onto_top(1 - i)){
+                MeshQuad(out,at(ob,top),at(ib,top),at(ib,sill),at(ob,sill),along,PAL_STONE);   //its end, beside the gap
+            }
+            //The merlons: half of one at the crossing - the rest of it the next cell's - then crenels and merlons by turns
+            //to a whole one at the corner, which the other side's meets on the mitre.
+            float len = std::max(1e-4f,(c - m[i]).length());
+            float half = std::min(STONE_TOWER_MERLON * 0.5f,len * 0.25f);
+            int count = std::max(1,(int)std::lround((len - half) / (STONE_TOWER_MERLON + STONE_TOWER_CRENEL)));
+            float unit = (len - half) / count;
+            float crenel = unit * STONE_TOWER_CRENEL / (STONE_TOWER_MERLON + STONE_TOWER_CRENEL);
+            auto merlon = [&](float s0, float s1, bool f_end0, bool f_end1){
+                vec2 o0 = side_at(i,s0,out_by);
+                vec2 o1 = side_at(i,s1,out_by);
+                vec2 i0 = side_at(i,s0,in_by);
+                vec2 i1 = side_at(i,s1,in_by);
+                MeshQuad(out,at(o0,sill),at(o1,sill),at(o1,crest),at(o0,crest),want,PAL_STONE);
+                MeshQuad(out,at(i0,sill),at(i1,sill),at(i1,crest),at(i0,crest),want * -1.0f,PAL_STONE);
+                MeshQuad(out,at(o0,crest),at(o1,crest),at(i1,crest),at(i0,crest),up,PAL_STONE_LIGHT);
+                if (f_end0){
+                    MeshQuad(out,at(o0,sill),at(i0,sill),at(i0,crest),at(o0,crest),along * -1.0f,PAL_STONE);
+                }
+                if (f_end1){
+                    MeshQuad(out,at(o1,sill),at(i1,sill),at(i1,crest),at(o1,crest),along,PAL_STONE);
+                }
+            };
+            merlon(0.0f,half / len,false,true);
+            for (int j = 0; j < count; j++){
+                merlon((half + j * unit + crenel) / len,(half + (j + 1) * unit) / len,true,j + 1 < count || onto_top(1 - i));
+            }
+        }
+        return;
+    }
+
+    //--- The guard room, corbelled out over the shaft, and its pointed roof -----------------------------------
+    float eaves = top + STONE_TOWER_ROOM;
+    float drop = eaves - STONE_TOWER_EAVE_DROP;
+    vec3 apex(p.x,eaves + STONE_TOWER_ROOF,p.y);
+    for (int i = 0; i < 2; i++){
+        vec3 want(n[i].x,0.0f,n[i].y);
+        vec2 a0 = side_at(i,0.0f,0.0f);
+        vec2 b0 = side_at(i,1.0f,0.0f);
+        vec2 ra = side_at(i,0.0f,STONE_TOWER_OUT);
+        vec2 rb = side_at(i,1.0f,STONE_TOWER_OUT);
+        vec2 ea = side_at(i,0.0f,STONE_TOWER_OUT + STONE_TOWER_EAVE);
+        vec2 eb = side_at(i,1.0f,STONE_TOWER_OUT + STONE_TOWER_EAVE);
+        MeshQuad(out,at(a0,top - STONE_TOWER_CORBEL),at(b0,top - STONE_TOWER_CORBEL),at(rb,top),at(ra,top),
+                 vec3(n[i].x,-1.0f,n[i].y),PAL_STONE_LIGHT);
+        MeshQuad(out,at(ra,top),at(rb,top),at(rb,eaves),at(ra,eaves),want,PAL_STONE);
+        MeshQuad(out,at(ra,eaves),at(rb,eaves),at(eb,drop),at(ea,drop),vec3(n[i].x * 0.3f,-1.0f,n[i].y * 0.3f),PAL_TIMBER);
+        MeshTri(out,at(ea,drop),at(eb,drop),apex,vec3(n[i].x,0.6f,n[i].y),PAL_ROOF);
+        if (!f_mine[i]){
+            continue;
+        }
+        if (onto_top(i)){
+            opening(i,STONE_TOWER_OUT,STONE_TOWER_DOOR_W,top,top + STONE_TOWER_DOOR_H,PAL_VOID,PAL_EFFECTS,false);
+        }else{
+            opening(i,STONE_TOWER_OUT,STONE_TOWER_WINDOW_W,top + STONE_TOWER_WINDOW_SILL,top + STONE_TOWER_WINDOW_TOP,PAL_VOID,
+                    PAL_EFFECTS,true);
+        }
+    }
+    //Its spike, over the plot's point - drawn once, by the first of its cells.
+    if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+        Upright(out,p,0.05f,apex.y - 0.2f,apex.y + 0.32f,PAL_BARK_DARK);
+    }
+}
+
+namespace {
+
 /*
     A GUARD TOWER (defence_plan.md): the palisade's look stood on end, in its JUNCTION's shape (ZoneTowerCorners) -
     a triangle, a square, a pentagon - as a house takes its plot's. Upright logs along each side, a storey of them
@@ -950,6 +1276,9 @@ vec2 SideOut(const vec2& p, const vec2& a, const vec2& b){
     stands toward (ZoneBuilding::ladder). A wall beside it runs up to the side facing it (RoadMesh). No roof.
 */
 void BuildTower(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
+    if (ZoneTowerStone(z,plot)){
+        return;     //drawn with the castle, a quarter at a time (BuildStoneTowerQuarter)
+    }
     const Terrain& t = *w.terrain;
     vec2 p = w.grid->fine.pos[plot];
     float level = t.Height(plot);
@@ -1382,6 +1711,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_STEAM && picker.PlotQuadCorner(v,0) / 4 == fine_quad){
             BuildSteamHood(w,v,out);
         }
+        //Nor a mooring mast (flight_plan.md step 3): the dock's lattice mast, an instance with the docks' (ApplicationChasmDock.cpp).
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_MAST){
+            s[k] = 0;
+        }
         //A builders' hut too, with its beams and ladder by one wall.
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_BUILDERS && picker.PlotQuadCorner(v,0) / 4 == fine_quad
             && LowestStandingPlot(w,z,v)){
@@ -1643,6 +1976,10 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
 }
 
 float BuildingTowerDeck(const ChasmWorld& w, const ZoneState& z, int plot){
+    //A stone one's floor is its storeys over its level, as a castle's deck is (castle_plan.md).
+    if (ZoneTowerStone(z,plot)){
+        return (ZoneTowerLevel(w,z,plot) + z.standing[plot]) * ZONE_STOREY_HEIGHT;
+    }
     return ZoneGroundAt(w,z,plot) + z.standing[plot] * ZONE_STOREY_HEIGHT + TOWER_DECK;
 }
 
@@ -1695,6 +2032,14 @@ bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at){
     vec2 d = at - w.grid->fine.pos[plot];
     float l = d.length();
     return l < 1e-4f || l < BuildingTowerReach(w,plot,d) + TOWER_DECK_OUT;
+}
+
+bool BuildingInTower(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at){
+    if (ZoneTowerStone(z,plot)){
+        GridPick pick = w.picker->Pick(at);
+        return pick.f_hit && pick.plot == plot;
+    }
+    return BuildingOnTower(w,plot,at);
 }
 
 /*

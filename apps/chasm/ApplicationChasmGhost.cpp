@@ -145,6 +145,7 @@ const char* KindPlural(int kind){
         case ZONE_KIND_ROPEWALK:    return "ROPEWALKS";
         case ZONE_KIND_SAIL_LOFT:   return "SAIL LOFTS";
         case ZONE_KIND_DOCK:        return "DOCKS";
+        case ZONE_KIND_MAST:        return "MASTS";
         case ZONE_KIND_CAMP:        return "CAMPS";
         case ZONE_KIND_WOODCUTTER:
         case ZONE_KIND_BUILDERS:
@@ -650,6 +651,8 @@ void ApplicationChasm::UpdateGhost(){
             if (landing >= 0){
                 GhostPlotTile(cw,z,landing,verts);
             }
+        }else if (shown == ZONE_KIND_MAST){
+            GhostPlotTile(cw,z,plot,verts);     //its tower is a prop (flight_plan.md step 3): where it goes, its tile
         }else if (shown == ZONE_KIND_MINE){
             //Its portal and cart are props, which GhostBuildingPlot does not draw: they, where they would stand, on its tile.
             GhostPlotTile(cw,z,plot,verts);
@@ -906,7 +909,8 @@ void ApplicationChasm::UpdateSlopeGrid(){
              : ChasmLineTool(tool) ? SLOPE_RULE_ROAD
              : (tool == CHASM_TOOL_GARDEN || tool == CHASM_TOOL_LOT) ? SLOPE_RULE_PLOT
              : (kind == ZONE_KIND_NONE || kind == ZONE_KIND_WATER || kind == ZONE_KIND_WINCH || kind == ZONE_KIND_MINE
-                || kind == ZONE_KIND_BRIDGE || kind == ZONE_KIND_STEAM) ? SLOPE_RULE_NONE : SLOPE_RULE_PLOT;
+                || kind == ZONE_KIND_BRIDGE || kind == ZONE_KIND_STEAM || kind == ZONE_KIND_MAST) ? SLOPE_RULE_NONE
+             : SLOPE_RULE_PLOT;
     GridPick hover = GetHoverPick();
     std::shared_ptr<const Exploration> ex = GetExploration();
     std::shared_ptr<const ZoneState> zs = GetZones();      //its terraces, which are level ground (terraces_plan.md)

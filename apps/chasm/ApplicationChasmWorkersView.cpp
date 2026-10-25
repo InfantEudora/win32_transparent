@@ -423,9 +423,19 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         f = (len > 1e-4f) ? std::max(0.0f,std::min(1.0f,along / len)) : 1.0f;
         pos = k.route[s] + d * f;
     }
+    //How far along leg s the walls between its two plots cross it (BuildingWallCrossing): its midpoint, or off it round
+    //a point of five or six cells - where a terrace's wall stands and a castle's tops meet.
+    auto wall_along = [&](int pa, int pb){
+        vec2 run = k.route[s + 1] - k.route[s];
+        if (run.dot(run) <= 1e-8f){
+            return 0.5f;
+        }
+        float t = (BuildingWallCrossing(w,pa,pb) - k.route[s]).dot(run) / run.dot(run);
+        return std::max(0.05f,std::min(0.95f,t));
+    };
     /*
-        Over a terrace's edge, on the ground (terraces_plan.md stage 2): level on the higher plot as far as the edge, then
-        down its stair - or its step - over the lower plot's half, where the stair is drawn (RoadMesh).
+        Over a terrace's edge, on the ground (terraces_plan.md stage 2): level on the higher plot as far as its wall, then
+        down its stair, or its step, over the lower plot's side, where the stair is drawn (RoadMesh).
     */
     if (f_zones && s + 1 < (int)k.route.size() && EconomyRouteLayer(k,s) == WALK_GROUND && EconomyRouteLayer(k,s + 1) == WALK_GROUND){
         int pa = plot_at(k.route[s]);
@@ -440,10 +450,11 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
                 DoorLegAt(leg,f,y);
                 return y;
             }
+            float wall = wall_along(pa,pb);
             if (ha >= hb){
-                return (f < 0.5f) ? ha : ha + (hb - ha) * ((f - 0.5f) * 2.0f);
+                return (f < wall) ? ha : ha + (hb - ha) * ((f - wall) / (1.0f - wall));
             }
-            return (f < 0.5f) ? ha + (hb - ha) * (f * 2.0f) : hb;
+            return (f < wall) ? ha + (hb - ha) * (f / wall) : hb;
         }
     }
     if (!f_zones || k.route_layer.empty()){
@@ -476,23 +487,50 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
     if (meet == WALK_NO_JOIN){
         bool f_on_b = f >= 0.5f;
         if (lb != WALK_GROUND && z->KindOf(pb) == ZONE_KIND_TOWER){
-            f_on_b = BuildingOnTower(w,pb,pos);
+            f_on_b = BuildingInTower(w,*z,pb,pos);
         }else if (la != WALK_GROUND && z->KindOf(pa) == ZONE_KIND_TOWER){
-            f_on_b = !BuildingOnTower(w,pa,pos);
+            f_on_b = !BuildingInTower(w,*z,pa,pos);
         }
         return f_on_b ? at_point(pos,pb,lb) : at_point(pos,pa,la);
     }
-    vec2 mid = (a + b) * 0.5f;
-    float hm = BuildingMeetHeight(w,*z,pa,la,pb,lb,meet,mid);
-    if (f < 0.5f){
+    //Level, or up and down a stair, to where the two meet - at the wall between them, as the castle draws its tops.
+    float wall = wall_along(pa,pb);
+    float hm = BuildingMeetHeight(w,*z,pa,la,pb,lb,meet,a + (b - a) * wall);
+    if (f < wall){
         float ha = at_point(a,pa,la);
-        return ha + (hm - ha) * (f * 2.0f);
+        return ha + (hm - ha) * (f / wall);
     }
     float hb = at_point(b,pb,lb);
-    return hm + (hb - hm) * ((f - 0.5f) * 2.0f);
+    return hm + (hb - hm) * ((f - wall) / (1.0f - wall));
+}
+
+//Inside a STONE guard tower (ramparts_plan.md): within its walls, where a wooden one's ladder would have him climbing
+//or on its platform - from the step in at a door to the step out. But on a crenellated top (castle_plan.md) a guard
+//stands in the open behind the merlons: hidden only on his way up or down inside, not where his route keeps him on top.
+static bool InStoneTower(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    if (!z || z->world.get() != &w){
+        return false;
+    }
+    vec2 at = EconomyBody(k);
+    GridPick pick = w.picker->Pick(at);
+    if (!pick.f_hit || !ZoneTowerStone(*z,pick.plot) || !BuildingInTower(w,*z,pick.plot,at)){
+        return false;
+    }
+    if (!ZoneTowerCrenellated(w,pick.plot) || k.route.empty()){
+        return true;
+    }
+    int top = 2 * z->standing[pick.plot];
+    int s = std::min(k.seg,(int)k.route.size() - 1);
+    bool f_here = EconomyRouteLayer(k,s) == top;
+    bool f_next = s + 1 >= (int)k.route.size() || EconomyRouteLayer(k,s + 1) == top;
+    return !(f_here && f_next);
 }
 
 float WorkerHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k){
+    //Aboard a zeppelin (flight_plan.md step 2): on its deck, where the rules stand him.
+    if (k.state == WORKER_ABOARD){
+        return k.deck_y;
+    }
     //His body off his route (SPACING, zombies_plan.md), which only happens on the ground: the ground where it stands.
     if ((k.off.x != 0.0f || k.off.y != 0.0f) && EconomyWorkerLayer(k) == WALK_GROUND){
         vec2 at = EconomyBody(k);
@@ -941,8 +979,8 @@ void ApplicationChasm::UploadWorkers(){
             o->SetVisibility(false);
         }
         park(i,ws ? f : -1);
-        //At home, he is indoors (P4): not drawn.
-        if (EconomyIndoors(k)){
+        //At home, he is indoors (P4): not drawn. Nor up in a stone tower, its guards out of sight behind its windows.
+        if (EconomyIndoors(k) || InStoneTower(*w,z.get(),k)){
             shown->SetVisibility(false);
             if (ws){
                 set_clip(*ws,WORKER_CLIP_NONE,1.0f,0.0f);

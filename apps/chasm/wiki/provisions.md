@@ -6,7 +6,7 @@ status: partial
 summary: A soldier's food, made by builders from a wheat and a beans - as many as something wants, and as many as the colony keeps; villagers eat it only when nothing else is in reach.
 plans: defence_plan.md > Provisions; defence_plan.md > As built: step 5, provisions; defence_plan.md > As built: step 6, the guard tower; defence_plan.md > As built: step 7, the towers kept; goods_plan.md > Kept in stock, and made to order; settlements_plan.md > As built: kept stock by colony
 code: Economy.cpp: EconomyFoodWorth ProvisionsLacking MakeProvisions AtWorkshop SeekSupply FillPack Consume SetKept OrderMore KeptShort; Economy.h: ECONOMY_PROVISION_SECONDS ECONOMY_KEPT_START GOODS_MADE EconomyKeptLevel EconomyKept; Goods.h: GOODS_EATEN
-verified: 2026-10-22
+verified: 2026-10-24
 ---
 
 A [[Food|food]] of its own: one is made from a wheat and a beans and is worth the two together in
@@ -24,8 +24,8 @@ and no house keeps it.
 
 ## Making them
 
-Only **builders** make them, and only as many as their colony **wants**: what its building sites and guard towers
-still lack of them, and what it keeps (below), less what lies made in a [[Store|store]], the [[Camp|camp's]] supplies,
+Only **builders** make them, and only as many as their colony **wants**: what its building sites, guard towers and
+moored zeppelins' cabins ([[Passengers]]) still lack of them, and what it keeps (below), less what lies made in a [[Store|store]], the [[Camp|camp's]] supplies,
 an empty house, a builders' hut or a [[Crate|crate]], and what is being made. Before his building work, a builder
 with some wanted:
 

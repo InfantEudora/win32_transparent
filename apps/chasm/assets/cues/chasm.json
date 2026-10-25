@@ -30,6 +30,8 @@
     "arrow_leave":   "sound/arrow_leave.ogg",
     "arrow_swoosh":  "sound/arrow_swoosh.ogg",
     "arrow_hit":     "sound/arrow_hit.ogg",
+    "airship_flying": "sound/airship_flying.ogg",
+    "airship_steam":  "sound/airship_steam.ogg",
 
     "leo_hi":           "sound/speech/taunts/leo_hi_s7.ogg",
     "leo_whatsup":      "sound/speech/taunts/leo_whatsup_s10.ogg",
@@ -52,7 +54,24 @@
     "leah_imonit":      "sound/speech/taunts/leah_imonit_s2.ogg",
     "leah_okay":        "sound/speech/taunts/leah_okay_s4.ogg",
     "leah_grabsupplies": "sound/speech/taunts/leah_grabsupplies_s2.ogg",
-    "leah_packingup":   "sound/speech/taunts/leah_packingup_s2.ogg"
+    "leah_packingup":   "sound/speech/taunts/leah_packingup_s2.ogg",
+    "leo_niceplace":    "sound/speech/taunts/leo_niceplace_s8.ogg",
+    "leo_thirsty":      "sound/speech/taunts/leo_thirsty_s8.ogg",
+    "leah_niceplace":   "sound/speech/taunts/leah_niceplace1_s8.ogg",
+    "leah_goodspot":    "sound/speech/taunts/leah_goodspot1_s8.ogg",
+    "leah_thirsty_1":   "sound/speech/taunts/leah_thirsty1_s8.ogg",
+    "leah_thirsty_2":   "sound/speech/taunts/leah_thirsty2_s7.ogg",
+    "leah_grunt_1":     "sound/speech/pain/leah_grunt_1.ogg",
+    "leah_grunt_2":     "sound/speech/pain/leah_grunt_2.ogg",
+
+    "zombie_murmle_1":  "sound/speech/zombie/zombie_murmle_1.ogg",
+    "zombie_murmle_2":  "sound/speech/zombie/zombie_murmle_2.ogg",
+    "zombie_noise_1":   "sound/speech/zombie/zombie_noise_1.ogg",
+    "zombie_noise_2":   "sound/speech/zombie/zombie_noise_2.ogg",
+    "zombie_noise_3":   "sound/speech/zombie/zombie_noise_3.ogg",
+    "zombie_noise_4":   "sound/speech/zombie/zombie_noise_4.ogg",
+    "zombie_death_1":   "sound/speech/zombie/zombie_death_1.ogg",
+    "zombie_death_2":   "sound/speech/zombie/zombie_death_2.ogg"
   },
 
   "buses": {
@@ -253,6 +272,34 @@
       "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
       "max_instances": 4
     },
+    "zombie_murmur": {
+      "comment": "THEIR VOICES (zombies_plan.md, \"Their voices\"; the user's takes and rules, 2026-10-25) - all of them only from a zombie in sight, out of the clouds, as it is drawn. A MURMUR now and then from one walking or waiting - not while it bites or breaks - each on a clock of its own (ApplicationChasmSound.cpp SOUND_MURMUR_*): the nearest three, so a wave is a low, ragged chorus. Never two starting within 0.3 s. The takes are levelled as speech is (tools/sound_ogg.py, speech/zombie/).",
+      "signal": "zombie_murmur", "sounds": ["zombie_murmle_1", "zombie_murmle_2"], "bus": "activity", "gain": 0.5, "pitch_jitter": 0.08, "gap": 15,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 2
+    },
+    "zombie_noise": {
+      "comment": "...a short NOISE, as one is POKED: put down, turned on someone new, or hit by an arrow or a blow - one zombie once in SOUND_ZOMBIE_NOISE_REST at most, so a fight is not a snarl a blow. Two at once at most, a second apart: a wave turning at once is one or two, not twenty.",
+      "signal": "zombie_noise", "sounds": ["zombie_noise_1", "zombie_noise_2", "zombie_noise_3", "zombie_noise_4"], "bus": "activity", "gain": 0.6, "pitch_jitter": 0.06, "gap": 50,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 2
+    },
+    "zombie_death": {
+      "comment": "...and its DEATH as it falls - its fall clip starting - at its body. Three at once at most: a volley that fells several is a few cries. zombie_death_1 came out of the levelling some 6 dB under the rest, held by its peak.",
+      "signal": "zombie_death", "sounds": ["zombie_death_1", "zombie_death_2"], "bus": "activity", "gain": 0.7, "pitch_jitter": 0.05,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 3
+    },
+    "bitten_leah": {
+      "comment": "PAIN: a bite landing on someone grown, from him, in his voice - `voice` 1 a woman's, 0 a man's (whose row comes with leo's takes). Once in SOUND_PAIN_REST at most from one person: three zombies biting him are not six grunts a second. Two at once at most.",
+      "signal": "bitten", "when": [["voice", "==", 1]], "sounds": ["leah_grunt_1", "leah_grunt_2"], "bus": "activity", "gain": 0.6, "pitch_jitter": 0.04,
+      "gain_by": [ { "value": "distance", "in": [8, 48], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.6, 0.6] },
+      "max_instances": 2
+    },
     "bow_drawn": {
       "comment": "THE BOWS (ApplicationChasmSound.cpp, SignalShooting): archer's creak (apps/archer, 2026-10-19), from a shot's nock - the arrow on the string - to its release, cut the moment the string goes, or when he gives the shot up. Any turn of the Shoot clip: at a zombie, or at the straw on the range's line. The nearest six drawing are heard; pitched a little, so a line of them is not one bow.",
       "begin": "bow_drawn", "sounds": "bow_tension", "on_end": "stop", "bus": "activity", "gain": 0.45, "pitch_jitter": 0.05,
@@ -319,13 +366,38 @@
                   "pan": { "value": "falls_dx", "in": [-30, 30], "out": [-0.5, 0.5] } }
     },
 
+    "zeppelin": {
+      "comment": "THE ZEPPELIN HEARD (flight_plan.md): its engines, the user's loop, while one is in the air - the nearest to the listener (ApplicationChasmSound.cpp, SignalZeppelins). zeppelin_distance is in 3D from over the view's centre to the middle of its body, high as it flies; zeppelin_engine spools from 0 to 1 as it takes off and back as it lands, so the loop swells and dies away rather than cutting; zeppelin_pace is its speed of its full - idling over the chasm it is quieter and lower. On the activity bus: it stops with the world.",
+      "begin": "zeppelin", "sounds": "airship_flying", "looping": true, "bus": "activity", "gain": 0.7, "on_end": "stop",
+      "follow": { "gain": [ { "value": "zeppelin_distance", "in": [12, 90], "out": [1, 0] },
+                            { "value": "zeppelin_engine", "in": [0, 1], "out": [0, 1] },
+                            { "value": "zeppelin_pace", "in": [0, 1], "out": [0.7, 1] } ],
+                  "pitch": { "value": "zeppelin_pace", "in": [0, 1], "out": [0.92, 1.05] },
+                  "pan": { "value": "zeppelin_dx", "in": [-30, 30], "out": [-0.5, 0.5] } }
+    },
+    "zeppelin_steam": {
+      "comment": "...and a hiss of steam, the user's, as one lifts off its dock or an edge and as it begins to come down onto one - where it is then.",
+      "signal": "zeppelin_steam", "sounds": "airship_steam", "bus": "activity", "gain": 0.8, "pitch_jitter": 0.04,
+      "gain_by": [ { "value": "distance", "in": [12, 80], "out": [1, 0] } ],
+      "pan_by": { "value": "dx", "in": [-30, 30], "out": [-0.5, 0.5] }
+    },
+
     "picked_leo": {
       "comment": "THE PEOPLE'S VOICES (sound_plan.md, \"Voices\"): leo's takes for a man, leah's for a woman - `voice` 0 or 1 (ApplicationChasmSound.cpp, Say); a child says nothing yet. PICKED OUT - clicked, boxed, Shift-added, or his name pressed in a list: a greeting, never the same twice running. Spoken to the player, so not quieter further off - only panned a little: one person toward where he stands (`side`, ApplicationChasmSound.cpp SOUND_VOICE_SIDE_REACH), a group's two one either side. Every take is levelled to the same loudness when it is converted (tools/sound_ogg.py, speech/), so both voices take one gain. A double click is one answer (gap).",
-      "signal": "picked", "when": [["voice", "==", 0]], "sounds": ["leo_hi", "leo_whatsup", "leo_yes", "leo_whereto", "leo_morning"],
+      "signal": "picked", "when": [["voice", "==", 0], ["thirsty", "==", 0]], "sounds": ["leo_hi", "leo_whatsup", "leo_yes", "leo_whereto", "leo_morning"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "picked_leah": {
-      "signal": "picked", "when": [["voice", "==", 1]], "sounds": ["leah_hi", "leah_whatsup", "leah_yes", "leah_whereto", "leah_morning"],
+      "signal": "picked", "when": [["voice", "==", 1], ["thirsty", "==", 0]], "sounds": ["leah_hi", "leah_whatsup", "leah_yes", "leah_whereto", "leah_morning"],
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
+    },
+    "picked_thirsty_leo": {
+      "comment": "...and picked out THIRSTY - `thirsty` 1 while his water is below NEEDS_PRESSING_WATER, when his badge shows the drop and he goes for water (dry too): he says so in the greeting's place. Only on being picked, never by itself.",
+      "signal": "picked", "when": [["voice", "==", 0], ["thirsty", "==", 1]], "sounds": ["leo_thirsty"],
+      "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
+    },
+    "picked_thirsty_leah": {
+      "signal": "picked", "when": [["voice", "==", 1], ["thirsty", "==", 1]], "sounds": ["leah_thirsty_1", "leah_thirsty_2"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "sent_leo": {
@@ -355,15 +427,16 @@
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "settle_leo": {
-      "signal": "settle", "when": [["voice", "==", 0]], "sounds": ["leo_packingup"],
+      "comment": "SETTLED HERE - his card's Settle here, moving in without a tent - or his tent PITCHED where he stands: a nice place (the user's, 2026-10-25). Taking a tent to go is still packing up.",
+      "signal": "settle", "when": [["voice", "==", 0]], "sounds": ["leo_niceplace"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "settle_leah": {
-      "signal": "settle", "when": [["voice", "==", 1]], "sounds": ["leah_packingup"],
+      "signal": "settle", "when": [["voice", "==", 1]], "sounds": ["leah_niceplace", "leah_goodspot"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "released_leo": {
-      "comment": "ANY OTHER ORDER is an okay for now (the user's, 2026-10-16), until it has a line of its own - which is a row's sounds and no code, each order being its own signal: released back to his work (a post's or a tower's Release), a chip turned off (straight_on), his tent pitched where he stands, sent to pick fruit or draw water (forage; `what` 1 fruit, 2 water).",
+      "comment": "ANY OTHER ORDER is an okay for now (the user's, 2026-10-16), until it has a line of its own - which is a row's sounds and no code, each order being its own signal: released back to his work (a post's or a tower's Release), a chip turned off (straight_on), sent to pick fruit or draw water (forage; `what` 1 fruit, 2 water).",
       "signal": "released", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
@@ -380,11 +453,11 @@
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "pitch_leo": {
-      "signal": "pitch", "when": [["voice", "==", 0]], "sounds": ["leo_okay"],
+      "signal": "pitch", "when": [["voice", "==", 0]], "sounds": ["leo_niceplace"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "pitch_leah": {
-      "signal": "pitch", "when": [["voice", "==", 1]], "sounds": ["leah_okay"],
+      "signal": "pitch", "when": [["voice", "==", 1]], "sounds": ["leah_niceplace", "leah_goodspot"],
       "bus": "voice", "gain": 0.8, "group": "voice", "busy": "replace", "priority": 1, "gap": 8, "pan_by": {"value": "side", "in": [-1, 1], "out": [-0.3, 0.3]}
     },
     "forage_leo": {

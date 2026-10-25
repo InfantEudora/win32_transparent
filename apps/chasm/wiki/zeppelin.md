@@ -6,7 +6,7 @@ status: partial
 summary: Built on a dock in five stages - frame, hull, rigging, envelope, and steam last to fill it. Finished, it is a craft of its own, moored there, and flies where it is sent.
 plans: steam_plan.md > Decided (the user, 2026-10-21); steam_plan.md > The zeppelin dock, and building the zeppelin; steam_plan.md > The zeppelin, modelled (2026-10-23); steam_plan.md > As built: step 5 (2026-10-23)
 code: Economy.h: ZEPPELIN_STAGES ECONOMY_ZEPPELIN_WOOD ECONOMY_ZEPPELIN_FLOATSTONE ECONOMY_ZEPPELIN_ROPE ECONOMY_ZEPPELIN_CANVAS ECONOMY_ZEPPELIN_STEAM EconomyZeppelinGood EVENT_ZEPPELIN_STAGE; Economy.cpp: ZeppelinSite SiteNeed Build; ApplicationChasmDock.cpp: UploadDocks
-verified: 2026-10-24
+verified: 2026-10-25
 ---
 
 The colony's way over the chasm - it floats only over it, held up by its heat and its steam. It is built on a
@@ -47,5 +47,5 @@ mooring lines, its nose in the mast's cup - until it is sent off. Flying, its pr
 
 ## Planned
 
-- [planned] People in and out by order, goods loaded at a mast, and the dock beginning another once its own is away
-  ([[Flight]]; `flight_plan.md`).
+- [planned] The dock beginning another once its own is away ([[Flight]]; `flight_plan.md`). People already go aboard
+  and off by order ([[Passengers]]), and goods by its load list at a [[Mooring mast|mast]] or dock.

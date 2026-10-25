@@ -38,6 +38,14 @@ vec2 EconomyZombieLooks(const EconomyState& e, const EconomyZombie& m){
 }
 
 vec2 EconomyWorkerLooks(const EconomyState& e, const EconomyWorker& k){
+    //Aboard a zeppelin (flight_plan.md step 2): out over its rail, the side he stands on.
+    if (k.state == WORKER_ABOARD){
+        if (const EconomyZeppelin* f = EconomyZeppelinById(e,k.zeppelin)){
+            vec2 nose(cosf(f->heading),sinf(f->heading));
+            vec2 side(-nose.y,nose.x);
+            return ((k.pos - f->pos).dot(side) >= 0.0f) ? side : side * -1.0f;
+        }
+    }
     //Shooting at a zombie (step 3): he faces it, and the Shoot clip turns him side-on by itself.
     if (k.aim){
         for (const EconomyZombie& m : e.zombies){
@@ -187,7 +195,9 @@ float EconomyFightPace(const EconomyWorker& k){
 }
 
 bool EconomyReachable(const EconomyWorker& k, uint64_t tick){
-    return !EconomyIndoors(k) && !(k.with && EconomyStageAt(k.born,tick) == LIFE_BABY) && EconomyWorkerLayer(k) == WALK_GROUND;
+    //Aboard a zeppelin (flight_plan.md step 2): up on its deck, out of every zombie's reach.
+    return !EconomyIndoors(k) && k.state != WORKER_ABOARD && !(k.with && EconomyStageAt(k.born,tick) == LIFE_BABY)
+           && EconomyWorkerLayer(k) == WALK_GROUND;
 }
 
 bool Economy::CanGetAt(const EconomyWorker& k) const{

@@ -5,8 +5,8 @@ kind: systems
 status: partial
 summary: The colony's enemy. For now dropped by debug tools only, a zombie walks after the nearest person it can get to and bites him; a grown-up fights back, and archers and guards shoot it.
 plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 1c: a crowd keeps its room; zombies_plan.md > As built: step 1c, a crowd keeps its room; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4b; zombies_plan.md > As built: step 4d, the look
-code: Spacing.cpp: SpaceOut; Zombies.cpp: ZombiePlaces; Economy.h: EconomyZombieHitting; Economy.h: EconomyZombie EconomyFightPace EconomyCarriesBow ARROW_SHOT_MASTER ARROW_SHOT_JITTER ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget EconomyShotTicks ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies; Zones.h: ZoneKindHasDoor
-verified: 2026-10-20
+code: Spacing.cpp: SpaceOut; Zombies.cpp: ZombiePlaces; Economy.h: EconomyZombieHitting; Economy.h: EconomyZombie EconomyFightPace EconomyCarriesBow ARROW_SHOT_MASTER ARROW_SHOT_JITTER ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget EconomyShotTicks ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies SignalZombieVoices; Zones.h: ZoneKindHasDoor
+verified: 2026-10-25
 ---
 
 A zombie goes for **people only**: walls, gates and houses are only what stands in its way. No waves yet - zombies
@@ -57,7 +57,7 @@ someone [[Posts|posted]] stays on his post however thirsty, and a [[Guard tower|
 
 The props file's `zombie` at the people's scale, rigged as they are: the man's walk at its pace, feet planted, his idle
 standing, and its own scratch when it bites or hits what it breaks, facing it - a blunt strike heard on its swipe, and a
-punch as each bite and blow lands; what it breaks gives as it goes ([[Roads and walls|walls]], [[House|doors]]). Not drawn under the clouds. A card says
+punch as each bite and blow lands, and the one bitten crying out; in sight, a murmur now and then from the nearest few, a short noise when one is put down, turns on someone new or is hit, and a cry as it falls; what it breaks gives as it goes ([[Roads and walls|walls]], [[House|doors]]). Not drawn - or heard - under the clouds. A card says
 "Fighting a zombie" or "Shooting at a zombie". Arrows stay stuck in a zombie until it falls; misses lie {ARROW_LIE_SECONDS:#seconds}.
 
 ## Planned

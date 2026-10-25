@@ -118,6 +118,22 @@ void ApplicationChasm::UploadDocks(){
                 sets[DOCK_MOORING].push_back(m);
             }
         }
+        /*
+            A MOORING MAST (flight_plan.md step 3), once it stands: the dock's mast, in the frame a zeppelin moored at it has -
+            its nose in the cup, out over the drop (ZoneMastAt) - and no mooring lines, since there is no ground under it.
+        */
+        for (size_t v = 0; v < z->building.size(); v++){
+            if (z->KindOf((int)v) != ZONE_KIND_MAST || z->standing[v] == 0){
+                continue;
+            }
+            ZoneMastPlace mp;
+            if (!ZoneMastAt(*w,(int)v,mp)){
+                continue;
+            }
+            vec2 centre = vec2(mp.cup.x,mp.cup.z) + mp.dir * ZEPPELIN_NOSE;
+            sets[DOCK_MAST].push_back(Object::ComposeTransformScale(vec3(centre.x,mp.cup.y - ZEPPELIN_NOSE_Y,centre.y),
+                                                                    quat(up,atan2f(mp.dir.x,mp.dir.y)),vec3(1.0f,1.0f,1.0f)));
+        }
     }
     for (int k = 0; k < DOCK_PROPS; k++){
         bool f_any = !sets[k].empty();

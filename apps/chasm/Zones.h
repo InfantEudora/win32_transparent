@@ -76,6 +76,9 @@
         island: some corner of its cells lower than its plot - the floor, the rim's crumbled steps, a terrace below -
         and none higher, so it leans out over the drop and never stands against a wall. A cliff painted by hand is
         no drop into the chasm. With the winch and the mine the third kind allowed against a cliff.
+      - A MOORING MAST (flight_plan.md step 3) is one plot where a steam collector could stand, by the same rule: the
+        dock's lattice mast, its front legs at the lip, its cup out over the drop (ZoneMastAt). A zeppelin moors nose-in
+        to the cup, hanging out over the drop. No house body: drawn on its own, as a winch is.
       - A CONDENSER (steam_plan.md step 3) stands wherever a house could; beside a steam collector it draws the
         collector's steam straight from it (Economy).
       - A GUARD TOWER (docs/defence_plan.md) is one plot, painted whole - both its storeys at once - by a
@@ -155,7 +158,8 @@
 #define ZONE_KIND_CONDENSER     17      //steam into water: beside a steam collector, or fed from a store (steam_plan.md)
 #define ZONE_KIND_SAIL_LOFT     18      //a long loft: sailmakers sew hemp into canvas for a zeppelin (steam_plan.md step 4)
 #define ZONE_KIND_DOCK          19      //a zeppelin dock, on coarse cells at the chasm's edge: a zeppelin is built on it (step 5)
-#define ZONE_KIND_COUNT         20
+#define ZONE_KIND_MAST          20      //a mooring mast: at a drop into the chasm, a zeppelin's nose in its cup (flight_plan.md step 3)
+#define ZONE_KIND_COUNT         21
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 //The most plots a building of `kind` may have - a field's or range's cells - 0 for no limit: a camp, a bridge.
@@ -171,15 +175,17 @@ inline int ZoneKindMaxPlots(int kind){
         case ZONE_KIND_WINCH:
         case ZONE_KIND_TOWER:
         case ZONE_KIND_MINE:
-        case ZONE_KIND_WELL:        return 1;
+        case ZONE_KIND_WELL:
+        case ZONE_KIND_MAST:        return 1;
         case ZONE_KIND_CAMP:
         case ZONE_KIND_BRIDGE:      return 0;
         default:                    return ZONE_BUILDING_MAX_PLOTS;
     }
 }
-//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine, a well.
+//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine, a well, a mast.
 inline bool ZoneKindOnePlot(int kind){
-    return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL;
+    return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL
+           || kind == ZONE_KIND_MAST;
 }
 //A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range or a dock painted like one.
 inline bool ZoneKindOnCells(int kind){
@@ -351,6 +357,7 @@ enum ZoneOp{
     ZONE_OP_TERRACE_ERASE,  //plot: its terrace taken off - with nothing on it
     ZONE_OP_TERRACE_RAISE,  //plot: its terrace site is built - the builders'
     ZONE_OP_DOCK_PAINT,     //coarse cell: join the stroke's zeppelin dock, or start one (steam_plan.md step 5) - erased as a field
+    ZONE_OP_TOWER_STONE,    //plot: its guard tower of stone (value[1] 1, or 2-4 for that many storeys) or of wood (0) - debug only, for now (castle_plan.md)
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's, a range's or a dock's) rather than a plot.
@@ -400,6 +407,7 @@ struct ZoneBuilding{
     uint32_t split_from = 0;
     uint32_t land_of = 0;                       //a field: the house the player gave it to, 0 automatic
     int ladder = -1;                            //a guard tower: the neighbour plot its ladder stands toward, its door
+    uint8_t f_stone = 0;                        //a guard tower built of STONE (ramparts_plan.md): its look, its cost
 };
 
 struct ZoneState{
@@ -493,6 +501,7 @@ struct ZoneSavedBuilding{
     int next_crop = ZONE_CROP_AUTO;             //a field's (fields_plan.md)
     uint32_t land_of = 0;                       //a field's, given to a house (land_plan.md)
     int ladder = -1;                            //a guard tower's (defence_plan.md); -1 for one from before: its default
+    bool f_stone = false;                       //a guard tower of stone (ramparts_plan.md)
     std::vector<std::pair<int,int>> plots;      //plot, storeys
     std::vector<int> standing;                  //per plot above, what of it stands - empty: all of it
     std::vector<int> cells;                     //a field's coarse cells
@@ -655,6 +664,21 @@ struct ZoneDockLie{
     bool f_fits = false;
 };
 bool ZoneDockFrame(const ChasmWorld& w, const ZoneState& z, uint32_t id, ZoneDockLie& out);
+/*
+    A MOORING MAST's place (flight_plan.md step 3), beside its plot `plot`: the way out over the drop - toward the plot's
+    lower corners, as a steam collector's hood leans - its tower's front legs at the lip, halfway to the nearest of them,
+    and the cup at its top ZONE_MAST_PAST_LIP past them, ZONE_MAST_CUP over the plot's ground. It is the dock's mast
+    (chasm_props.glb's dock_mast), so a zeppelin moored with its nose in the cup (Economy, EconomyMastBerth) hangs as
+    it would on a dock: its origin at the ground. False where the plot has no drop beside it.
+*/
+#define ZONE_MAST_CUP           5.0f    //the cup over the plot's ground: the dock's mast's, a zeppelin's axis (ZEP_AXIS_Z)
+#define ZONE_MAST_PAST_LIP      0.3f    //...and out past its front legs (ZEP_MAST_Y less the cup's reach, less ZEP_MAST_FOOT)
+struct ZoneMastPlace{
+    vec2 dir;               //unit: out over the drop
+    vec2 foot;              //the tower's foot, at the lip
+    vec3 cup;
+};
+bool ZoneMastAt(const ChasmWorld& w, int plot, ZoneMastPlace& out);
 //The kind a cell op paints: a field, a range or a dock; ZONE_KIND_NONE for any other op.
 inline int ZoneCellOpKind(int op){
     return (op == ZONE_OP_FIELD_PAINT) ? ZONE_KIND_FIELD : (op == ZONE_OP_RANGE_PAINT) ? ZONE_KIND_RANGE
@@ -736,6 +760,16 @@ bool ZoneCanTerrace(const ChasmWorld& w, const ZoneState& z, int plot, int top, 
     houses either side of it meet.
 */
 vec2 BuildingWallCrossing(const ChasmWorld& w, int a, int b);
+/*
+    Which way a wall's face steps OUT where it crosses the fine edge from plot a to plot b (BuildingWallCrossing): square
+    off the line between the centres of the cells either side - the wall's own line there - toward b; on the map's edge,
+    along the edge. Worked from the edge alone, so the cells either side agree and a face set out from the wall - a
+    retaining wall's batter, a tower's guard room - runs on unbroken from one to the next. `f_straight`, if asked: the
+    wall runs on within ZONE_WALL_STRAIGHT across the crossing, rather than bending there round a point of three or four
+    cells.
+*/
+#define ZONE_WALL_STRAIGHT      0.985f  //cosine: about 10 degrees
+vec2 BuildingWallOut(const ChasmWorld& w, int a, int b, bool* f_straight = NULL);
 
 /*
     THE FLOOR a building on `plot` stands on, in half storeys from y = 0 (BuildHouseCell's `foot`): its ground rounded to
@@ -802,6 +836,14 @@ ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell);
     DOOR (ZoneBuilding::ladder): walked onto and off only from the neighbour it stands toward (Walkers, the
     straight walks) - when placed, the open side nearest the camp, which is usually a wall's inside; moved by
     ZONE_OP_TOWER_LADDER. One rule for the walkers, the economy and the look.
+
+    A STONE tower (ZoneBuilding::f_stone, the user's, 2026-10-24) is the same tower in every rule - its guards, its stock,
+    its door - built for a castle: a stone shaft, its guards in a room on top with windows and a pointed roof, and its
+    door a doorway at the foot of the side the ladder would stand on. Debug only for now (ZONE_OP_TOWER_STONE).
+    In a CASTLE's geometry (castle_plan.md, the user's 2026-10-25): its plot's whole tile, on a castle LEVEL
+    (ZoneTowerLevel), 2 to 4 storeys over it, a floor at every storey - a castle deck beside it meeting one goes in by a
+    doorway there (Walkers.h, WalkJoin) - and drawn with the castle (CastleMesh.h). On a plot of three cells its top is
+    crenellated, every other's the guard room under its roof.
 */
 #define ZONE_TOWER_INSET        0.6f    //its walls' corners, this much of the way to the cells' middles
 #define ZONE_TOWER_STAND        0.5f    //a guard's place, this much of the way from its middle to a corner
@@ -820,6 +862,21 @@ inline int ZoneTowerLadder(const ZoneState& z, int plot){
     const ZoneBuilding* b = z.BuildingOf(plot);
     return (b && b->kind == ZONE_KIND_TOWER) ? b->ladder : -1;
 }
+//Whether the guard tower on `plot` is a stone one.
+inline bool ZoneTowerStone(const ZoneState& z, int plot){
+    const ZoneBuilding* b = z.BuildingOf(plot);
+    return b && b->kind == ZONE_KIND_TOWER && b->f_stone;
+}
+#define ZONE_STONE_TOWER_LEAST  2       //a stone tower's storeys over its level...
+#define ZONE_STONE_TOWER_MOST   4       //...from and to
+//The level a stone tower's storeys count from, as a castle piece's (ZoneCastleBase): a terrace's top, else the one a
+//first piece painted on its plot would take (ZoneCastleLevelFor) - so beside a wall on the same ground its floors are
+//the wall-walk's, and on other ground a wall-walk still meets one of them, whole storeys apart.
+int ZoneTowerLevel(const ChasmWorld& w, const ZoneState& z, int plot);
+//Whether a stone tower's top is CRENELLATED (castle_plan.md): on a plot of three cells. Every other has a roof.
+bool ZoneTowerCrenellated(const ChasmWorld& w, int plot);
+//The most storeys the building on `plot` may have: its kind's, but a stone tower's ZONE_STONE_TOWER_MOST.
+int ZoneBuildingMaxStoreys(const ZoneState& z, int plot);
 //A tower's ladder stands toward `plot`: nothing is built or walled there.
 bool ZoneIsLadderPlot(const ChasmWorld& w, const ZoneState& z, int plot);
 inline vec2 ZoneRangeLine(const ZoneRangeCell& r){

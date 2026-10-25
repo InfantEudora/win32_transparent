@@ -725,7 +725,7 @@ const BarTool chasm_bar[] = {
     {"2","FIELD",CHASM_TOOL_FIELD},{"G","BUILDERS",CHASM_TOOL_BUILDERS},{"C","CAMP",CHASM_TOOL_CAMP},
     {"6","ROAD",CHASM_TOOL_ROAD},{"7","WALL",CHASM_TOOL_WALL},{"J","BRIDGE",CHASM_TOOL_BRIDGE},{"Y","TERRACE",CHASM_TOOL_TERRACE},
     {"H","WINCH",CHASM_TOOL_WINCH},{"P","STEAM",CHASM_TOOL_STEAM},{"L","CONDENSER",CHASM_TOOL_CONDENSER},{"R","RANGE",CHASM_TOOL_RANGE},{"T","TOWER",CHASM_TOOL_TOWER},
-    {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"I","SAIL LOFT",CHASM_TOOL_SAIL_LOFT},{"","DOCK",CHASM_TOOL_DOCK},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
+    {"K","ROPEWALK",CHASM_TOOL_ROPEWALK},{"I","SAIL LOFT",CHASM_TOOL_SAIL_LOFT},{"","DOCK",CHASM_TOOL_DOCK},{"","MAST",CHASM_TOOL_MAST},{"M","STONECUTTER",CHASM_TOOL_STONECUTTER},{"O","MINE",CHASM_TOOL_MINE},
     {"3","ERASE",CHASM_TOOL_ERASE}};
 
 /*
@@ -836,6 +836,14 @@ void ToolTipText(int tool, int kind, std::string& what, std::string& how, const 
             what = "Where a zeppelin is built: frame, hull, rigging, canvas, and steam last to fill it. It floats only over the chasm.";
             snprintf(buf,sizeof(buf),"Drag over the large squares at the chasm's edge, up to %i; a zeppelin wants about 2 by 4 of them.",
                      ZoneKindMaxPlots(ZONE_KIND_DOCK));
+            break;
+        case CHASM_TOOL_MAST:
+            snprintf(buf,sizeof(buf),"A zeppelin moors here, nose-in, to be loaded and unloaded. Its store holds %i of what "
+                     "is unloaded.",ECONOMY_MAST_ROOM);
+            what = buf;
+            snprintf(buf,sizeof(buf),"Not dragged: click to place one at the edge of a drop - the rim, a balcony, an "
+                     "island - with a free plot beside it to step off onto.");
+            controls = "Click to place - Shift+click removes - Right-click puts the tool down";
             break;
         case CHASM_TOOL_SAIL_LOFT:
             what = "Sews canvas from hemp, for a zeppelin's envelope. Like the ropewalk, it needs hemp from a field.";

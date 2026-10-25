@@ -6,7 +6,7 @@ status: partial
 summary: People sent out take a tent from a camp and pitch it where they stand. It becomes their home, and outside every settlement it founds a new one.
 plans: done/settlements_plan.md > Founding: decided; done/settlements_plan.md > Founding: as built, step 4; done/settlements_plan.md > Founding: as built, steps 2, 3, 5 and 6; done/settlements_plan.md > Founding: steps
 code: Economy.h: ECONOMY_PITCH_RINGS ECONOMY_TENT_CARRIED EVENT_NO_TENT; Economy.cpp: TakeTent TentToPack GoForTent PitchSpot Pitched SettleHere CampSpare OwnHousehold PartnerLivingIn GoesWith WithTheGrown BringAlong HouseFamilies; Zones.h: PitchTent
-verified: 2026-10-19
+verified: 2026-10-24
 ---
 
 A new [[Settlement|settlement]] is founded by taking a tent out of a [[Camp|camp]] and pitching it somewhere
@@ -29,7 +29,8 @@ Anyone carrying a tent - posted or not - has **Pitch the tent here** on their ca
 the plot they stand on, or the nearest within {ECONOMY_PITCH_RINGS} plots a camp may take: never on anything built, a
 [[Crate|crate]] or a standing [[Tree|tree]], and on their own terrace step. Outside every settlement the first tent
 founds a new one with a camp of its own; every tent after it, anywhere in that settlement, joins that camp, so a
-settlement has one camp however its tents fall.
+settlement has one camp however its tents fall. An island is founded so too, its settlers flown there and set down
+with their tents aboard a [[Passengers|zeppelin]].
 
 ## Moving in
 

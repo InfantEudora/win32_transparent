@@ -1,4 +1,6 @@
 #include "ApplicationChasm.h"
+#include "MeshBuild.h"
+#include "Palette.h"
 #include <math.h>
 #include <algorithm>
 
@@ -7,7 +9,9 @@
     zeppelin_body (the finished stage with its propellers' booms bare), and a zeppelin_propeller turning on each boom - as
     objects of their own rather than instance sets, so the selected one is outlined (UploadSelection). Over the rules'
     place, a view's own motion: off its mooring it bobs on the air and leans into its turns, and its propellers turn with
-    its pace, idling while it holds still in the air. On the simulation's clock, so a pause holds it still.
+    its pace, idling while it holds still in the air. On the simulation's clock, so a pause holds it still - the bob by the
+    rules' tick (EconomyZeppelinBob), since those on its deck stand on it. Down - moored or set down - a GANGWAY from its
+    deck to its landing (step 2), what its passengers go aboard and off by.
 
     And what a click on one needs: its shape, to pick it by (ChasmZeppelinAlongRay), and a right click with one selected,
     turned into where it is sent (SendZeppelinTo).
@@ -20,9 +24,19 @@
 #define FLEET_HUB_X         1.95f
 #define FLEET_HUB_Y         2.0f
 #define FLEET_HUB_Z         2.4f
+//The gangway (step 2): off the deck's side amidships, forward of the cabin, out to the first ground within a step of
+//the deck - the edge it is set down by, or the dock's ground under it - a plank between two rope rails. Moored nose-in
+//at a mast (step 3), off its bow instead, out to the lip beside the mast.
+#define FLEET_GANGWAY_ALONG 0.6f    //along its nose from its middle, where it leaves the deck...
+#define FLEET_GANGWAY_SIDE  0.95f   //...at the rail
+#define FLEET_GANGWAY_BOW   2.6f    //...or at a mast, this far along, where the deck sweeps up into the bow...
+#define FLEET_GANGWAY_BOW_SIDE 0.4f //...this far toward its landing's side, clear of the mast on its axis...
+#define FLEET_GANGWAY_BOW_RISE 0.16f //...and the deck this much higher there (zep_gondola_z)
+#define FLEET_GANGWAY_DROP  1.6f    //ground this far under the deck at most: a step down from it, or the dock's
+#define FLEET_GANGWAY_MOST  6.0f    //...looked for this far out
+#define FLEET_GANGWAY_HALF  0.22f   //the plank's half width...
+#define FLEET_GANGWAY_RAIL  0.45f   //...and its rails' height over it
 //Its motion off its mooring (current tuning, view only).
-#define FLEET_BOB           0.12f   //how far it rises and sinks on the air...
-#define FLEET_BOB_SECONDS   7.0f    //...once in this long
 #define FLEET_LEAN          0.3f    //its roll, radians, for every radian a second it turns...
 #define FLEET_LEAN_MOST     0.12f   //...up to this
 #define FLEET_PROP_TURNS    2.0f    //propeller turns a second at its full pace...
@@ -88,6 +102,81 @@ uint32_t ChasmZeppelinAlongRay(const EconomyState& e, const ray& r, float* along
     return best;
 }
 
+//The ground at `p` on its plot's level, and whether there is any: off the map there is none.
+static bool FleetGround(const ChasmWorld& w, const vec2& p, float& ground){
+    GridPick pick = w.picker->Pick(p);
+    if (!pick.f_hit || pick.plot < 0){
+        return false;
+    }
+    ground = w.terrain->GroundHeight(p,w.terrain->Height(pick.plot));
+    return true;
+}
+
+/*
+    The GANGWAY's ends (step 2): off its deck's rail on its landing's side, out to the first ground within
+    FLEET_GANGWAY_DROP under the deck - straight out to the side, else straight for the landing - and a little onto it,
+    far enough that the plank slopes down rather than drops. False with no ground in reach.
+*/
+static bool GangwayEnds(const ChasmWorld& w, const EconomyZeppelin& f, int landing, vec3& a, vec3& b){
+    vec2 nose(cosf(f.heading),sinf(f.heading));
+    vec2 side(-nose.y,nose.x);
+    vec2 to = w.grid->fine.pos[landing] - f.pos;
+    vec2 out = (to.dot(side) >= 0.0f) ? side : side * -1.0f;
+    float deck = f.y + ZEPPELIN_DECK;
+    vec2 foot = f.pos + nose * FLEET_GANGWAY_ALONG + out * FLEET_GANGWAY_SIDE;
+    bool f_bow = f.doing == ZEPPELIN_MOORED && f.plot >= 0;     //at a mast, nose-in (step 3)
+    if (f_bow){
+        foot = f.pos + nose * FLEET_GANGWAY_BOW + out * FLEET_GANGWAY_BOW_SIDE;
+        deck += FLEET_GANGWAY_BOW_RISE;
+        out = nose;
+    }
+    a = vec3(foot.x,deck,foot.y);
+    vec2 toward = w.grid->fine.pos[landing] - foot;
+    vec2 ways[2] = {out,(toward.length() > 1e-3f) ? toward * (1.0f / toward.length()) : out};
+    for (const vec2& way : ways){
+        for (float s = 0.3f; s <= FLEET_GANGWAY_MOST; s += 0.15f){
+            float ground;
+            if (!FleetGround(w,foot + way * s,ground) || ground < deck - FLEET_GANGWAY_DROP){
+                continue;
+            }
+            vec2 q = foot + way * std::max(s + 0.25f,1.2f);
+            if (!FleetGround(w,q,ground)){
+                continue;
+            }
+            b = vec3(q.x,ground,q.y);
+            return true;
+        }
+    }
+    return false;
+}
+
+//...and the gangway itself, from a to b: a plank, a post at its foot each side, and a rope rail each side.
+static void BuildGangway(const vec3& a, const vec3& b, std::vector<vertex>& out){
+    const vec3 up(0.0f,1.0f,0.0f);
+    vec3 along = b - a;
+    vec3 across(-along.z,0.0f,along.x);
+    if (across.length() < 1e-5f){
+        return;
+    }
+    across.normalize();
+    vec3 half = across * FLEET_GANGWAY_HALF;
+    vec3 under(0.0f,-0.05f,0.0f);
+    MeshQuad(out,a - half,a + half,b + half,b - half,up,PAL_TIMBER);
+    MeshQuad(out,a - half + under,a + half + under,b + half + under,b - half + under,up * -1.0f,PAL_TIMBER);
+    MeshQuad(out,a + half,b + half,b + half + under,a + half + under,across,PAL_TIMBER);
+    MeshQuad(out,a - half,b - half,b - half + under,a - half + under,across * -1.0f,PAL_TIMBER);
+    for (float s : {-1.0f,1.0f}){
+        vec3 edge = across * (s * (FLEET_GANGWAY_HALF + 0.03f));
+        MeshPost(out,vec2(b.x + edge.x,b.z + edge.z),0.03f,b.y - 0.05f,b.y + FLEET_GANGWAY_RAIL,PAL_TIMBER);
+        vec3 r0 = a + edge + up * FLEET_GANGWAY_RAIL;
+        vec3 r1 = b + edge + up * FLEET_GANGWAY_RAIL;
+        vec3 thick(0.0f,0.035f,0.0f);
+        for (float face : {-1.0f,1.0f}){       //faced both ways, so it reads from either side
+            MeshQuad(out,r0,r1,r1 - thick,r0 - thick,across * (s * face),PAL_ROPE,PAL_CROPS);
+        }
+    }
+}
+
 //RENDER THREAD, from PreRender.
 void ApplicationChasm::UploadFleet(){
     //A chasm_props.glb from before flight has no body of its own: the finished stage, its propellers fixed on it.
@@ -119,6 +208,15 @@ void ApplicationChasm::UploadFleet(){
                         fleet_prop[i][k - 1] = o;
                     }
                 }
+                Object* g = new Object();
+                g->name = "Zeppelin " + std::to_string(i) + " gangway";
+                g->SetMesh(new Mesh());
+                g->SetMaterialSlot(0,palette_material);
+                g->SetVisualOnly(true);
+                g->SetPickability(false);
+                g->SetVisibility(false);
+                world_scene->AddObject(g);
+                fleet_gangway[i] = g;
             }
         });
         if (!fleet_body[0]){
@@ -141,6 +239,8 @@ void ApplicationChasm::UploadFleet(){
             for (Object* p : fleet_prop[i]){
                 p->SetVisibility(false);
             }
+            fleet_gangway[i]->SetVisibility(false);
+            fleet_gangway_key[i] = 0;
             continue;
         }
         if (fleet_id[i] != f->id){
@@ -148,7 +248,7 @@ void ApplicationChasm::UploadFleet(){
             fleet_spin[i] = 0.0f;
         }
         bool f_air = f->doing != ZEPPELIN_MOORED;
-        float bob = f_air ? FLEET_BOB * sinf((float)now * (2.0f * FLEET_PI / FLEET_BOB_SECONDS) + (float)f->id * 1.7f) : 0.0f;
+        float bob = EconomyZeppelinBob(*f,e->tick);     //the rules' tick: those on its deck have it too
         float lean = f_air ? std::max(-FLEET_LEAN_MOST,std::min(FLEET_LEAN_MOST,f->turn * FLEET_LEAN)) : 0.0f;
         //The models' nose is -Z: turned so it points along the rules' heading, then leaned about its own length.
         quat q = quat(up,atan2f(-cosf(f->heading),-sinf(f->heading))) * quat(length_way,lean);
@@ -170,6 +270,28 @@ void ApplicationChasm::UploadFleet(){
             p->SetRotation(q * quat(length_way,side * fleet_spin[i]),false);
             p->SetVisibility(true);
         }
+        //THE GANGWAY while it is down (step 2), rebuilt when where it lies changes - by the centimetre.
+        int landing = EconomyZeppelinLanding(*w,*f);
+        vec3 ga, gb;
+        Object* g = fleet_gangway[i];
+        if (landing < 0 || !GangwayEnds(*w,*f,landing,ga,gb)){
+            g->SetVisibility(false);
+            fleet_gangway_key[i] = 0;
+            continue;
+        }
+        uint64_t key = 1469598103934665603ull;
+        for (float v : {ga.x,ga.y,ga.z,gb.x,gb.y,gb.z}){
+            key = (key ^ (uint64_t)(int64_t)lroundf(v * 100.0f)) * 1099511628211ull;
+        }
+        if (key != fleet_gangway_key[i]){
+            fleet_gangway_key[i] = key;
+            std::vector<vertex> verts;
+            BuildGangway(ga,gb,verts);
+            if (!verts.empty()){
+                g->GetMesh()->SetMeshData(verts.data(),(int)verts.size());
+            }
+        }
+        g->SetVisibility(true);
     }
 }
 
@@ -180,10 +302,11 @@ void ApplicationChasm::SendZeppelinTo(uint32_t id, int2 px, const GridPick& hove
     if (!w || !z || z->world != w){
         return;
     }
-    //A dock under the cursor, by its mast or its cells...
+    //A dock under the cursor, by its mast or its cells - or a mooring mast (step 3)...
     uint32_t dock = 0;
     PlayPick on = PlayPickUnder(px,hover);
-    if (on.kind == PLAY_PICK_BUILDING && on.id < z->buildings.size() && z->buildings[on.id].kind == ZONE_KIND_DOCK){
+    if (on.kind == PLAY_PICK_BUILDING && on.id < z->buildings.size() && (z->buildings[on.id].kind == ZONE_KIND_DOCK
+                                                                          || z->buildings[on.id].kind == ZONE_KIND_MAST)){
         dock = on.id;
     }
     if (!dock && hover.f_hit && hover.coarse_quad >= 0 && hover.coarse_quad < (int)z->field.size()){

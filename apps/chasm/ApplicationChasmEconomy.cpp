@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <algorithm>
+#include <numeric>
 
 /*
     The economy in the app (docs/economy_plan.md): ticking it, publishing it, hashing it, and showing
@@ -107,6 +108,7 @@ void ApplicationChasm::TickEconomy(){
             finished((cell >= 0 && cell < (int)z.field.size()) ? z.field[cell] : 0,-1);
         }
     }
+    economy.RaisesApplied();
     //A field that waited its day for a crop: it starts with AUTO (issues_plan.md).
     for (int cell : economy.CropDefaults()){
         f_raised = zones.Apply(ZONE_OP_FIELD_CROP,(uint32_t)cell,ZONE_CROP_AUTO) || f_raised;
@@ -172,6 +174,9 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         float floats[10] = {f.pos.x,f.pos.y,f.y,f.heading,f.speed,f.turn,f.height,f.end_heading,f.end_y,0.0f};
         h.Bytes(ints,sizeof(ints));
         h.Bytes(floats,sizeof(floats));
+        h.Bytes(f.cabin.data(),sizeof(int) * GOOD_COUNT);     //its cabin (step 2)
+        h.Bytes(f.cargo.data(),sizeof(int) * GOOD_COUNT);     //its cargo and its load list (step 3)
+        h.Bytes(f.load.data(),sizeof(int) * GOOD_COUNT);
         for (const vec2& p : f.path){
             float xz[2] = {p.x,p.y};
             h.Bytes(xz,sizeof(xz));
@@ -223,6 +228,10 @@ void ApplicationChasm::HashEconomy(StateHash& h){
         //Going along with a grown-up, or carried by his mother (settlements_plan.md) - only while he is, likewise.
         if (k.with){
             h.Add(((uint64_t)k.id << 32) ^ 0x3171000000000000ull ^ (uint64_t)k.with);
+        }
+        //The zeppelin he is aboard or sent aboard (flight_plan.md step 2) - only then, likewise.
+        if (k.zeppelin){
+            h.Add(((uint64_t)k.id << 32) ^ 0x2E9900000000ull ^ (uint64_t)k.zeppelin);
         }
         //His route's layers (ramparts_plan.md) - only once he leaves the ground, so a colony that never does hashes as before.
         if (!k.route_layer.empty()){
@@ -509,9 +518,10 @@ void ApplicationChasm::RegisterEconomyCommands(){
     main_scene->RegisterCommandHandler(CHASM_CMD_STOCK,
         [this](const SimCommand& cmd) -> objectid_t {
             //value[3]: a WELL made endless (water_tools_plan.md) - 0 in recordings from before.
-            //value[2]: 1 a camp's pantry, 2 a site's goods brought (steam_plan.md step 5) - 0 the stock.
+            //value[2]: 1 a camp's pantry, 2 a site's goods brought (steam_plan.md step 5), 3 a moored zeppelin's cargo
+            //(flight_plan.md step 3) - 0 the stock.
             if (economy.SetStock(zones.State(),cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],cmd.value[2] == 1.0f,
-                                 cmd.value[3] != 0.0f,cmd.value[2] == 2.0f)){
+                                 cmd.value[3] != 0.0f,cmd.value[2] == 2.0f,cmd.value[2] == 3.0f)){
                 PublishEconomy();
             }
             stock_commands_done++;
@@ -546,6 +556,54 @@ void ApplicationChasm::RegisterEconomyCommands(){
             if (economy.PostGuard(cmd.subtype,(uint32_t)cmd.value[0],zones.State(),walkers,&why)){
                 PublishEconomy();
                 Say(cmd.subtype,((uint32_t)cmd.value[0] != 0) ? "sent" : "released",CHASM_SAY_ORDER);
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    //Sent aboard a zeppelin (flight_plan.md step 2): a right click on it with people selected, refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_BOARD,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.Board(cmd.subtype,(uint32_t)cmd.value[0],cmd.value[1] != 0.0f,zones.State(),walkers,&why)){
+                PublishEconomy();
+                Say(cmd.subtype,"sent",CHASM_SAY_ORDER);
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    //A zeppelin's load list, and its cargo unloaded (flight_plan.md step 3): its card's chips, refused as an order is.
+    main_scene->RegisterCommandHandler(CHASM_CMD_LOAD,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.SetLoad(cmd.subtype,(int)cmd.value[0],(int)cmd.value[1],&why)){
+                PublishEconomy();
+            }else{
+                {
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    order_last_refusal = why;
+                }
+                order_refusals++;
+            }
+            order_commands_done++;
+            return OBJECTID_INVALID;
+        });
+    main_scene->RegisterCommandHandler(CHASM_CMD_UNLOAD,
+        [this](const SimCommand& cmd) -> objectid_t {
+            std::string why;
+            if (economy.Unload(cmd.subtype,zones.State(),&why)){
+                PublishEconomy();
             }else{
                 {
                     std::lock_guard<std::mutex> lock(grid_mutex);
@@ -832,6 +890,24 @@ void ApplicationChasm::SubmitCrate(int plot, int good, int amount){
     main_scene->SubmitCommand(cmd);
 }
 
+//CHASM_CMD_STOCK: `into` 0 the stock, 1 a camp's pantry (a dock's zeppelin's cabin), 2 its site's goods brought, 3 a
+//moored zeppelin's cargo.
+static SimCommand StockCommand(uint32_t id, int good, int amount, int into, bool f_endless){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_STOCK;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = id;
+    cmd.value[0] = (float)good;
+    cmd.value[1] = (float)amount;   //well inside a float's exact integers
+    cmd.value[2] = (float)into;
+    cmd.value[3] = f_endless ? 1.0f : 0.0f;
+    return cmd;
+}
+
+void ApplicationChasm::SubmitStock(uint32_t id, int good, int amount, int into){
+    main_scene->SubmitCommand(StockCommand(id,good,amount,into,false));
+}
+
 void ApplicationChasm::SubmitOrder(uint32_t person, int plot, int layer, bool f_spread){
     SimCommand cmd;
     cmd.type = CHASM_CMD_ORDER;
@@ -850,6 +926,34 @@ void ApplicationChasm::SubmitGuard(uint32_t person, uint32_t tower){
     cmd.flags = SIM_CMD_FLAG_RECORD;
     cmd.subtype = person;
     cmd.value[0] = (float)tower;    //a building id, well inside a float's exact integers
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitBoard(uint32_t person, uint32_t zeppelin, bool f_spread){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_BOARD;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = person;
+    cmd.value[0] = (float)zeppelin;
+    cmd.value[1] = f_spread ? 1.0f : 0.0f;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitLoad(uint32_t zeppelin, int good, int amount){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_LOAD;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = zeppelin;
+    cmd.value[0] = (float)good;
+    cmd.value[1] = (float)amount;
+    main_scene->SubmitCommand(cmd);
+}
+
+void ApplicationChasm::SubmitUnload(uint32_t zeppelin){
+    SimCommand cmd;
+    cmd.type = CHASM_CMD_UNLOAD;
+    cmd.flags = SIM_CMD_FLAG_RECORD;
+    cmd.subtype = zeppelin;
     main_scene->SubmitCommand(cmd);
 }
 
@@ -1134,6 +1238,9 @@ json WorkerJson(const EconomyWorker& k, const EconomyState* e = NULL){
     if (k.forage != FORAGE_NONE){
         j["forage"] = (k.forage == FORAGE_FRUIT) ? "fruit" : "water";      //by hand at his post (foraging_plan.md)
     }
+    if (k.zeppelin){
+        j["zeppelin"] = k.zeppelin;     //aboard it, or sent aboard (flight_plan.md step 2)
+    }
     if (k.with){
         j["with"] = k.with;     //the grown-up he goes along with, or the mother carrying him (settlements_plan.md)
     }
@@ -1350,21 +1457,26 @@ json ApplicationChasm::EconomyBuildingJson(uint32_t id){
 //--- The panel ------------------------------------------------------------------------------------
 
 #ifdef USE_IMGUI
+//Goods as the panel lists them - "wheat 5, water 3" - and "" for none.
+static std::string GoodsText(const std::array<int,GOOD_COUNT>& goods){
+    std::string text;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        if (goods[g]){
+            char buf[32];
+            snprintf(buf,sizeof(buf),"%s%s %i",text.empty() ? "" : ", ",GoodName(g),goods[g]);
+            text += buf;
+        }
+    }
+    return text;
+}
+
 void ApplicationChasm::RenderEconomyInfo(uint32_t id){
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
     if (!e || !z || e->world != z->world || id == 0 || id >= z->buildings.size()){
         return;
     }
-    std::string stock;
-    for (int g = 0; g < GOOD_COUNT; g++){
-        int n = EconomyStock(*e,id,g);
-        if (n){
-            char buf[32];
-            snprintf(buf,sizeof(buf),"%s%s %i",stock.empty() ? "" : ", ",GoodName(g),n);
-            stock += buf;
-        }
-    }
+    std::string stock = (id < e->stock.size()) ? GoodsText(e->stock[id]) : std::string();
     std::array<int,GOOD_COUNT> site_cost = EconomySiteCost(*z->world,*z,id);
     if (std::any_of(site_cost.begin(),site_cost.end(),[](int x){ return x > 0; })){
         ZoneBuildingInfo info = ZoneBuildingFigures(*z->world,*z,id);
@@ -1393,9 +1505,24 @@ void ApplicationChasm::RenderEconomyInfo(uint32_t id){
             }
         }
     }
-    if (z->buildings[id].kind == ZONE_KIND_STORE){
-        int room = (id < e->room.size()) ? e->room[id] : 0;
+    //What it holds, by what its stock is: a store's and a tower's against its room; a home's - a house's, a camp's pantry -
+    //its family's own, food and water sharing the room and firewood in the woodshed; a camp's supplies anyone's; anything
+    //else's what it made.
+    int held_kind = z->buildings[id].kind;
+    int room = (id < e->room.size()) ? e->room[id] : 0;
+    int woodshed = (id < e->woodshed.size()) ? e->woodshed[id] : 0;
+    if (held_kind == ZONE_KIND_STORE || held_kind == ZONE_KIND_TOWER){
         ImGui::Text("  holds %i of %i: %s",EconomyStockTotal(*e,id),room,stock.empty() ? "nothing" : stock.c_str());
+    }else if (held_kind == ZONE_KIND_HOUSE){
+        ImGui::Text("  at home: %s - room %i for food and water, woodshed %i",stock.empty() ? "nothing" : stock.c_str(),
+                    room,woodshed);
+    }else if (held_kind == ZONE_KIND_CAMP){
+        std::string pantry = (id < e->pantry.size()) ? GoodsText(e->pantry[id]) : std::string();
+        ImGui::Text("  supplies: %s",stock.empty() ? "nothing" : stock.c_str());
+        ImGui::Text("  pantry: %s - room %i for food and water, woodshed %i",pantry.empty() ? "nothing" : pantry.c_str(),
+                    room,woodshed);
+    }else if (held_kind == ZONE_KIND_WELL){
+        ImGui::Text("  holds %s%s",stock.empty() ? "nothing - drawn dry" : stock.c_str(),EconomyWellEndless(*e,id) ? ", endless" : "");
     }else if (!stock.empty()){
         ImGui::Text("  waiting to be carried off: %s",stock.c_str());
     }
@@ -1473,77 +1600,190 @@ void ApplicationChasm::RenderSelectedStore(int plot){
     std::shared_ptr<const ZoneState> z = GetZones();
     if (!e || !z || e->world != z->world || plot < 0 || plot >= (int)z->building.size()
         || z->KindOf(plot) != ZONE_KIND_STORE){
-        ImGui::TextDisabled("select a store (Select tool, click) to choose what it takes");
         return;
     }
     uint32_t id = z->building[plot];
     GoodsMask own = z->buildings[id].allow;
     GoodsMask takes = EconomyAccepts(*e,id);
     bool f_attached = (id < e->attached.size() && e->attached[id] != 0);
-    ImGui::Text("selected store %u takes%s:",id,f_attached ? " (next to a workplace - its goods only)" : "");
-    if (f_attached){
-        ImGui::BeginDisabled();
-    }
-    for (int g = 0; g < GOOD_COUNT; g++){
-        if (g > 0){
-            ImGui::SameLine();
+    ImGui::Text("takes%s:",f_attached ? " (next to a workplace - its goods only)" : "");
+    //Four to a row, as the Paint panel's tools: thirteen goods on one line ran far off the panel's edge.
+    ImGui::BeginDisabled(f_attached);
+    if (ImGui::BeginTable("##takes",4,ImGuiTableFlags_SizingFixedFit)){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            ImGui::TableNextColumn();
+            bool f_on = (f_attached ? takes : own) & GOOD_BIT(g);
+            std::string label = std::string(GoodName(g)) + "##takes";
+            if (ImGui::Checkbox(label.c_str(),&f_on) && !f_attached){
+                GoodsMask mask = f_on ? (GoodsMask)(own | GOOD_BIT(g)) : (GoodsMask)(own & ~GOOD_BIT(g));
+                SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
+            }
         }
-        bool f_on = (f_attached ? takes : own) & GOOD_BIT(g);
-        std::string label = std::string(GoodName(g)) + "##takes";
-        if (ImGui::Checkbox(label.c_str(),&f_on) && !f_attached){
-            GoodsMask mask = f_on ? (GoodsMask)(own | GOOD_BIT(g)) : (GoodsMask)(own & ~GOOD_BIT(g));
-            SubmitZone(ZONE_OP_STORE_ALLOW,plot,mask);
-        }
+        ImGui::EndTable();
     }
-    if (f_attached){
-        ImGui::EndDisabled();
-    }
+    ImGui::EndDisabled();
 }
 
 /*
-    The selected plot's CRATE (crates_plan.md): what lies there, and a debug crate to put down - a good and how
-    much, a recorded CHASM_CMD_CRATE, into the crate already there if there is one. Refused off open ground.
+    What FILL IT UP sets a building's goods to (the Pick / Selected panel's), -1 for a good it leaves alone: up to its
+    room as the rules count it, never below what it holds. A store's room left is shared evenly over the goods it takes;
+    a home's - a house's, or a camp's pantry - over its water and foods, which share it (Economy::HouseRoom), with its
+    woodshed filled with firewood; a tower's water and provisions to what it is built with (EconomyTowerStock); a well
+    to the water its seed gave it. Anything with no room of its own - a workplace, a camp's supplies - has none to fill.
 */
-void ApplicationChasm::RenderSelectedCrate(int plot){
+static std::array<int,GOOD_COUNT> StockFill(const EconomyState& e, const ZoneState& z, uint32_t id, int plot, bool f_pantry){
+    std::array<int,GOOD_COUNT> out;
+    out.fill(-1);
+    if (!id || id >= z.buildings.size() || id >= e.stock.size() || id >= e.pantry.size()){
+        return out;
+    }
+    const std::array<int,GOOD_COUNT>& held = f_pantry ? e.pantry[id] : e.stock[id];
+    int total = std::accumulate(held.begin(),held.end(),0);
+    int room = (id < e.room.size()) ? e.room[id] : 0;
+    //`free` units shared evenly over the goods of `mask`, the odd ones to the first of them.
+    auto share = [&](GoodsMask mask, int free){
+        int n = 0;
+        for (int g = 0; g < GOOD_COUNT; g++){
+            n += (mask & GOOD_BIT(g)) ? 1 : 0;
+        }
+        for (int g = 0, i = 0; g < GOOD_COUNT && n > 0 && free > 0; g++){
+            if (mask & GOOD_BIT(g)){
+                out[g] = held[g] + free / n + ((i++ < free % n) ? 1 : 0);
+            }
+        }
+    };
+    int kind = z.buildings[id].kind;
+    if (kind == ZONE_KIND_TOWER){
+        for (int g : {GOOD_WATER,GOOD_PROVISIONS}){
+            out[g] = std::max(held[g],EconomyTowerStock(*z.world,plot,g));
+        }
+    }else if (kind == ZONE_KIND_WELL){
+        out[GOOD_WATER] = std::max(held[GOOD_WATER],EconomyWellWater(*z.world,plot));
+    }else if (kind == ZONE_KIND_STORE){
+        share(EconomyAccepts(e,id),room - total);
+    }else if (kind == ZONE_KIND_HOUSE || (kind == ZONE_KIND_CAMP && f_pantry)){
+        out[GOOD_WOOD] = std::max(held[GOOD_WOOD],(id < e.woodshed.size()) ? e.woodshed[id] : 0);
+        share((GoodsMask)(ECONOMY_HOUSE_KEEPS & ~GOOD_BIT(GOOD_WOOD)),room - (total - held[GOOD_WOOD]));
+    }
+    return out;
+}
+
+/*
+    THE SELECTED PLOT'S SUPPLIES (the Pick / Selected panel's): a good and an amount, put down as a CRATE on the plot
+    (CHASM_CMD_CRATE, crates_plan.md) - into the crate already there if there is one, and only on open ground - or into
+    building `id` standing there (CHASM_CMD_STOCK, the tool's set_stock): added to what it holds, FILLED UP to its room
+    (StockFill), or emptied - a camp's supplies or its pantry, as its box says. A site still being built can be brought
+    all it needs at once, which builds it. Every one a debug edit, recorded, so a replay makes it on the same tick.
+*/
+void ApplicationChasm::RenderSelectedSupplies(int plot, uint32_t id){
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ZoneState> z = GetZones();
     if (!e || !z || e->world != z->world || plot < 0 || plot >= (int)z->building.size()){
         return;
     }
-    const EconomyCrate* c = EconomyCrateOn(*e,plot);
-    if (c){
-        std::string goods;
-        for (int g = 0; g < GOOD_COUNT; g++){
-            if (c->stock[g]){
-                char buf[32];
-                snprintf(buf,sizeof(buf),"%s%s %i",goods.empty() ? "" : ", ",GoodName(g),c->stock[g]);
-                goods += buf;
-            }
-        }
-        ImGui::Text("crate %u here (%s): %s",c->id,EconomyCrateOriginName(c->origin),goods.c_str());
-    }
     const char* names[GOOD_COUNT];
     for (int g = 0; g < GOOD_COUNT; g++){
         names[g] = GoodName(g);
     }
-    ImGui::SetNextItemWidth(90.0f);
-    ImGui::Combo("##crate_good",&crate_edit_good,names,GOOD_COUNT);
+    ImGui::SetNextItemWidth(110.0f);
+    ImGui::Combo("##supply_good",&crate_edit_good,names,GOOD_COUNT);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(90.0f);
-    ImGui::InputInt("##crate_amount",&crate_edit_amount);
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::InputInt("##supply_amount",&crate_edit_amount);
     crate_edit_amount = std::max(1,crate_edit_amount);
-    ImGui::SameLine();
+    const int good = crate_edit_good;
+    const int amount = crate_edit_amount;
+    //Why a button does what it does - or, greyed out, why it does nothing.
+    auto tip = [](const char* text){
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)){
+            ImGui::SetTooltip("%s",text);
+        }
+    };
+
+    const EconomyCrate* c = EconomyCrateOn(*e,plot);
     bool f_open = EconomyCrateGround(*z->world,*z,plot,z->world->grid->fine.pos[plot]);
-    if (!f_open){
-        ImGui::BeginDisabled();
+    ImGui::BeginDisabled(!f_open);
+    if (ImGui::Button(c ? "Add to the crate" : "Put a crate here")){
+        SubmitCrate(plot,good,amount);
     }
-    if (ImGui::SmallButton(c ? "Add to the crate" : "Put a crate here")){
-        SubmitCrate(plot,crate_edit_good,crate_edit_amount);
+    ImGui::EndDisabled();
+    tip(f_open ? "the good and amount above, as a crate lying on this plot" : "a crate goes on open ground only");
+    ImGui::SameLine();
+    if (c){
+        ImGui::Text("crate %u (%s): %s",c->id,EconomyCrateOriginName(c->origin),GoodsText(c->stock).c_str());
+    }else{
+        ImGui::TextDisabled(f_open ? "no crate here" : "not open ground");
     }
-    if (!f_open){
-        ImGui::EndDisabled();
+
+    if (!id || id >= z->buildings.size()){
+        return;
+    }
+    if (id >= e->stock.size() || id >= e->pantry.size()){
+        ImGui::TextDisabled("the economy takes this building in on its next tick");
+        return;
+    }
+    const int kind = z->buildings[id].kind;
+    const bool f_pantry = kind == ZONE_KIND_CAMP && f_supply_pantry;
+    const int into = f_pantry ? 1 : 0;
+    const std::array<int,GOOD_COUNT>& held = f_pantry ? e->pantry[id] : e->stock[id];
+    //Set from what the panel last saw: two clicks inside one tick would add once, which no hand manages.
+    const bool f_takes = kind != ZONE_KIND_WELL || good == GOOD_WATER;
+    ImGui::BeginDisabled(!f_takes);
+    if (ImGui::Button("Add to it")){
+        SubmitStock(id,good,held[good] + amount,into);
+    }
+    ImGui::EndDisabled();
+    tip(f_takes ? "the good and amount above, added to what the building holds" : "a well holds water alone");
+    ImGui::SameLine();
+    std::array<int,GOOD_COUNT> fill = StockFill(*e,*z,id,plot,f_pantry);
+    bool f_fills = false;
+    bool f_holds = false;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        f_fills = f_fills || (fill[g] >= 0 && fill[g] != held[g]);
+        f_holds = f_holds || held[g] > 0;
+    }
+    ImGui::BeginDisabled(!f_fills);
+    if (ImGui::Button("Fill it up")){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (fill[g] >= 0 && fill[g] != held[g]){
+                SubmitStock(id,g,fill[g],into);
+            }
+        }
+    }
+    ImGui::EndDisabled();
+    tip(f_fills ? "up to its room: a store's shared over the goods it takes, a home's over water and food with its "
+                  "woodshed full, a tower's to what it is built with, a well's to what its seed gave it"
+                : "full already, or no room of its own to fill - a workplace, a camp's supplies; Add puts goods in");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!f_holds);
+    if (ImGui::Button("Empty it")){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (held[g] > 0){
+                SubmitStock(id,g,0,into);
+            }
+        }
+    }
+    ImGui::EndDisabled();
+    if (kind == ZONE_KIND_CAMP){
         ImGui::SameLine();
-        ImGui::TextDisabled("(not open ground)");
+        ImGui::Checkbox("pantry##supply",&f_supply_pantry);
+        tip("its families' own food, water and firewood, which has room - not its supplies, anyone's, which have none");
+    }
+    //A site: everything it is still short of, at once - Economy::SetStock's `site`, which builds what that pays for.
+    std::array<int,GOOD_COUNT> cost = EconomySiteCost(*z->world,*z,id);
+    bool f_short = false;
+    for (int g = 0; g < GOOD_COUNT; g++){
+        f_short = f_short || cost[g] > EconomySiteBrought(*e,id,g);
+    }
+    if (f_short && ImGui::Button("Bring all it needs")){
+        for (int g = 0; g < GOOD_COUNT; g++){
+            if (cost[g] > EconomySiteBrought(*e,id,g)){
+                SubmitStock(id,g,cost[g],2);
+            }
+        }
+    }
+    if (f_short){
+        tip("every good its site is short of, brought at once: it builds what that pays for on the next tick");
     }
 }
 
@@ -1825,7 +2065,16 @@ void ApplicationChasm::RegisterEconomyTools(){
         "(what it does at its way's end), leg (0 rise, 1 cruise, 2 turn, 3 descend), height, path, next. op zeppelin - "
         "zeppelin `zeppelin` (default the first) sent as a right click with it selected sends it: `dock` a dock's id to "
         "moor on; else `plot` (or x,z with `set_down` true) an edge plot to set down by; else x,z to hover over the open "
-        "chasm. RECORDED (CHASM_CMD_ZEPPELIN), `refusal` as for an order. "
+        "chasm. RECORDED (CHASM_CMD_ZEPPELIN), `refusal` as for an order. Each zeppelin lists its `passengers` (ids) and "
+        "its `cabin` (water, provisions), `cargo` and `load` (its load list) - goods by name (step 3). op load - zeppelin "
+        "`zeppelin` (default the first) to load `amount` of `good` (0 takes it off the list), cut to what ZEPPELIN_CARGO "
+        "leaves; loaded by the builders while it is moored at a mast or a dock (RECORDED, CHASM_CMD_LOAD). op unload - its "
+        "cargo unloaded while it is down: moored, into the mast's or dock's store, the rest a crate on its landing; set "
+        "down, a crate (RECORDED, CHASM_CMD_UNLOAD). set_stock with `cargo` true on a dock or mast sets the cargo of the "
+        "zeppelin moored there. `refusal` as for an order. op board - person `person` sent aboard zeppelin `zeppelin` (default the first) as "
+        "a right click on it sends them, `spread` true as one of a group's: posted on its landing, aboard when he stands "
+        "there with it; a worker shows `zeppelin` while aboard or on his way. RECORDED (CHASM_CMD_BOARD), `refusal` as for "
+        "an order. Any order takes someone aboard off onto its landing while it is down (op order). "
         "include_screenshot as elsewhere.",
         json{
             {"type","object"},
@@ -1839,6 +2088,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                 {"building",{{"type","integer"},{"description","set_stock, guard, guards: the building's id"}}},
                 {"pantry",{{"type","boolean"},{"description","set_stock: a camp's pantry, not its supplies"}}},
                 {"endless",{{"type","boolean"},{"description","set_stock: a well kept full for good, or finite again"}}},
+                {"cargo",{{"type","boolean"},{"description","set_stock: the cargo of the zeppelin moored at a dock or mast"}}},
+                {"good",{{"type","string"},{"description","load: the good"}}},
+                {"amount",{{"type","integer"},{"description","load: how much of it, 0 takes it off the list"}}},
                 {"on",{{"type","boolean"}}},
                 {"person",{{"type","integer"},{"description","set_needs, order, release, guard, release_guard, gather, take_tent, "
                                                             "pitch, settle, forage: the person's id"}}},
@@ -2015,16 +2267,9 @@ void ApplicationChasm::RegisterEconomyTools(){
                         sets.push_back({GOOD_WATER,before ? EconomyStock(*before,id,GOOD_WATER) : 0,0});
                     }
                 }
+                int into = args.value("pantry",false) ? 1 : args.value("site",false) ? 2 : args.value("cargo",false) ? 3 : 0;
                 for (const std::array<int,3>& s : sets){
-                    SimCommand cmd;
-                    cmd.type = CHASM_CMD_STOCK;
-                    cmd.flags = SIM_CMD_FLAG_RECORD;
-                    cmd.subtype = id;
-                    cmd.value[0] = (float)s[0];
-                    cmd.value[1] = (float)s[1];
-                    cmd.value[2] = args.value("pantry",false) ? 1.0f : args.value("site",false) ? 2.0f : 0.0f;
-                    cmd.value[3] = (float)s[2];
-                    SubmitCommandAndWait(cmd);
+                    SubmitCommandAndWait(StockCommand(id,s[0],s[1],into,s[2] != 0));
                 }
                 //A building placed on this very tick is not the economy's yet (its next tick takes it in).
                 std::shared_ptr<const EconomyState> es = GetEconomy();
@@ -2489,6 +2734,27 @@ void ApplicationChasm::RegisterEconomyTools(){
                 }
                 result["refusal"] = refusal;
                 result["plot"] = plot;
+            }else if (op == "board"){
+                //FLIGHT (flight_plan.md step 2): as a right click on the zeppelin with him selected.
+                std::shared_ptr<const EconomyState> now = GetEconomy();
+                uint32_t id = (uint32_t)std::max(0,args.value("zeppelin",0));
+                if (!id && now && !now->fleet.empty()){
+                    id = now->fleet[0].id;
+                }
+                SimCommand cmd;
+                cmd.type = CHASM_CMD_BOARD;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = (uint32_t)std::max(0,args.value("person",0));
+                cmd.value[0] = (float)id;
+                cmd.value[1] = args.value("spread",false) ? 1.0f : 0.0f;
+                uint32_t before = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                std::string refusal;
+                if (order_refusals.load() != before){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["refusal"] = refusal;
             }else if (op == "zeppelin"){
                 //FLIGHT (flight_plan.md): as a right click with it selected - the rules say whether it may go.
                 std::shared_ptr<const EconomyState> now = GetEconomy();
@@ -2510,6 +2776,36 @@ void ApplicationChasm::RegisterEconomyTools(){
                 cmd.value[1] = at.y;
                 cmd.value[2] = (float)plot;
                 cmd.value[3] = (float)std::max(0,args.value("dock",0));
+                uint32_t before = order_refusals.load();
+                SubmitCommandAndWait(cmd);
+                std::string refusal;
+                if (order_refusals.load() != before){
+                    std::lock_guard<std::mutex> lock(grid_mutex);
+                    refusal = order_last_refusal;
+                }
+                result["zeppelin"] = id;
+                result["refusal"] = refusal;
+            }else if (op == "load" || op == "unload"){
+                //THE MAST AND GOODS (flight_plan.md step 3): as the chips on its card.
+                std::shared_ptr<const EconomyState> now = GetEconomy();
+                uint32_t id = (uint32_t)std::max(0,args.value("zeppelin",0));
+                if (!id && now && !now->fleet.empty()){
+                    id = now->fleet[0].id;
+                }
+                SimCommand cmd;
+                cmd.flags = SIM_CMD_FLAG_RECORD;
+                cmd.subtype = id;
+                if (op == "load"){
+                    int good = GoodByName(args.value("good",std::string()));
+                    if (good < 0){
+                        return json{{"error","load: no such good"}};
+                    }
+                    cmd.type = CHASM_CMD_LOAD;
+                    cmd.value[0] = (float)good;
+                    cmd.value[1] = (float)std::max(0,args.value("amount",0));
+                }else{
+                    cmd.type = CHASM_CMD_UNLOAD;
+                }
                 uint32_t before = order_refusals.load();
                 SubmitCommandAndWait(cmd);
                 std::string refusal;
@@ -3071,6 +3367,17 @@ void ApplicationChasm::RegisterEconomyTools(){
                                      {"plot",f.plot},{"x",f.pos.x},{"z",f.pos.y},{"y",f.y},{"heading",f.heading},
                                      {"speed",f.speed},{"bound",doings[f.bound & 3]},{"leg",f.leg},{"height",f.height},
                                      {"path",way},{"next",f.next}});
+                json aboard = json::array();
+                for (const EconomyWorker& k : e->workers){
+                    if (k.state == WORKER_ABOARD && k.zeppelin == f.id){
+                        aboard.push_back(k.id);
+                    }
+                }
+                fleet.back()["passengers"] = aboard;
+                fleet.back()["cabin"] = json{{"water",f.cabin[GOOD_WATER]},{"provisions",f.cabin[GOOD_PROVISIONS]}};
+                fleet.back()["cargo"] = StockJson(f.cargo);
+                fleet.back()["load"] = StockJson(f.load);
+                fleet.back()["landing"] = EconomyZeppelinLanding(*w,f);
             }
             result["fleet"] = fleet;
             return MaybeAttachScreenshot(result,args.value("include_screenshot",false),args.value("include_ui",true));

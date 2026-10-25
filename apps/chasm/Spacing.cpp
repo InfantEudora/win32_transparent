@@ -140,7 +140,7 @@ void Economy::SpaceOut(const ZoneState& z, float dt){
     std::vector<vec2> anchors;          //...and where its route has it...
     std::vector<float*> crowds;         //...and the pace it walks its next tick at
     for (EconomyWorker& k : state.workers){
-        if (EconomyIndoors(k)){
+        if (EconomyIndoors(k) || k.state == WORKER_ABOARD){     //...or on a zeppelin's deck (flight_plan.md step 2)
             k.off = vec2();
             k.crowd = 1.0f;
             continue;

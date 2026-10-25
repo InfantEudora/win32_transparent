@@ -5,18 +5,18 @@ kind: goods
 status: partial
 summary: Goods lying on the ground - the load of someone sent to a post, or one nobody would take - a store villagers take from, and builders carry off to a store.
 plans: crates_plan.md > Decided; crates_plan.md > As built: step 1; crates_plan.md > As built: step 2; crates_plan.md > As built: step 3; crates_plan.md > As built: step 5, dropping instead of holding (2026-10-18); crates_plan.md > As built: the ghost goes yellow over a crate (2026-10-24); stone_plan.md > As built: step 1 (2026-10-14); stone_plan.md > As built: step 2 (2026-10-14); stone_plan.md > As built: PICK UP by anyone free (2026-10-18)
-code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE CRATE_SITE ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble Derive; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
-verified: 2026-10-24
+code: Economy.h: EconomyCrate EconomyCrateGround EconomyCrateInTheWay ECONOMY_STORE_CRATE CRATE_RUBBLE CRATE_SITE CRATE_CARGO ECONOMY_PICK_UP_WATER; Economy.cpp: Order DropLoad AddToCrate LoseCoveredCrates SpawnCrate MoveCrate SetPickUp SourceStock PlaceRubble Derive; ApplicationChasmSelect.cpp: CrateCard PLAY_PICK_CRATE
+verified: 2026-10-25
 ---
 
 A crate is goods lying on the ground. One appears when the player sends someone carrying a load to a [[Posts|post]]:
 the load is put down the moment the order is given. **Nobody holds a load nothing takes**: with no [[Store|store]] or
 woodpile for it, it is put down where they stand - a [[Construction|site's]] carriers' when it is cancelled, a
 farmer's when the house is full, the dead's. One is left where a [[Camp|camp]] stood when its last tent goes, holding
-its supplies and pantry ("A camp's goods"), and where a [[Construction|site]] was taken off, holding what was brought
-to it ("A site's goods"). **Rubble** is a crate too: piles of [[Stone|stone]] laid out with a new colony at the foot
-of the balconies' walls, or left where a [[Stonecutter|stonecutter]] broke a rock - drawn as broken stones, not a
-crate - and along a seam's foot, piles of its [[Floatstone|floatstone]], drawn as broken crystals: "Floatstone".
+its supplies and pantry ("A camp's goods"), where a [[Construction|site]] was taken off ("A site's goods"), and where
+a zeppelin unloaded what no [[Mooring mast|mast's]] store took ("A zeppelin's cargo"). **Rubble** is a crate too: piles
+of [[Stone|stone]] laid out with a new colony at the foot of the balconies' walls, or left where a [[Stonecutter|stonecutter]]
+broke a rock - drawn as broken stones - and along a seam's foot, of its [[Floatstone|floatstone]], drawn as crystals: "Floatstone".
 
 ## Where the load goes
 

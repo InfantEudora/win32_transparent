@@ -166,7 +166,23 @@ houses on two of them).
   the guard tower; not a collector, winch, mine, bridge, well or camp. The castle prototype keeps off terraces.
 - **The look** (`TerraceMesh.cpp`): the top in its biome's grass, so the seasons and the snow lie on it; a dressed-stone
   retaining wall with a coping wherever the plot across is lower; a site staked out on the ground. Props under a
-  standing terrace are hidden (`EconomyPropCovered`).
+  standing terrace are hidden (`EconomyPropCovered`). Its outline runs where a building's walls would
+  (`BuildingWallCrossing`), not by the ground's edge midpoints: round a point of five or six cells those drew a STAR
+  where a house there is a plain n-gon (the user, 2026-10-25), and the two now meet wall on wall. A road's stair, the
+  road pieces either side of it and the walkers' climb (`RouteHeight`) go by that crossing too, so the stair meets the
+  wall and the road on the terrace runs to its edge.
+- **The retaining wall's look** (the user's, 2026-10-25, `TerraceMesh.cpp`): the face is **battered**, leaning back
+  into the fill 1 in 6 - its head on the outline, its foot stepping out onto the ground below, so whatever stands on
+  the terrace keeps its shape and the batter hides inside a building at the foot. The faces meet mitred at the
+  cells' centres and along one shared direction at each crossing (`CrossingOut`), so the foot runs on unbroken. On it:
+  a darker **footing course**; overhanging **capstones** with joints, a gap where a road's stair climbs the wall and
+  none along a building standing over the top; lighter **quoins**, long and short by turns, up every outer corner -
+  blocks standing proud of the face with joints between, in front of the creepers, which they z-fought as flat
+  panels at one depth (the user, 2026-10-25); a
+  **buttress** where a wall at least `TERRACE_PIER_FROM` high crosses a fine edge and runs straight on there, none
+  where anything stands against it or a stair or door is; **creepers** hanging down about a third of the walls
+  (chosen by the two plots, in the leaf colours, which keep summer's, so they read as ivy); and **tufts** at the foot
+  on open ground.
 - **Walking** (`ZoneTerraceStep`, asked by `Walkers::EdgeOpen`, `EdgeSpeed` and `EconomyStraightClear` alike): a
   terrace standing more than `ZONE_TERRACE_STEP` over the plot across is a WALL; up to a storey between two standing
   roads, a STAIR, walked at `WALKER_SPEED_STAIR` and drawn as stone steps on the lower plot's half (`RoadStairs`), where
@@ -207,6 +223,9 @@ Open, for the user:
 | `ZONE_TERRACE_MOST_FILL` | 2 storeys | the most a terrace's top stands over the lowest ground under it |
 | `ZONE_TERRACE_STEP` | 0.35 | the most a terrace stands over the plot across and is still walked onto |
 | `ECONOMY_TERRACE_STONE` | 0.5 | stone a unit of a plot's area for each unit it fills |
+| `TERRACE_BATTER` | 0.16 | how far a retaining wall's face stands out for each unit down from its head |
+| `TERRACE_PIER_FROM` | 1.6 | the least height of wall that takes buttresses |
+| `TERRACE_CREEPER_SHARE` | 30 | percent of the walls between two plots that creepers hang down |
 
 ## Stage 3: buildings that join the levels
 

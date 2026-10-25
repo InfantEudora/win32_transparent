@@ -65,6 +65,10 @@ json ChasmSaveToJson(const ChasmSave& s){
         if (b.kind == ZONE_KIND_TOWER && b.ladder >= 0){
             jb["ladder"] = b.ladder;
         }
+        //...and a stone one's stone (ramparts_plan.md) - only where stone, so a wooden tower's entry is as it was.
+        if (b.kind == ZONE_KIND_TOWER && b.f_stone){
+            jb["stone"] = true;
+        }
         if (ZoneKindOnCells(b.kind)){
             //A field's cells - or a range's (range_plan.md), which has no crop or land.
             jb["cells"] = b.cells;
@@ -209,6 +213,11 @@ json ChasmSaveToJson(const ChasmSave& s){
             //Who a child goes along with, or a baby is carried by (settlements_plan.md) - only then.
             if (k.with){
                 workers.back()["with"] = k.with;
+            }
+            //The zeppelin he is aboard, or sent aboard, and his height on its deck (flight_plan.md step 2) - only then.
+            if (k.zeppelin){
+                workers.back()["zeppelin"] = k.zeppelin;
+                workers.back()["deck_y"] = k.deck_y;
             }
             //His route's layers (ramparts_plan.md) - only off the ground, so a colony that never climbs saves as before.
             if (!k.route_layer.empty()){
@@ -355,6 +364,27 @@ json ChasmSaveToJson(const ChasmSave& s){
                                      {"pos",json::array({f.pos.x,f.pos.y})},{"y",f.y},{"heading",f.heading},
                                      {"speed",f.speed},{"turn",f.turn},{"bound",f.bound},{"leg",f.leg},{"height",f.height},
                                      {"path",way},{"next",f.next},{"end_heading",f.end_heading},{"end_y",f.end_y}});
+                //Its cabin (step 2): goods by name, as a crate's.
+                json cabin = json::object();
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    if (f.cabin[g]){
+                        cabin[GoodName(g)] = f.cabin[g];
+                    }
+                }
+                fleet.back()["cabin"] = cabin;
+                //Its cargo and its load list (step 3), the same way.
+                json cargo = json::object();
+                json load = json::object();
+                for (int g = 0; g < GOOD_COUNT; g++){
+                    if (f.cargo[g]){
+                        cargo[GoodName(g)] = f.cargo[g];
+                    }
+                    if (f.load[g]){
+                        load[GoodName(g)] = f.load[g];
+                    }
+                }
+                fleet.back()["cargo"] = cargo;
+                fleet.back()["load"] = load;
             }
             economy["fleet"] = fleet;
             economy["next_zeppelin"] = e.next_zeppelin;
@@ -739,6 +769,7 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
         b.cells_built = jb.value("cells_built",std::vector<int>());
         b.land_of = jb.value("land",0u);
         b.ladder = jb.value("ladder",-1);      //none from before ladders: the zones give it its default
+        b.f_stone = jb.value("stone",false);
         for (const json& pl : jb.value("plots",json::array())){
             b.plots.push_back(std::make_pair(pl[0].get<int>(),pl[1].get<int>()));
             b.standing.push_back((pl.size() >= 3) ? pl[2].get<int>() : pl[1].get<int>());
@@ -886,6 +917,8 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             k.tent = wk.value("tent",(int)ECONOMY_TENT_NONE);   //settlements_plan.md: no tent
             k.forage = wk.value("forage",(int)FORAGE_NONE);     //foraging_plan.md: nothing to do by hand
             k.with = wk.value("with",0u);       //settlements_plan.md: nobody young went along before
+            k.zeppelin = wk.value("zeppelin",0u);       //flight_plan.md step 2: nobody aboard before
+            k.deck_y = wk.value("deck_y",0.0f);
             k.archery = wk.value("archery",0);  //range_plan.md: nobody had trained before ranges
             k.f_chosen = wk.value("chosen",false);      //defence_plan.md step 8: no guard was posted by hand before
             //KILLS (ranks_plan.md): [by bow, by hand], kept once he had any - nobody had any before.
@@ -1165,6 +1198,18 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             f.next = fj.value("next",0);
             f.end_heading = fj.value("end_heading",0.0f);
             f.end_y = fj.value("end_y",0.0f);
+            //Its cabin (step 2), its cargo and its load list (step 3): goods by name.
+            const std::pair<const char*,std::array<int,GOOD_COUNT>*> stocks[] = {{"cabin",&f.cabin},{"cargo",&f.cargo},
+                                                                                {"load",&f.load}};
+            for (const auto& s : stocks){
+                json goods = fj.value(s.first,json::object());
+                for (auto it = goods.begin(); it != goods.end(); ++it){
+                    int g = GoodByName(it.key());
+                    if (g >= 0 && it.value().is_number_integer()){
+                        (*s.second)[g] = it.value().get<int>();
+                    }
+                }
+            }
             out.economy.fleet.push_back(f);
         }
         out.economy.next_zeppelin = e.value("next_zeppelin",1u);

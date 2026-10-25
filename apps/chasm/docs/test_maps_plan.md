@@ -208,6 +208,8 @@ that break (`zombies_plan.md` step 4) - both are the zombies plan's.
   with no home, a family of his own and nowhere to live. Then `HouseFamilies` and the staffing at once, as
   `SettleHere` does - the rules take him up on the next tick, not at the zones' next change. Refused on the ground a
   zombie is: the two now share `EconomyDropRefusal` (the zombie's checks, moved out of `SpawnZombies` unchanged).
+  Journaled as `EVENT_PUT_DOWN` (2026-10-25), stamped with the last tick run - the statistics' check counts him in
+  by it, as a birth; without it every row with someone put down failed the check.
 - **Homeless with no camp** needed nothing: every reader of the camp's spot already takes -1. Such a person stands
   where he was put - at home there, never indoors, so a zombie's to find - is not employed, as nobody homeless is,
   and is not cold under the snow, which is the camp's.

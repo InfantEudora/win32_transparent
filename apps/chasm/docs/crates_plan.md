@@ -127,7 +127,7 @@ nothing to correct. FETCH FIRST and the badge are still proposals, marked where 
   stream is never used.
 - **More can be spawned in debug mode** (the user's), by a recorded debug command, `CHASM_CMD_CRATE`
   (like `CHASM_CMD_NEEDS`): a crate with given goods on a plot. It is issued by the tool (`chasm_economy`
-  op `crate`, at x, z or a plot) and by the debug panel, at the plot under the cursor. A spawned crate is
+  op `crate`, at x, z or a plot) and by the debug panel, on the selected plot (Pick / Selected, Supplies). A spawned crate is
   a find, already found.
 - **Saved like any other crate.** Spawned and dropped crates have to be saved, so finds are saved whole
   too: one list. A later change to how finds are placed then cannot move them in a saved game. A save

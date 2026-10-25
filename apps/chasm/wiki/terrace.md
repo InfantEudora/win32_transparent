@@ -5,8 +5,8 @@ kind: buildings
 status: built
 summary: A flat stone platform levelled on a hillside, to build, farm and walk on as on flat ground, with stairs where a road climbs its wall.
 plans: terraces_plan.md > Stage 2: terraces as ground; terraces_plan.md > Stage 3: buildings that join the levels
-code: Zones.h: ZoneTerraceStands ZoneGroundAt ZoneTerraceStep ZoneCanTerrace ZoneUpperDoor; Zones.cpp: ZONE_TERRACE_MOST_FILL ZONE_TERRACE_STEP; Economy.h: ECONOMY_TERRACE_STONE EconomyTerraceStone; TerraceMesh.cpp: BuildTerraceCell; RoadMesh.cpp: RoadStairs; BuildingMesh.cpp: WallDoor BuildingUpperDoorAt; ApplicationChasmWorkersView.cpp: RouteDoorLeg
-verified: 2026-10-23
+code: Zones.h: ZoneTerraceStands ZoneGroundAt ZoneTerraceStep ZoneCanTerrace ZoneUpperDoor; Zones.cpp: ZONE_TERRACE_MOST_FILL ZONE_TERRACE_STEP; Economy.h: ECONOMY_TERRACE_STONE EconomyTerraceStone; TerraceMesh.cpp: BuildTerraceCell BuildTerraceFace TERRACE_PIER_FROM; RoadMesh.cpp: RoadStairs; BuildingMesh.cpp: WallDoor BuildingUpperDoorAt; ApplicationChasmWorkersView.cpp: RouteDoorLeg
+verified: 2026-10-25
 ---
 
 A terrace levels a hillside: one flat platform over the large squares it is dragged across, with a stone retaining
@@ -34,6 +34,11 @@ wall round it. Its tool comes with the [[Stonecutter|stonecutter's hut]], when a
   Its own people - a walk to or from it - go in at one level and out at the other, through its rooms; nobody else cuts
   through. A house walled in at the ground but with an upper door is not shut in. The debug castle stands on levels
   of whole storeys too, and its wall-walk goes on onto a terrace level with it.
+- **The wall** is the building's outline - a terrace on a point of five or six cells is the same n-gon a house there
+  would be - and leans back into the fill, its foot out on the ground below. A darker footing along the foot,
+  overhanging capstones along the head (none over a stair, or along a building that stands higher), lighter quoins
+  up the outer corners, a buttress about every cell along walls of at least {TERRACE_PIER_FROM}, creepers down some
+  walls and tufts of grass at the foot of others.
 - It is erased only with nothing on it.
 
 ## Planned

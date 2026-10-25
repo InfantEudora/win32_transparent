@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: ab5494ad-10d2-4e73-8d9e-f67e1b05b3cd
-  modified: 2026-10-16T22:12:28.610Z
+  modified: 2026-10-25T11:16:01.298Z
 ---
 
 `screenshot` with `include_ui: true` on an app started `--minimized` comes back with the 3D scene
@@ -32,3 +32,13 @@ without sleeps between the move and the action. The likely cause: ImGui's TrackM
 immediate WM_MOUSELEAVE when the real cursor is elsewhere. So a header that is closed by default,
 or content scrolled out of view, cannot be checked on screen: read what the panel shows through the
 app's MCP tool instead, and say in the report which lines were not seen.
+
+SCROLLING DOES WORK (chasm, 2026-10-25): post a WM_MOUSEMOVE then a WM_MOUSEWHEEL (screen coords in
+lParam, -120 a notch) per notch, 40 ms apart, over the panel - ~14 notches reach chasm's Pick / Selected
+header. Clicks still did not land, posted back to back or in two bursts. Script kept as the session's
+scratchpad wheel.ps1; rewrite it from this description.
+
+Two traps seen the same day: an `Add-Type` piped to Out-Null with -ErrorAction SilentlyContinue let the
+ShowWindow(h,4) restore fail SILENTLY - screenshots then show no panels at all; check `IsIconic` after.
+And an app started --minimized saves imgui.ini (cwd's, the person's layout file) with a 32x32 dock
+space while minimised; restore it and wait ~5 s for ImGui to save the full layout before taskkill.

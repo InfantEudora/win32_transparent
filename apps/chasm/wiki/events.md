@@ -5,8 +5,8 @@ kind: systems
 status: partial
 summary: The moments the rules tell of - a birth, a harvest, a waterfall found - made once, and read by the notice line, the statistics and the sound.
 plans: sound_plan.md > The events; sound_plan.md > Game events: one record, many readers; statistics_plan.md > As built: version 1 (2026-10-16); areas_plan.md > The discovered event; ranks_plan.md > As built: step 1, kills (2026-10-19)
-code: Economy.h: EVENT_ZOMBIE_FELLED EVENT_RANKED EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_GREW_OLD EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST EVENT_WALL_BROKEN EVENT_GATE_BROKEN EVENT_BREACHED ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
-verified: 2026-10-21
+code: Economy.h: EVENT_ZOMBIE_FELLED EVENT_RANKED EVENT_NOTHING_TO_TAKE EVENT_RAN_OUT EVENT_NO_TENT EVENT_SEAM_SEEN EVENT_BORN EVENT_DIED EVENT_TREE_FELLED EVENT_ROCK_BROKEN EVENT_STOREY_RAISED EVENT_BUILDING_FINISHED EVENT_HARVEST EVENT_SETTLED EVENT_DISCOVERED EVENT_FROST_TOOK EVENT_GREW_UP EVENT_GREW_OLD EVENT_EXPECTING EVENT_BOULDER_FOUND EVENT_BALCONY_REACHED EVENT_GOAL_MET EVENT_GOAL_FAILED EVENT_DEMO_COMPLETE EVENT_COLONY_LOST EVENT_WALL_BROKEN EVENT_GATE_BROKEN EVENT_BREACHED EVENT_PUT_DOWN ECONOMY_EVENTS_KEPT; Economy.cpp: Event Notice EconomyJournaled EconomyCounted Lifelines ChancesOfChildren AddPerson; ChasmStats.cpp: ChasmStatsCheck; ApplicationChasmEconomy.cpp: TickEconomy; ApplicationChasmExplore.cpp: LookForSeams LookForAreas LookForFirsts; ApplicationChasmSound.cpp: SignalEvents
+verified: 2026-10-25
 ---
 
 An **event** is a moment in the colony, made once by the rules as it happens, so a replay makes the same ones on
@@ -19,7 +19,7 @@ tree down, a storey up, a harvest) only near the view.
 
 | Event | When | Kept as |
 |---|---|---|
-| Born | a child is born, at its mother's side | journal |
+| Born, put down | a child is born, at its mother's side; the debug tools put someone down - the People panel, X, `add_person` - which the [[Statistics|statistics]]' check counts in as it does a birth | journal; put down: no sound |
 | Died | someone's health runs out - hunger, thirst, [[Cold|cold]] - or a [[Zombie|zombie]]'s bite takes the last of it, or [[Old age|old age]] at home | journal |
 | Harvest | a [[Field|field]] is reaped: its crop and how much it gave | journal |
 | Building finished | something the builders put up stands whole for the first time - every storey, a field's every cell | journal |

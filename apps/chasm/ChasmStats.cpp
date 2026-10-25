@@ -282,6 +282,7 @@ std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
     char buf[160];
     std::map<int,int> born_on;
     std::map<int,int> died_on;
+    std::map<int,int> put_down_on;      //people the debug tools put down: neither born nor settled, but here
     int born = 0;
     int died = 0;
     for (const EconomyEvent& ev : h.journal){
@@ -292,6 +293,8 @@ std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
         }else if (ev.kind == EVENT_DIED){
             died++;
             died_on[day]++;
+        }else if (ev.kind == EVENT_PUT_DOWN){
+            put_down_on[day]++;
         }
     }
     //The dead since it began, and everyone born in the colony since: a settler's own parents never came, and the
@@ -350,10 +353,11 @@ std::vector<std::string> ChasmStatsCheck(const EconomyState& e){
         if (!f_next){
             return;     //the date was set over a gap: the days between were never lived
         }
-        int expected = heads(before) + born_on[after.day] - died_on[after.day];
+        int expected = heads(before) + born_on[after.day] + put_down_on[after.day] - died_on[after.day];
         if (heads(after) != expected){
-            snprintf(buf,sizeof(buf),"%s day %i: %i people, but the day before's %i, %i born and %i dead make %i",what,after.day,
-                     heads(after),heads(before),born_on[after.day],died_on[after.day],expected);
+            snprintf(buf,sizeof(buf),"%s day %i: %i people, but the day before's %i, %i born, %i put down and %i dead make %i",
+                     what,after.day,heads(after),heads(before),born_on[after.day],put_down_on[after.day],died_on[after.day],
+                     expected);
             out.push_back(buf);
         }
     };
@@ -480,6 +484,7 @@ const char* ChasmKindLabel(int kind, bool f_plural){
         case ZONE_KIND_CONDENSER:   return f_plural ? "condensers" : "condenser";
         case ZONE_KIND_SAIL_LOFT:   return f_plural ? "sail lofts" : "sail loft";
         case ZONE_KIND_DOCK:        return f_plural ? "zeppelin docks" : "zeppelin dock";
+        case ZONE_KIND_MAST:        return f_plural ? "mooring masts" : "mooring mast";
         default:                    return f_plural ? "buildings" : "building";
     }
 }
@@ -502,6 +507,8 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
     switch (ev.kind){
         case EVENT_BORN:
             return who + " was born";
+        case EVENT_PUT_DOWN:
+            return who + " was put down (debug)";
         case EVENT_DIED:
             //...his rank before his name, as the dead keep it (ranks_plan.md): "Expert Jelle De Wit died of thirst". Not
             //his kills - the page's column would cut the cause off; the pop-up and the death line have room for them.

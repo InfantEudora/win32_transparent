@@ -254,3 +254,78 @@ toward it. Asked: the castle's height as a terrace's.
   not the ground under it, as the castle's hover lay on its deck.
 - **Changed for the prototype's walls and towers**: a tower's platform and a wall now join where their decks are level,
   not where their storeys count the same - a wall built up to a level may meet a tower a storey off.
+
+## As built: a real arch (2026-10-24)
+
+The user, building a castle toward a king who lives in one: the arch "is currently quite simple, and should be nice if
+it looks like a real arch". It was a flat slab on a square pillar at each corner of its plot. View only - nothing in the
+rules, saves or hash changed.
+
+Files: `CastleMesh.*` (`ArchAcross`/`ArchRise`, the one curve every part takes its samples from; `ArchVault`;
+`ArchFace`; `QuarterTopAt`, for piers standing on a piece's top).
+
+- **Every side opens in a round arch**, crowned at the side's middle - where the fine edge to that neighbour crosses
+  it - and springing from a **pier** at each corner of the plot, `CASTLE_ARCH_OPEN` of each half-side the opening and
+  the rest the pier. A neighbour's own wall closes a side where one stands, as it closed the old open sides; the
+  opening then shows as the vault's wall arch against it.
+- **Under the deck, a groin vault**: a barrel from each opening in to the plot's point, along that fine edge, each
+  quarter's two crossing along its diagonal. The ceiling goes by the distance to the nearer barrel's axis alone, so
+  quarters, piers and faces meet edge to edge on any shape of plot, and so do two arches side by side.
+- **One rise for every side** (`CASTLE_ARCH_RISE`), not each side's own width: the barrels of one vault then all crown
+  at one height. A side wider or narrower than usual has a flatter or taller curve - the grid's irregularity, which
+  everything else on it has too.
+- **A ring of voussoirs** round an opening onto ground no castle piece stands on - none into a block or the next arch -
+  each stone a little more or less proud of the face, by a hash of its side, so both halves of one arch match; the
+  crown's a keystone, taller and further out.
+- **An arch over a piece** stands its piers on the piece's top, as its pillars did.
+- **Checked** on `ramparts_stair_arch.json` and `ramparts_crossing.json` (debug, a copied exe on 8772): the road's
+  arches from both sides, the vault from the road under it, the arches standing on the lower wall's deck at the
+  crossing, a wall's side opening into the gap beside a taller block. Not checked: an arch on a slope steep enough to
+  show its piers' feet at different heights.
+
+## As built: a stone guard tower (2026-10-24, debug only)
+
+The user, the same day: "stone towers ... buildings that an archer can garrison, like the wooden tower. The only
+difference is that this tower would have a pointed roof over it, and a few stone windows so the archers wouldn't need to
+be visible." Asked and answered: **debug only for now**, painted with the castle prototype; and it costs **stone for the
+wood, with some wood for the roof**.
+
+So it is the guard tower (`defence_plan.md`) in every rule - its junction's shape, its guards and their count, its
+stock, the caretakers, its ladder's side as its door, the walls ending on it - with a flag, `ZoneBuilding::f_stone`
+(`ZoneTowerStone`). Nothing that asks for a tower had to change.
+
+Files: `Zones.*` (`f_stone`, `ZoneTowerStone`, `ZONE_OP_TOWER_STONE` - refused in play; `ZoneSavedBuilding::f_stone`,
+captured and put back with the ladder), `BuildingMesh.cpp` (`BuildStoneTower`, which `BuildTower` hands a stone one to;
+`ArchedOpening`), `ChasmSave.cpp` (a tower's `"stone": true`, only where stone), `Economy.*` (`TowerStoreyCost` takes the
+zones; `ECONOMY_STONE_TOWER_STONE`/`_WOOD`; `StoreyKept` names water and provisions, so its stone is not kept as stock),
+`ApplicationChasmWorkersView.cpp` (`InStoneTower`), `ApplicationChasm.cpp` (the castle tool's **Tower** choice, its
+hover, the zones hash - only where stone - `chasm_paint` op `tower_stone` with `on`, `chasm_pick`'s `stone`).
+
+- **Placed** from the debug panel's Castle tool, its fourth choice beside Block, Arch and Stair: a click paints a guard
+  tower whole and then makes it stone - two recorded commands, so a replay places it as the click did. Shift takes it
+  off. In play the tool does nothing; the op alone is refused.
+- **Drawn**: its junction's polygon stood up as a stone shaft on a plinth, a string course at each storey; an arrow
+  slit in the storey under the room on each side nothing stands against; the GUARD ROOM corbelled out over the top, its
+  floor the tower's deck (`BuildingTowerDeck`, unchanged), an arched window in each wall - or a doorway, where a castle
+  deck meets the floor (`WalkJoinAny`, as the castle draws its joins); a steep roof in house tile over the room, with a
+  spike. Its door: an arched doorway with a plank door at the foot of the side facing the ladder's plot.
+- **Its guards are not drawn** while inside its walls (`BuildingOnTower`) - from the step in at the door to the step
+  out, where a wooden one's ladder would have them climbing. Their arrows still leave from where they stand.
+- **Cost**, per guard place: `ECONOMY_STONE_TOWER_STONE` stone and `ECONOMY_STONE_TOWER_WOOD` wood in place of the
+  wooden one's wood; water and provisions as before, kept as its stock. Placed in debug it stands full, so this is not
+  yet paid by anyone - it is ready for when the tower goes into play.
+- **Checked** (debug, a copied exe on 8772): on `ramparts_stair_arch.json`, a stone tower either side of the two-storey
+  wall at x 238 - each with a doorway onto the wall-walk - and one in open ground; after 1,500 ticks both wall towers'
+  guards on post at layer 4, their stock drawn on, nobody showing. Saved as `saves/castle_towers_test.json` (both
+  towers `"stone": true`) and loaded again: still stone. `tower_stone` with play refused; with `on` false, wood again.
+  Not checked by a run: the cost (no play placement yet), and a replay of the two commands.
+- **Since 2026-10-25 part of the castle** (`castle_plan.md`): its plot's whole tile on a castle level, 2 to 4 storeys, a
+  doorway wherever a deck meets one of its floors, crenellated on a plot of three cells; drawn with the castle
+  (`BuildStoneTowerQuarter`, in place of `BuildStoneTower`). What is above about its junction's polygon and its one
+  doorway at the guard room no longer holds.
+
+**Open, for the user:**
+- Its **roof** is the house tile's red, so it reads from far off against the grey; slate (`PAL_STONE_DARK`) is the other
+  choice.
+- Its guards are inside, but **from a window** in look only: they shoot from where they stand, as on a wooden tower.
+- Into play: a key or a chip on the tower tool, and what unlocks it (the stonecutter, as terraces?).

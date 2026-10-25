@@ -178,7 +178,8 @@ void ApplicationChasm::TickExploration(){
     bool f_changed = false;
     for (const EconomyWorker& k : economy.State().workers){
         int cell = exploration.CellAt(k.pos);
-        if (k.f_indoors || cell < 0){
+        //Aboard a zeppelin (flight_plan.md step 2), the zeppelin looks out for him, below.
+        if (k.f_indoors || cell < 0 || k.state == WORKER_ABOARD){
             continue;
         }
         float eye_ground = SightEyeGround(*w,exploration,cell,k.pos);
@@ -246,7 +247,8 @@ int ChasmToolNeeds(int tool){
         case CHASM_TOOL_STEAM:
         case CHASM_TOOL_CONDENSER:
         case CHASM_TOOL_SAIL_LOFT:
-        case CHASM_TOOL_DOCK:           return DISCOVERY_CHASM;
+        case CHASM_TOOL_DOCK:
+        case CHASM_TOOL_MAST:           return DISCOVERY_CHASM;
         case CHASM_TOOL_STONECUTTER:
         case CHASM_TOOL_TERRACE:        return DISCOVERY_BOULDER;      //it is built of stone (terraces_plan.md)
         case CHASM_TOOL_MINE:           return DISCOVERY_FLOATSTONE;
@@ -259,7 +261,7 @@ int ChasmToolNeeds(int tool){
 
 std::string ChasmDiscoveryTools(int discovery){
     static const std::pair<int,const char*> names[] = {
-        {CHASM_TOOL_WATER,"WATER"},{CHASM_TOOL_BRIDGE,"BRIDGE"},{CHASM_TOOL_WINCH,"WINCH"},{CHASM_TOOL_STEAM,"STEAM"},{CHASM_TOOL_CONDENSER,"CONDENSER"},{CHASM_TOOL_SAIL_LOFT,"SAIL LOFT"},{CHASM_TOOL_DOCK,"DOCK"},{CHASM_TOOL_STONECUTTER,"STONECUTTER"},{CHASM_TOOL_TERRACE,"TERRACE"},
+        {CHASM_TOOL_WATER,"WATER"},{CHASM_TOOL_BRIDGE,"BRIDGE"},{CHASM_TOOL_WINCH,"WINCH"},{CHASM_TOOL_STEAM,"STEAM"},{CHASM_TOOL_CONDENSER,"CONDENSER"},{CHASM_TOOL_SAIL_LOFT,"SAIL LOFT"},{CHASM_TOOL_DOCK,"DOCK"},{CHASM_TOOL_MAST,"MAST"},{CHASM_TOOL_STONECUTTER,"STONECUTTER"},{CHASM_TOOL_TERRACE,"TERRACE"},
         {CHASM_TOOL_MINE,"MINE"},{CHASM_TOOL_WALL,"WALL"},{CHASM_TOOL_RANGE,"RANGE"},{CHASM_TOOL_TOWER,"TOWER"}};
     std::string out;
     for (const auto& n : names){
@@ -388,7 +390,8 @@ void ApplicationChasm::UpdateDiscoveries(const ChasmWorld& w){
             case ZONE_KIND_STEAM:
             case ZONE_KIND_CONDENSER:
             case ZONE_KIND_SAIL_LOFT:
-            case ZONE_KIND_DOCK:            return DISCOVERY_CHASM;
+            case ZONE_KIND_DOCK:
+            case ZONE_KIND_MAST:            return DISCOVERY_CHASM;
             case ZONE_KIND_STONECUTTER:     return DISCOVERY_BOULDER;
             case ZONE_KIND_MINE:            return DISCOVERY_FLOATSTONE;
             case ZONE_KIND_BUILDERS:

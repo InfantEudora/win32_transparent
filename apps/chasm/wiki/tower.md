@@ -63,6 +63,7 @@ says whether it's full, being filled, or short with **no builders**, as NEEDS AT
 
 ## Planned
 
+- [planned] A **stone tower**, part of a castle's walls, 2 to 4 storeys: in debug so far (castle_plan.md).
 - [planned] A **gatehouse**: two towers either side of a palisade gate joined by a walkway between their decks,
   with guard places of its own, reached by the towers' ladders. Towers are never arched over a road
   ([[Roads and walls|arches]]); this is what a tower pair over a gate becomes instead.

@@ -537,8 +537,8 @@ made, kept as it is. Several lines for being picked out and for being sent, for 
   tick speak at once, past the busy rule and a row's own gap (two men are one row twice), and the next
   answer cuts both. Checks in `tools/cue_test.cpp` for each.
 - **The table's rows** (`picked_leo`, `sent_leah`, ...), a pair per signal: picked -> hi, whatsup, yes,
-  whereto, morning; sent -> headingover, onit, imonit; gather -> grabsupplies; take_tent and settle ->
-  packingup; the rest -> okay. On a `voice` bus under `effects`, never held; not quieter further off
+  whereto, morning (thirsty -> thirsty, below); sent -> headingover, onit, imonit; gather -> grabsupplies;
+  take_tent -> packingup; settle and pitch -> niceplace (below); the rest -> okay. On a `voice` bus under `effects`, never held; not quieter further off
   (spoken to the player). Every row's gain is 0.8, the takes being levelled (below). A gap of 8 passes
   makes a double click one answer.
 - **Trimmed**: `tools/sound_ogg.py` now walks subfolders, keeps them under `art_source/`, and cuts the
@@ -566,6 +566,15 @@ The pair, checked the next day in a muted instance: a group of two men and two w
 leah line together at -0.3 and +0.3; three men - two different leo lines; a pick of one cut both of a pair,
 and a pair cut one; the four sent by a right click - one each, either side; one sent - one line, near the
 middle where he stood.
+
+**Nice place, thirsty** (the user's, 2026-10-25): two more lines from **leo**, and from **leah** two takes of
+each - niceplace and goodspot, thirsty 1 and 2 (thirsty1 a quiet take, raised 11 dB in the levelling). `settle`
+(Settle here) and `pitch` say **niceplace** - settle had said packingup, which is taking a tent to go and stays
+take_tent's. PICKED out while **thirsty** - `thirsty` 1 in `SignalVoice` while his water is below
+`NEEDS_PRESSING_WATER` (`EconomyPressing`), when his badge shows the drop, dry included - says **thirsty** in the
+greeting's place: rows `picked_thirsty_leo` and `picked_thirsty_leah`, the greetings' rows now `thirsty` 0. Never
+said by itself, only as a pick's answer. (A first woman's take came from another voice, zoe; leah's replaced it the
+same day, zoe's wavs kept in art_source.)
 
 ## The bows (2026-10-19)
 

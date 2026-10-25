@@ -609,6 +609,7 @@ then, not reached over.
 All four ran twice with the same figures to the tick. Seen along the way, for `test_maps_plan.md`: a flat map with
 people put down by `add_person` logs a statistics check error every dawn - "row day 0: 2 people, but the day before's
 0, 0 born and 0 dead make 0" - since the people the command adds are neither born nor settled in the journal.
+Fixed 2026-10-25: `AddPerson` journals `EVENT_PUT_DOWN`, which the check counts in as it does a birth.
 
 ## As built: step 4b (2026-10-19)
 
@@ -869,6 +870,34 @@ angel loaded, `FALL_*_CLIP`, `FALLEN_SINK_DEPTH`), `Birds.*` and `ApplicationCha
   other repeated name and still play the first), and Chasm loads every rig clip with it, so `LinkObjects` binds each
   rig to its own copy. Low side shots, before and after: the zombie at hip height, then down; the woman and the man
   down. The walk speeds measure the same (0.79, 0.76, 0.76); the zombie's own scratch now crouches. Fallen test 6/6.
+
+## Their voices (the user's, 2026-10-25)
+
+The user's takes - two murmurs, four short noises, two deaths - and a woman's grunt of pain, with when each plays agreed
+point by point. **Decided:**
+- **Only in sight**: a zombie under the clouds is neither drawn nor heard - not as a warning before a wave, for now.
+- **Murmur** now and then from one walking or waiting, each on its own clock (`SOUND_MURMUR_SECONDS` 11, 40% either
+  way, its first somewhere inside one): the nearest three within the work's reach, two at once, never two starting
+  within 0.3 s. Not while it bites or breaks - the scratch has its strike and punch.
+- **Noise**, short, "the noise you'd make when being poked" (the user's): as one is put down (the debug tools today), turns
+  on someone new, or is hit by an arrow or a blow. One zombie once in `SOUND_ZOMBIE_NOISE_REST` (2.5 s) at most; two at
+  once and a second apart over all of them, so a wave turning at once is one or two.
+- **Death** as it falls, at its body, three at once at most - only on a fall a second old at most, so one lying since
+  before a load, or come out of the clouds lying, is not cried.
+- **Pain** when a bite lands, from the one bitten, in his voice - a grown-up's, as the voices are - once in
+  `SOUND_PAIN_REST` (1.5 s) at most. A woman's now (`leah_grunt`); a man's row comes with leo's takes.
+- **Levelled as speech**: the takes ranged 12 dB, and a row has one gain, so they live under `sound/speech/zombie/` and
+  `sound/speech/pain/` and the converter levels them. `zombie_death_1` stays 6.7 dB under, `zombie_murmle_2` 2.6 dB,
+  held by their peaks; `zombie_noise_1` and `_3` were raised 12 dB.
+- **The warnings** (`speech/warning/`: "zombie spotted", "everyone get inside") wait for the waves, which nothing
+  triggers yet; leah's takes are to come for a woman's.
+
+**As built**: `SignalZombieVoices` (ApplicationChasmSound.cpp), after `SignalZombies`'s strikes and punches, keeps each
+zombie as the last pass saw it (`ZombieVoice`: whom it was after, its health, its murmur's clock, its noise's rest) and
+tells what changed - new above the highest id seen, a new target, health down. A new map or a load (the economy's
+`events_made` falling) is taken in without a sound. In sight is `UploadZombies`' own test, the clouds as drawn. The pain
+rides on the punch's bite count, at the bitten person's body. Rows `zombie_murmur`, `zombie_noise`, `zombie_death` and
+`bitten_leah` in assets/cues/chasm.json, all on the activity bus: held in a pause, with the work.
 
 ## Noted, for later (2026-10-18)
 

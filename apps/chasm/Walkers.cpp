@@ -112,10 +112,20 @@ int WalkDeckLayers(const ZoneState& z, int v, int* out){
     return n;
 }
 
+void StoneTowerFloors(const ChasmWorld& w, const ZoneState& z, int plot, int& lowest, int& highest){
+    int base = 2 * ZoneTowerLevel(w,z,plot);
+    lowest = base + 2;
+    highest = base + 2 * z.standing[plot];
+}
+
 int WalkNodeHalves(const ChasmWorld& w, const ZoneState& z, int plot, int layer){
     const float HALF = ZONE_STOREY_HEIGHT * 0.5f;
     if (layer != WALK_GROUND && ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
         return 2 * ZoneCastleBase(z,plot) + layer;
+    }
+    //A stone tower's guard room over its level, as a castle piece's top (castle_plan.md).
+    if (layer != WALK_GROUND && ZoneTowerStone(z,plot)){
+        return 2 * ZoneTowerLevel(w,z,plot) + layer;
     }
     return (int)std::lround(ZoneGroundAt(w,z,plot) / HALF) + layer;
 }
@@ -131,6 +141,42 @@ int WalkJoin(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int 
     //A tower's platform is got onto by its ladder alone (the connector), whatever ground stands level with it.
     if ((la == WALK_GROUND && lb != WALK_GROUND && ZoneCastleShape(z,b) == ZONE_CASTLE_NONE)
         || (lb == WALK_GROUND && la != WALK_GROUND && ZoneCastleShape(z,a) == ZONE_CASTLE_NONE)){
+        return WALK_NO_JOIN;
+    }
+    /*
+        A STONE TOWER (castle_plan.md) has a floor at every storey over its level, its stair inside: a deck beside it
+        meeting any of them goes in by a doorway there - a stair's top first, where it climbs to - and two towers side by
+        side meet at the highest floor they share. Its one node is the guard room; the climb inside is the join's cost.
+    */
+    bool f_tower_a = la != WALK_GROUND && ZoneTowerStone(z,a);
+    bool f_tower_b = lb != WALK_GROUND && ZoneTowerStone(z,b);
+    if (f_tower_a || f_tower_b){
+        if (la == WALK_GROUND || lb == WALK_GROUND){
+            return WALK_NO_JOIN;
+        }
+        int lo_a = 0;
+        int hi_a = 0;
+        int lo_b = 0;
+        int hi_b = 0;
+        if (f_tower_a && f_tower_b){
+            StoneTowerFloors(w,z,a,lo_a,hi_a);
+            StoneTowerFloors(w,z,b,lo_b,hi_b);
+            int hi = std::min(hi_a,hi_b);
+            return (hi >= std::max(lo_a,lo_b)) ? hi : WALK_NO_JOIN;
+        }
+        int tower = f_tower_a ? a : b;
+        int other = f_tower_a ? b : a;
+        int lo = f_tower_a ? lb : la;
+        int h = WalkNodeHalves(w,z,other,lo);
+        int lowest = 0;
+        int highest = 0;
+        StoneTowerFloors(w,z,tower,lowest,highest);
+        for (int floor = highest; floor >= lowest; floor -= 2){
+            int meet = SpansMeet(h,WalkLayerStair(lo),floor,false);
+            if (meet != WALK_NO_JOIN){
+                return meet;
+            }
+        }
         return WALK_NO_JOIN;
     }
     bool f_stair_a = WalkLayerStair(la);
@@ -223,10 +269,12 @@ void Walkers::EnsureDecks(const ZoneState& z){
     for (int i = 0; i < (int)decks.size(); i++){
         const WalkDeck& d = decks[i];
         int node = n + i;
-        //Up its ladder from the plot it stands toward, at the cost that edge always had.
+        //Up its ladder from the plot it stands toward, at the cost that edge always had - a stone tower's stair inside
+        //it, the climb to its guard room besides (castle_plan.md).
         int ladder = ZoneTowerLadder(z,d.plot);
+        bool f_stone = ZoneTowerStone(z,d.plot);
         if (ladder >= 0){
-            float len = EdgeLength(ladder,d.plot);
+            float len = EdgeLength(ladder,d.plot) + (f_stone ? z.standing[d.plot] * ZONE_STOREY_HEIGHT : 0.0f);
             float speed = EdgeSpeed(z,ladder,d.plot);
             joins.push_back(Join{ladder,node,len,speed});
             joins.push_back(Join{node,ladder,len,speed});
@@ -242,9 +290,18 @@ void Walkers::EnsureDecks(const ZoneState& z){
             int lc = WalkDeckLayers(z,u,ls);
             for (int k = 0; k < lc; k++){
                 int e = DeckNode(u,ls[k]);
-                if (e >= 0 && WalkJoin(*world,z,d.plot,d.layer,u,ls[k]) != WALK_NO_JOIN){
+                int meet = (e >= 0) ? WalkJoin(*world,z,d.plot,d.layer,u,ls[k]) : WALK_NO_JOIN;
+                if (meet != WALK_NO_JOIN){
                     bool f_stair = WalkLayerStair(d.layer) || WalkLayerStair(ls[k]);
-                    joins.push_back(Join{node,e,len,f_stair ? WALKER_SPEED_STAIR : WALKER_SPEED_DECK});
+                    //Into a stone tower by a doorway, and up its stair from that floor to the guard room (castle_plan.md).
+                    float climb = 0.0f;
+                    if (ZoneTowerStone(z,d.plot) || ZoneTowerStone(z,u)){
+                        int room = ZoneTowerStone(z,d.plot) ? WalkNodeHalves(*world,z,d.plot,d.layer)
+                                                            : WalkNodeHalves(*world,z,u,ls[k]);
+                        climb = std::abs(room - meet) * 0.5f * ZONE_STOREY_HEIGHT;
+                        f_stair = f_stair || climb > 0.0f;
+                    }
+                    joins.push_back(Join{node,e,len + climb,f_stair ? WALKER_SPEED_STAIR : WALKER_SPEED_DECK});
                 }
             }
             if (WalkJoin(*world,z,d.plot,d.layer,u,WALK_GROUND) != WALK_NO_JOIN){

@@ -107,6 +107,13 @@ inline void MeshShift(std::vector<vertex>& out, size_t first, const vec3& by){
     }
 }
 
+//Where two faces whose outward normals are a and b (unit, in the ground's plane) meet: the step out from their corner
+//that keeps each face its own distance off - a retaining wall's batter, a tower's guard room set out over its shaft.
+inline vec2 MeshMitre(const vec2& a, const vec2& b){
+    float d = 1.0f + a.dot(b);
+    return (d > 0.2f) ? (a + b) * (1.0f / d) : a;
+}
+
 //A well-mixed hash, for choices that must depend on a place and nothing else.
 inline uint32_t MeshHash(uint32_t a, uint32_t b = 0, uint32_t c = 0){
     uint32_t h = a * 0x8DA6B343u ^ b * 0xD8163841u ^ c * 0xCB1AB31Fu;

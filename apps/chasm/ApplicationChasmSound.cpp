@@ -32,7 +32,9 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
       - THE ZOMBIES: "zombie_strike" at what one breaks, on its scratch's swipe, and "punch" as a fight's bites and
         blows land (SignalZombies);
       - THE BOWS: the scope "bow_drawn" from a shot's nock to its release, "arrow_loose" at the release, and for an
-        arrow at a zombie "arrow_miss" forecast onto where it comes down, or "arrow_hit" as it goes in (SignalShooting).
+        arrow at a zombie "arrow_miss" forecast onto where it comes down, or "arrow_hit" as it goes in (SignalShooting);
+      - THE ZEPPELINS: the scope "zeppelin", its engines, while one is in the air within reach, and "zeppelin_steam" as
+        one lifts off or begins to come down (SignalZeppelins).
 
     ON THE PHYSICS THREAD, ONCE A PASS, paused or not (UpdateSound, from the top of UpdateView). The cues' clock is
     the count of passes, which is real time: 4x is four ticks inside one pass, so a blow keeps its rhythm and a
@@ -86,6 +88,16 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 #define SOUND_STRIKE_NEAREST        4
 #define SOUND_STRIKE_AT             0.8f
 #define SOUND_STRIKE_SECONDS        2.29f   //a turn of the scratch, while the rig's own clip is not known
+//THEIR VOICES (zombies_plan.md, "Their voices"): a murmur from one of the nearest few every MURMUR_SECONDS, up to SPREAD of
+//it either way - its first somewhere inside one, so a wave come into sight does not murmur as one. A noise once in
+//NOISE_REST at most from one zombie, and pain once in PAIN_REST from one person. A death is cried only on a fall this
+//fresh: one lying since before a load, or come out of the clouds lying, is not.
+#define SOUND_MURMUR_NEAREST        3
+#define SOUND_MURMUR_SECONDS        11.0f
+#define SOUND_MURMUR_SPREAD         0.4f
+#define SOUND_ZOMBIE_NOISE_REST     2.5f
+#define SOUND_PAIN_REST             1.5f
+#define SOUND_DEATH_FRESH           1.0f
 //THE BOWS HEARD: the nearest this many archers drawing, within the work's reach - a range of twenty is a few bows, not a choir.
 #define SOUND_BOW_NEAREST           6
 
@@ -101,6 +113,14 @@ static Debugger* debug = new Debugger("ChasmSound",DEBUG_ALL);
 #define SOUND_WATER_HIDDEN_EASE_S   1.5f
 //Under the title the world is not on screen: its water fades out over this, and back.
 #define SOUND_TITLE_FADE_S          1.0f
+/*
+    THE ZEPPELINS HEARD (flight_plan.md): the engines' loop opens when the nearest zeppelin in the air is within OPEN of
+    the listener, in 3D to the middle of its body, and closes once its engines have run down - out of reach, or down on a
+    dock or by an edge - easing in and out over SPOOL_S.
+*/
+#define SOUND_ZEPPELIN_OPEN         90.0f
+#define SOUND_ZEPPELIN_SPOOL_S      1.5f
+#define SOUND_ZEPPELIN_MIDDLE       3.0f    //its body's middle over its origin, as modelled: between the gondola and the envelope
 
 #define CHASM_WORK_CHOP             0       //a woodcutter at a standing tree
 #define CHASM_WORK_BUILD            1       //a builder at a site
@@ -255,6 +275,7 @@ void ApplicationChasm::UpdateSound(){
     SignalZombies(f_live);
     SignalShooting(f_live);
     SignalWater();
+    SignalZeppelins(f_live);
     SignalVoice();
     UpdateMusic();
     /*
@@ -315,7 +336,7 @@ void ApplicationChasm::SayPicked(const std::vector<uint32_t>& ids){
 
 /*
     The answer asked for since the last pass, each with his `voice` - 0 a man's, 1 a woman's; the table's rows pick the
-    takes - and his `side`, which the rows pan by. ONE asked: one answers, his side where he stands across the view.
+    takes - his `side`, which the rows pan by, and whether he is `thirsty`. ONE asked: one answers, his side where he stands across the view.
     MORE: two answer at once, the first asked and the first after him in the other voice if there is one - a man and
     a woman sound like two people where two men are the same man twice - one on each side, the one more to the left
     on the left (the table's `voice` group speaks them `together`).
@@ -376,6 +397,8 @@ void ApplicationChasm::SignalVoice(){
         vec2 at = EconomyBody(*v.k);
         p.Set("x",at.x).Set("z",at.y).Set("person",(float)v.k->id);
         p.Set("voice",(float)v.voice).Set("side",side).Set("what",(float)v.said->what);
+        //Thirsty as his badge shows it, a drop - going for water, or dry: picked out, he says so instead of a greeting.
+        p.Set("thirsty",(EconomyPressing(*v.k) & GOOD_BIT(GOOD_WATER)) ? 1.0f : 0.0f);
         cues.Signal(v.said->signal,p,(int)v.k->id);     //his id: two of one row draw two takes
     }
 }
@@ -544,7 +567,8 @@ void ApplicationChasm::SignalWork(bool f_live){
     the rules' ticks, as the clip is played, so the blow stays on the swipe at 4x and stops with it in a pause; its first
     from the phase the view starts the clip at (UploadZombieSkins), the moment its hitting is seen. The nearest few
     striking are heard. A PUNCH as a fight's bite or blow lands - a zombie's bite count, or a person's swing, starting
-    again from the top between two passes - at the one who struck.
+    again from the top between two passes - at the one who struck; a bite's PAIN from the one bitten. Then their voices
+    (SignalZombieVoices).
 */
 void ApplicationChasm::SignalZombies(bool f_live){
     std::shared_ptr<const EconomyState> e = GetEconomy();
@@ -552,6 +576,11 @@ void ApplicationChasm::SignalZombies(bool f_live){
         strike_beats.clear();
         bites_seen.clear();
         swings_seen.clear();
+        zombie_voices.clear();
+        zombie_voices_top = 0;
+        zombie_falls_heard.clear();
+        pain_rest.clear();
+        f_zombie_voices_seed = true;
         zombies_heard_world = e ? e->world.get() : nullptr;
     }
     if (!f_live || !e || !e->world){
@@ -625,15 +654,37 @@ void ApplicationChasm::SignalZombies(bool f_live){
         return 0;
     };
     std::vector<std::pair<uint32_t,int>> bites;
+    pain_rest.erase(std::remove_if(pain_rest.begin(),pain_rest.end(),[&](const std::pair<uint32_t,uint64_t>& r){
+        return r.second <= work_clock;
+    }),pain_rest.end());
     for (const EconomyZombie& m : e->zombies){
         bites.push_back(std::make_pair(m.id,m.bite));
         int was = before(bites_seen,m.id);
+        if (was <= 0 || m.bite <= was){
+            continue;
+        }
         float d = 0.0f;
         vec2 at = EconomyBody(m);
-        if (was > 0 && m.bite > was && heard_at(at,&d)){
+        if (heard_at(at,&d)){
             CuePayload p;
             p.Set("x",at.x).Set("z",at.y).Set("by",0.0f);
             cues.Signal("punch",p,(int)m.id);
+        }
+        //...and PAIN from whom it bit (THEIR VOICES), in his voice - a grown-up's, as the voices are - once a rest at most.
+        bool f_resting = std::any_of(pain_rest.begin(),pain_rest.end(),[&](const std::pair<uint32_t,uint64_t>& r){
+            return r.first == m.target;
+        });
+        auto bitten = std::find_if(e->workers.begin(),e->workers.end(),[&](const EconomyWorker& k){ return k.id == m.target; });
+        if (f_resting || bitten == e->workers.end()){
+            continue;
+        }
+        int figure = PersonFigure(*bitten,e->tick);
+        vec2 him = EconomyBody(*bitten);
+        if ((figure == PERSON_ADULT_MALE || figure == PERSON_ADULT_FEMALE) && heard_at(him,&d)){
+            CuePayload p;
+            p.Set("x",him.x).Set("z",him.y).Set("voice",(figure == PERSON_ADULT_FEMALE) ? 1.0f : 0.0f);
+            cues.Signal("bitten",p,(int)(bitten->id + 0x20000u));
+            pain_rest.push_back(std::make_pair(bitten->id,work_clock + Passes(SOUND_PAIN_REST)));
         }
     }
     std::vector<std::pair<uint32_t,int>> swings;
@@ -653,6 +704,107 @@ void ApplicationChasm::SignalZombies(bool f_live){
     }
     bites_seen.swap(bites);
     swings_seen.swap(swings);
+    SignalZombieVoices(*e,height);
+}
+
+/*
+    THEIR VOICES (zombies_plan.md, "Their voices"; the user's, 2026-10-25), only of a zombie IN SIGHT - out of the clouds,
+    as UploadZombies draws them - and within the work's reach. A MURMUR now and then from one walking or waiting, on a
+    clock of its own: the nearest few. A short NOISE as one is POKED - put down (an id above any seen), turned on someone
+    new, or hit (its health down) - once a rest at most. Its DEATH as it falls. Each is kept as this pass saw it, for the
+    next to tell what changed; a new map or a load is taken in without a sound.
+*/
+void ApplicationChasm::SignalZombieVoices(const EconomyState& e, float height){
+    const bool f_seed = f_zombie_voices_seed || e.events_made < zombie_voices_events;
+    f_zombie_voices_seed = false;
+    zombie_voices_events = e.events_made;
+    std::shared_ptr<const Exploration> ex = (PlayMode() || f_view_clouds) ? GetExploration() : nullptr;
+    auto heard_at = [&](const vec2& at, float* d){
+        float dx = at.x - camera_target.x;
+        float dz = at.y - camera_target.z;
+        *d = sqrtf(dx * dx + dz * dz + height * height);
+        return *d <= SOUND_WORK_REACH && !(ex && !ex->Empty() && !ex->Explored(at));
+    };
+    struct Murmurer{
+        size_t i;
+        float distance;
+        vec2 at;
+    };
+    std::vector<Murmurer> nearest;      //not `near`: windef.h makes that nothing
+    std::vector<ZombieVoice> now;
+    now.reserve(e.zombies.size());
+    uint32_t top = zombie_voices_top;
+    //Both in id order, as the rules keep their zombies.
+    for (const EconomyZombie& m : e.zombies){
+        auto was = std::lower_bound(zombie_voices.begin(),zombie_voices.end(),m.id,
+                                    [](const ZombieVoice& v, uint32_t id){ return v.zombie < id; });
+        const bool f_new = was == zombie_voices.end() || was->zombie != m.id;
+        ZombieVoice v = f_new ? ZombieVoice() : *was;
+        v.zombie = m.id;
+        float d = 0.0f;
+        vec2 at = EconomyBody(m);
+        const bool f_heard = heard_at(at,&d);
+        const bool f_poked = !f_seed && (f_new ? m.id > zombie_voices_top
+                                               : (m.target && m.target != v.target) || m.health < v.health);
+        if (f_poked && f_heard && work_clock >= v.quiet){
+            CuePayload p;
+            p.Set("x",at.x).Set("z",at.y);
+            cues.Signal("zombie_noise",p,(int)m.id);
+            v.quiet = work_clock + Passes(SOUND_ZOMBIE_NOISE_REST);
+            v.murmur = v.murmur ? std::max(v.murmur,v.quiet) : 0;     //and no murmur straight after it
+        }
+        v.target = m.target;
+        v.health = m.health;
+        top = std::max(top,m.id);
+        //Murmuring while it walks or waits - not biting or breaking, when the scratch is its sound.
+        if (f_heard && m.bite <= 0 && !EconomyZombieHitting(m)){
+            nearest.push_back(Murmurer{now.size(),d,at});
+        }
+        now.push_back(v);
+    }
+    std::sort(nearest.begin(),nearest.end(),[&](const Murmurer& a, const Murmurer& b){
+        return (a.distance != b.distance) ? a.distance < b.distance : now[a.i].zombie < now[b.i].zombie;
+    });
+    std::vector<bool> clocked(now.size(),false);
+    for (size_t n = 0; n < nearest.size() && n < SOUND_MURMUR_NEAREST; n++){
+        ZombieVoice& v = now[nearest[n].i];
+        clocked[nearest[n].i] = true;
+        if (v.murmur == 0){
+            v.murmur = work_clock + Passes(SOUND_MURMUR_SECONDS * Draw(v.zombie,v.murmurs,work_clock,7));
+            continue;
+        }
+        if (work_clock < v.murmur){
+            continue;
+        }
+        CuePayload p;
+        p.Set("x",nearest[n].at.x).Set("z",nearest[n].at.y);
+        cues.Signal("zombie_murmur",p,(int)v.zombie);
+        v.murmurs++;
+        v.murmur = work_clock + Passes(SOUND_MURMUR_SECONDS * Wobble(SOUND_MURMUR_SPREAD,Draw(v.zombie,v.murmurs,work_clock,8)));
+    }
+    //One no longer among the nearest gives up its clock; back among them, it starts a new one.
+    for (size_t i = 0; i < now.size(); i++){
+        now[i].murmur = clocked[i] ? now[i].murmur : 0;
+    }
+    zombie_voices.swap(now);
+    zombie_voices_top = top;
+    //ITS DEATH, on a fall this fresh and in sight. Every fall is taken in when first seen, cried or not, so none is twice.
+    std::vector<uint32_t> falls;
+    const uint64_t fresh = (uint64_t)(SOUND_DEATH_FRESH * CALENDAR_TICKS_PER_SECOND);
+    for (const EconomyFallen& f : e.fallen){
+        if (f.f_person){
+            continue;
+        }
+        bool f_heard_before = std::find(zombie_falls_heard.begin(),zombie_falls_heard.end(),f.id) != zombie_falls_heard.end();
+        float d = 0.0f;
+        if (!f_heard_before && !f_seed && e.tick >= f.tick && e.tick - f.tick <= fresh && heard_at(f.pos,&d)){
+            CuePayload p;
+            p.Set("x",f.pos.x).Set("z",f.pos.y);
+            cues.Signal("zombie_death",p,(int)(f.id + 0x10000u));
+        }
+        falls.push_back(f.id);
+    }
+    zombie_falls_heard.swap(falls);
 }
 
 /*
@@ -960,6 +1112,73 @@ void ApplicationChasm::SignalWater(){
           SOUND_FALLS_OPEN,SOUND_FALLS_CLOSE,"falls_distance","falls_dx","falls_hidden");
 }
 
+/*
+    THE ZEPPELINS HEARD. Their engines: one loop, following the nearest in the air - how far it is, to which side, its
+    pace, and its engines' spool - which the table turns into how loud, where and how high (zeppelin_*). Its steam: a
+    signal at each lifting off its dock or an edge and each beginning to come down, there.
+*/
+void ApplicationChasm::SignalZeppelins(bool f_live){
+    std::shared_ptr<const ChasmWorld> w = GetWorld();
+    std::shared_ptr<const EconomyState> e = GetEconomy();
+    const bool f_ours = w && e && e->world == w;
+    if (!f_ours || zeppelins_heard_world != w.get()){
+        zeppelins_heard.clear();
+        zeppelins_heard_world = f_ours ? w.get() : nullptr;
+    }
+    const vec2 at(camera_target.x,camera_target.z);
+    const vec2 right(cosf(cam_yaw),-sinf(cam_yaw));
+    const float listener_y = camera_target.y + cam_distance * SOUND_LISTENER_HEIGHT;
+    const EconomyZeppelin* nearest = NULL;
+    float nearest_d = 1e30f;
+    std::vector<std::array<int,3>> now;
+    for (size_t i = 0; f_ours && i < e->fleet.size(); i++){
+        const EconomyZeppelin& f = e->fleet[i];
+        now.push_back({(int)f.id,f.doing,f.leg});
+        for (const std::array<int,3>& was : zeppelins_heard){
+            if (was[0] != (int)f.id){
+                continue;
+            }
+            bool f_off = (was[1] == ZEPPELIN_MOORED || was[1] == ZEPPELIN_SET_DOWN) && f.doing == ZEPPELIN_FLYING;
+            bool f_down = f.doing == ZEPPELIN_FLYING && f.leg == FLIGHT_DESCEND
+                          && !(was[1] == ZEPPELIN_FLYING && was[2] == FLIGHT_DESCEND);
+            if ((f_off || f_down) && f_live){
+                cues.Signal("zeppelin_steam",CuePayload().Set("x",f.pos.x).Set("z",f.pos.y).Set("id",(float)f.id));
+            }
+        }
+        if (f.doing != ZEPPELIN_FLYING && f.doing != ZEPPELIN_HOVERING){
+            continue;
+        }
+        vec2 flat = f.pos - at;
+        float up = f.y + SOUND_ZEPPELIN_MIDDLE - listener_y;
+        float d = sqrtf(flat.dot(flat) + up * up);
+        if (d < nearest_d){
+            nearest_d = d;
+            nearest = &f;
+        }
+    }
+    //Held through a pause - nothing is heard then - so one sent off or down meanwhile hisses as the world goes on.
+    if (f_live || zeppelins_heard.empty()){
+        zeppelins_heard.swap(now);
+    }
+    //Its engines spool up while one in the air is in reach, and run down when none is - landed, or gone out of earshot.
+    bool f_running = nearest && nearest_d < SOUND_ZEPPELIN_OPEN;
+    float step = 1.0f / (SOUND_ZEPPELIN_SPOOL_S * (float)CALENDAR_TICKS_PER_SECOND);
+    zeppelin_engine = f_running ? std::min(1.0f,zeppelin_engine + step) : std::max(0.0f,zeppelin_engine - step);
+    if (nearest){
+        cues.SetParameter("zeppelin_distance",nearest_d);
+        cues.SetParameter("zeppelin_dx",(nearest->pos - at).dot(right));
+        cues.SetParameter("zeppelin_pace",std::min(1.0f,nearest->speed / ZEPPELIN_SPEED));
+    }
+    cues.SetParameter("zeppelin_engine",zeppelin_engine);
+    if (!f_zeppelin_heard && f_running){
+        cues.BeginScope("zeppelin");
+        f_zeppelin_heard = true;
+    }else if (f_zeppelin_heard && !f_running && zeppelin_engine <= 0.0f){
+        cues.EndScope("zeppelin");
+        f_zeppelin_heard = false;
+    }
+}
+
 #ifdef USE_MCP
 void ApplicationChasm::RegisterSoundTools(){
     MCPServer::Get()->RegisterTool("chasm_sound",
@@ -1085,6 +1304,10 @@ void ApplicationChasm::RegisterSoundTools(){
                                                      {"dx",param("river_dx")},{"hidden",param("river_hidden")}}},
                                        {"falls",json{{"heard",f_falls_heard},{"distance",param("falls_distance")},
                                                      {"dx",param("falls_dx")},{"hidden",param("falls_hidden")}}}};
+                //The zeppelins heard (SignalZeppelins): whether the engines' loop is open, and what it follows.
+                result["zeppelin"] = json{{"heard",f_zeppelin_heard},{"engine",param("zeppelin_engine")},
+                                          {"distance",param("zeppelin_distance")},{"dx",param("zeppelin_dx")},
+                                          {"pace",param("zeppelin_pace")}};
                 result["voices"] = voices;
                 result["music"] = MusicStatusJson();
                 result["playing"] = cues.NumPlaying();

@@ -71,6 +71,17 @@ float BuildingMeetHeight(const ChasmWorld& w, const ZoneState& z, int a, int la,
 float BuildingTowerReach(const ChasmWorld& w, int plot, const vec2& toward);
 //Whether `at` is on its platform.
 bool BuildingOnTower(const ChasmWorld& w, int plot, const vec2& at);
+//A round-headed opening - a window, a doorway, an arrow slit - a hair in front of the wall a->b, `half_w` either side of
+//`t` along it, from y0 to its crown, in a surround of `surround_column`; with `f_sill` a sill under it.
+void BuildingArchedOpening(std::vector<vertex>& out, const vec2& a, const vec2& b, const vec3& outward, float t, float half_w,
+                           float y0, float crown, int column, int row, int surround_column, bool f_sill);
+//...or for a stone one, within its walls: its plot's whole tile (castle_plan.md).
+bool BuildingInTower(const ChasmWorld& w, const ZoneState& z, int plot, const vec2& at);
+/*
+    A STONE GUARD TOWER's quarter of fine cell `fine_quad`, its corner k (castle_plan.md): its plot's whole tile, as a
+    castle piece's, drawn with the castle (CastleMesh.h) so a tower and the wall beside it share their edges.
+*/
+void BuildStoneTowerQuarter(const ChasmWorld& w, const ZoneState& z, int fine_quad, int k, std::vector<vertex>& out);
 
 /*
     A ROPEWALK's dressing (goods_plan.md), which tells it from a house: its WALK - strands of rope over T-posts,

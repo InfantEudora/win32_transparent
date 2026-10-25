@@ -1,11 +1,11 @@
 ---
 name: ramparts-plan
-description: Chasm layered walking (ramparts_plan.md) - walk graph nodes are plot+layer; tower decks and a debug castle built 2026-10-10; user judging readability
+description: Chasm layered walking + debug castle (ramparts_plan.md) - plot+layer walk nodes; real arches and a debug stone guard tower built 2026-10-24; aim is a king's castle
 metadata:
   node_type: memory
   type: project
   originSessionId: 9c1efb04-f5be-4246-803d-f0b9ad53ecb3
-  modified: 2026-10-23T21:01:03.749Z
+  modified: 2026-10-25T22:23:28.795Z
 ---
 
 apps/chasm/docs/ramparts_plan.md, agreed and built 2026-10-10 (steps 1 and 2). Walls people walk on, roads under
@@ -35,7 +35,25 @@ them, Stronghold-style.
   (`castle_base`, `ZoneCastleBase`); a drag is one level (`ZoneCastleLevelFor`). Joins compare ABSOLUTE heights
   (`WalkNodeHalves`, `WalkJoin` returns the meet in half storeys or `WALK_NO_JOIN`), so a deck level with a terrace's
   top or the hill joins it; heights drawn via `BuildingLayerHeight`/`BuildingMeetHeight`. Saves: castle `[plot, piece, level]`.
+- **Real arch (2026-10-24, view only)**: round openings on every side, piers at corners, a groin vault, voussoir ring +
+  keystone where the opening faces open ground. One rise for all sides (`CASTLE_ARCH_RISE`) so barrels meet. CastleMesh.cpp.
+- **Stone guard tower (2026-10-24, user: DEBUG ONLY for now; cost stone + some wood)**: the guard tower with
+  `ZoneBuilding::f_stone` (`ZoneTowerStone`, `ZONE_OP_TOWER_STONE` refused in play), placed by the Castle tool's 4th
+  choice "Tower"; `BuildStoneTower` (shaft, guard room with windows/doorway onto a level castle deck, red pointed roof);
+  guards hidden inside (`InStoneTower`). Test save `saves/castle_towers_test.json`. Goal context: a villager becomes KING
+  and lives in a castle (user's long-term aim).
 - User verdict 2026-10-10: "it reads very well".
+- **Castle task (2026-10-25): `apps/chasm/docs/castle_plan.md`** - wanted: stone tower merged into walls, battlements +
+  corner seams, a MINIMAL keep (the castle is for exploring Townscaper tiling, not the stronghold), gatehouse, armoury
+  (needed by the ballista); other buildings are open suggestions.
+- **Stone tower steps 1-2 BUILT 2026-10-25**: guard tower's rules, castle geometry - whole tile, `ZoneTowerLevel`, 2-4
+  storeys, a doorway at every floor a deck meets (`WalkJoin`/`StoneTowerFloors`), drawn by `BuildStoneTowerQuarter` from
+  `BuildCastleCell`. User's rules: 3-cell plot = crenellated top, else roofed guard room; ground door kept (move it to the
+  INSIDE face later, once "inside the walls" exists); emergent towers from tall blocks noted for later. Castle quarters now
+  meet at `BuildingWallCrossing`. Save `saves/castle_tower_heights_test.json`.
+- **Step 3 BUILT 2026-10-25**: corbelled battlements, plinth, arrow slits; drawn per CELL by `Outlines`/`OutlineJoin`
+  (mitred corner/inside/straight/end) - the corner seams were unmitred per-half-edge parapets. No battlements against a
+  wall a sill over the deck (`StandingTop`). Next on the castle: keep, gatehouse, armoury (castle_plan.md).
 
 **Why:** prototype to judge whether stacked walkable layers READ from the camera before weaving it into play.
 **How to apply:** next steps (ramparts on walls, gatehouse, storeys for archer reach) wait on the user's verdict.

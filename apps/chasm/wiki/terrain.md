@@ -16,7 +16,7 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
 |---|---|---|
 | Plateau | the valley either side of the chasm | anything |
 | Balcony | a ledge on the chasm's wall below the rim, reached by [[Winch|winch]] | anything but fields: its food comes down from the rim |
-| Island | shards, columns and ledges standing in the chasm | reached by [[Flight|zeppelin]], which sets down by its edge; nobody steps off yet |
+| Island | shards, columns and ledges standing in the chasm | reached by [[Flight|zeppelin]], which sets down by its edge for its [[Passengers|passengers]] to step off |
 | Floor | under the clouds, {TERRAIN_FLOOR_STEPS} steps down | never |
 | Bare | any flat patch smaller than {TERRAIN_MIN_PATCH} plots: crumbled rock | never |
 
@@ -59,4 +59,4 @@ steps of {TERRAIN_STEP} world units, and its height decides its kind:
 
 ## Planned
 
-- [planned] People set down on the islands by zeppelin, with their tents (`flight_plan.md`, step 2).
+- [planned] Floatstone seams on the islands (`flight_plan.md`, step 5).

@@ -142,6 +142,9 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_SITE_CANCEL 32      //a site's card: taken off whole, its goods left as a crate (construction_plan.md)
 #define OVERLAY_HIT_PLACE       33      //NEEDS ATTENTION's place on the ground: the view goes to plot `value`
 #define OVERLAY_HIT_STATS_COLONY 34     //the Statistics page's chips: colony `value` shown, 0 all (settlements_plan.md)
+#define OVERLAY_HIT_ZEPPELIN_OFF 35     //a zeppelin's card: everyone aboard ordered off onto its landing (flight_plan.md step 2)
+#define OVERLAY_HIT_ZEPPELIN_LOAD 36    //...its load list: good `value` / 1000 to have `value` % 1000 loaded (step 3)
+#define OVERLAY_HIT_ZEPPELIN_UNLOAD 37  //...its cargo unloaded (step 3)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -381,6 +384,11 @@ const char* ChasmNeedName(const EconomyWorker& k);
 #define CHASM_CMD_ZEPPELIN          SIM_CMD_LAST+18     //a zeppelin sent (flight_plan.md, a right click): subtype its id;
                                                         //value[0], [1] x and z to hover over; value[2] an edge plot to
                                                         //set down by, -1 none; value[3] a dock to moor on, 0 none
+#define CHASM_CMD_BOARD             SIM_CMD_LAST+19     //a person sent aboard a zeppelin (flight_plan.md step 2): subtype
+                                                        //his id; value[0] the zeppelin; value[1] 1 for one of a group's
+#define CHASM_CMD_LOAD              SIM_CMD_LAST+20     //a zeppelin's load list (flight_plan.md step 3): subtype its id;
+                                                        //value[0] the good, value[1] how much of it, 0 off the list
+#define CHASM_CMD_UNLOAD            SIM_CMD_LAST+21     //a zeppelin's cargo unloaded (flight_plan.md step 3): subtype its id
 
 //What a left click does.
 enum ChasmTool{
@@ -415,6 +423,7 @@ enum ChasmTool{
     CHASM_TOOL_TERRACE,     //terraces_plan.md stage 2: a terrace, dragged over plots as a lot is
     CHASM_TOOL_SAIL_LOFT,   //steam_plan.md step 4: a sail loft, a drag of up to four plots
     CHASM_TOOL_DOCK,        //steam_plan.md step 5: a zeppelin dock, painted on cells as a field is - no key (the user's)
+    CHASM_TOOL_MAST,        //flight_plan.md step 3: a mooring mast, a plot at a drop into the chasm - no key, none left
     CHASM_TOOL_COUNT
 };
 
@@ -506,6 +515,9 @@ public:
     float cam_yaw = 0.0f;           //radians; 0 looks toward -z (north)
     float cam_pitch = 0.95f;        //radians above the horizon
     float cam_lift = 0.0f;          //...and tilted up over it to clear the ground in the way (ClearPitch), eased
+    float cam_air = 0.0f;           //...how far the point rides a selected zeppelin's height, not the ground's (0..1)...
+    float cam_air_y = 0.0f;         //...that height, kept while it fades back (flight_plan.md)...
+    float cam_ground_y = 0.0f;      //...and the ground's own follow meanwhile, which it fades back down to
     float cam_distance = 120.0f;
     /*
         Entering play mode, the view glides to the colony's start - the camp - unless it already looks
@@ -574,7 +586,11 @@ private:
     json PickJson(const GridPicker& p, const GridPick& pick);
     json PickBuildingJson(const GridPick& pick);
     json BuildingJson(const ChasmWorld& w, const ZoneState& z, uint32_t id);
-    void RenderBuildingInfo(const ChasmWorld& w, const ZoneState& z);
+#ifdef USE_IMGUI
+    void RenderPickPanel();                     //the Pick / Selected header: the selected plot, its building, the hover
+    void RenderBuildingInfo(const ChasmWorld& w, const ZoneState& z, uint32_t id, const char* label);
+    void RenderSelectedField(const ChasmWorld& w, const ZoneState& z, uint32_t id, int coarse_quad);
+#endif
     static int ToolKind(int tool);
 
     /*
@@ -804,6 +820,9 @@ private:
     void SubmitOrder(uint32_t person, int plot, int layer = -1, bool f_spread = false);
     void SubmitGuard(uint32_t person, uint32_t tower);          //any thread; tower 0 releases him from his
     void SubmitZeppelin(uint32_t id, const vec2& at, int plot, uint32_t dock);   //any thread (Economy::SendZeppelin)
+    void SubmitBoard(uint32_t person, uint32_t zeppelin, bool f_spread);        //any thread (Economy::Board)
+    void SubmitLoad(uint32_t zeppelin, int good, int amount);                   //any thread (Economy::SetLoad)
+    void SubmitUnload(uint32_t zeppelin);                                       //any thread (Economy::Unload)
     void SubmitGuards(uint32_t tower, int count);               //any thread
     void SubmitKeep(int good, int count, bool f_order, uint32_t colony);   //any thread; f_order: `count` more, 0 cancelling
     void SubmitGather(uint32_t person, bool f_on);              //any thread; refused as an order is
@@ -813,6 +832,8 @@ private:
     void SubmitForage(uint32_t person, int plot, int what, bool f_spread);  //any thread; refused as an order is
     void SubmitPickUp(uint32_t crate, bool f_on);               //any thread; refused as a debug crate is
     void SubmitCrate(int plot, int good, int amount);           //any thread; a debug edit
+    //Any thread; a debug edit, as the tool's set_stock: `into` 0 its stock, 1 a camp's pantry, 2 its site's goods brought.
+    void SubmitStock(uint32_t id, int good, int amount, int into);
     /*
         A PERSON PUT DOWN (docs/test_maps_plan.md, step 5; Economy::AddPerson): a debug edit, recorded - the People
         panel's, chasm_economy's add_person. `skills` may be NULL; 0 for anything is the seed's, as a settler's.
@@ -891,13 +912,14 @@ private:
 #ifdef USE_IMGUI
     void RenderZombiePanel();                   //debug builds: drop zombies on the selected plot, or clear them
     int zombie_edit_count = 1;
-    void RenderEconomyInfo(uint32_t id);        //in the building info, for the building under the cursor
+    void RenderEconomyInfo(uint32_t id);        //in the building info: what it holds, its site, who works it
     void RenderSelectedStore(int plot);         //what the selected store takes, to be set there
-    void RenderSelectedCrate(int plot);         //the crate on the selected plot, or one to put down there
+    void RenderSelectedSupplies(int plot, uint32_t id); //goods put down: a crate on the plot, or into building `id`
     void RenderPeoplePanel();                   //the villagers, their health and water to be set
     std::map<uint64_t,float> needs_editing;     //render thread: a slider being dragged, by person and bar (or pack)
-    int crate_edit_good = 0;                    //render thread: what the panel's crate holds, and how much
+    int crate_edit_good = 0;                    //render thread: the good the Supplies row puts down, and how much
     int crate_edit_amount = 10;
+    bool f_supply_pantry = false;               //render thread: ...into a camp's pantry rather than its supplies
 #endif
 
     /*
@@ -1382,6 +1404,8 @@ private:
     Object* fleet_body[FLEET_SHOWN] = {};
     Object* fleet_prop[FLEET_SHOWN][2] = {};
     uint32_t fleet_id[FLEET_SHOWN] = {};            //the zeppelin each slot draws, 0 none
+    Object* fleet_gangway[FLEET_SHOWN] = {};        //...its gangway down to its landing while it is down (step 2)
+    uint64_t fleet_gangway_key[FLEET_SHOWN] = {};   //...as last built, by where it lies
     float fleet_spin[FLEET_SHOWN] = {};             //its propellers' turn, radians
     double fleet_clock = 0.0;                       //the simulation's seconds at the last frame: they turn by its clock
     void UploadFleet();                             //from PreRender
@@ -1709,7 +1733,7 @@ private:
     void DrawForageMenu(float s);                           //render thread, from DrawOverlay: over all the rest
     //Physics thread: the selected sent to `plot` as a right click sends them - one order each, a group's spread round
     //it nearest first - or, with `forage`, sent to pick or draw there by hand (Economy::Forage).
-    void SendSelected(int plot, int layer, uint32_t tower, int forage);
+    void SendSelected(int plot, int layer, uint32_t tower, int forage, uint32_t zeppelin = 0);  //...or aboard `zeppelin`
     vec2 build_bar_min;                                     //render thread: where the tools' grid was last drawn, for the overview
     vec2 build_bar_max;
     float build_stack_top = 0.0f;                           //render thread: the top of the grid and all stacked over it
@@ -2117,6 +2141,25 @@ private:
     const ChasmWorld* zombies_heard_world = nullptr;    //the map they were seen on: ids start again on another
     std::atomic<float> zombie_scratch_seconds{0.0f};    //Zombie_Scratch's length, from the rig (BuildZombieSkin); 0 none
     /*
+        THEIR VOICES (zombies_plan.md, "Their voices"): each zombie as the last pass saw it - whom it was after and its
+        health, so a new one, a new target or a blow shows - with its murmur's clock and its noise's rest; the falls
+        already heard; and when each person bitten may cry out again. All on work_clock, frozen in a pause.
+    */
+    struct ZombieVoice{
+        uint32_t zombie = 0;
+        uint32_t target = 0;
+        int health = 0;
+        uint64_t murmur = 0;        //the pass of its next murmur - 0 while it is not among the nearest, which have a clock
+        uint32_t murmurs = 0;       //made so far, for the draws
+        uint64_t quiet = 0;         //...and before which it makes no noise
+    };
+    std::vector<ZombieVoice> zombie_voices;
+    uint32_t zombie_voices_top = 0;                     //the highest id seen: one above it is new, put down
+    bool f_zombie_voices_seed = true;                   //the next pass only takes them in: a map or a load, not a wave
+    uint32_t zombie_voices_events = 0;                  //the economy's events_made then - fewer is a load
+    std::vector<uint32_t> zombie_falls_heard;           //the fallen zombies whose death was heard, while they lie
+    std::vector<std::pair<uint32_t,uint64_t>> pain_rest;    //someone bitten, and the pass he may cry out again from
+    /*
         THE BOWS HEARD (range_plan.md, "Sounds"): an archer's turn of the Shoot clip, at a zombie or at the straw - its
         creak from the nock to the release, and the loose - and each arrow at a zombie from the loose to where it comes down.
     */
@@ -2146,6 +2189,16 @@ private:
     float falls_hidden = 1.0f;
     int ambience_bus = -1;                      //the table's "ambience": plays on in a pause, faded out under the title
     void SignalWater();
+    /*
+        THE ZEPPELINS HEARD (flight_plan.md): their engines' loop, open while the nearest one in the air is within
+        reach, eased in as its engines start and out as they stop (zeppelin_engine) - and a hiss of steam as one lifts
+        off or begins to come down, told from what each was doing at the last pass.
+    */
+    bool f_zeppelin_heard = false;
+    float zeppelin_engine = 0.0f;
+    std::vector<std::array<int,3>> zeppelins_heard;     //id, doing, leg: each as it was at the last pass
+    const ChasmWorld* zeppelins_heard_world = nullptr;  //the map they were heard on: ids start again on another
+    void SignalZeppelins(bool f_live);
     /*
         THE PEOPLE'S VOICES (sound_plan.md, "Voices"): a grown-up answers when the player picks him out, and when he
         takes an order - in the order's command, by the rules, so a refused one is the refusal's sound and never an
@@ -2225,6 +2278,7 @@ private:
     void SignalWork(bool f_live);
     void SignalBirds(bool f_live);              //the flocks' calls, handed over by UploadBirds
     void SignalZombies(bool f_live);            //their strikes at what they break, and a fight's punches
+    void SignalZombieVoices(const EconomyState& e, float height);  //their murmurs, noises and deaths; a bite's pain
     void SignalShooting(bool f_live);           //the bows drawn and loosed, and the arrows at zombies coming down
     void SignalUI(const char* name);            //physics thread: a click, a tool taken up
 #ifdef USE_MCP

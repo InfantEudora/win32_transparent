@@ -9,7 +9,6 @@
 #include <cmath>
 #include <map>
 
-#define ROAD_HALF_WIDTH     0.5f    //world units either side of the centre line: a road about a metre wide
 #define ROAD_LIFT           0.05f   //above the ground's relief - over a garden's 0.04, never beside one
 #define ROAD_CURVE_STEPS    6       //segments in a two-edge vertex's curve
 #define ROAD_JOINT_SIDES    8       //a junction's or a dead end's round joint
@@ -972,8 +971,9 @@ void BuildRoadFill(const ChasmWorld& w, const ZoneState& z, const GridQuad& q, s
 
 /*
     A STAIR up a terrace's wall (terraces_plan.md stage 2): where road plot v's road runs on to a road on a terrace above
-    it (ZONE_STEP_STAIR), steps from the wall's head down to v's road, over v's half of the edge between them - where the
-    walkers go down it (RouteHeight) - as wide as the road, in the terrace's stone. Each step a block down into the ground.
+    it (ZONE_STEP_STAIR), steps from the wall's head down to v's road, over v's side of the edge between them - from
+    where the wall crosses it (BuildingWallCrossing), which is where the walkers go down it (RouteHeight) - as wide as the
+    road, in the terrace's stone. Each step a block down into the ground.
 */
 #define ROAD_STAIR_RISE     0.2f
 
@@ -987,7 +987,7 @@ void RoadStairs(const ChasmWorld& w, const ZoneState& z, int v, const int* nb, i
             continue;
         }
         float high = ZoneGroundAt(w,z,u);
-        vec2 m = (c + w.grid->fine.pos[u]) * 0.5f;
+        vec2 m = BuildingWallCrossing(w,v,u);
         vec2 run = c - m;
         float len = run.length();
         if (len < 1e-4f){
@@ -1657,7 +1657,19 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
         };
         int nb[ROAD_MAX_NEIGHBOURS];
         int n = RoadNeighbours(w,z,v,nb);
-        LineThrough(w,v,nb,n,segs);
+        //Each piece ends at its edge's midpoint - but over a terrace's wall where the wall crosses the edge, which is where
+        //its stair meets it (RoadStairs): off the midpoint round a point of five or six cells, and the road on the
+        //terrace would stop short of its edge or run out over the steps.
+        vec2 ends[ROAD_MAX_NEIGHBOURS];
+        bool f_stair = false;
+        for (int i = 0; i < n; i++){
+            ends[i] = (g.fine.pos[v] + g.fine.pos[nb[i]]) * 0.5f;
+            if (ZoneTerraceStep(w,z,v,nb[i]) == ZONE_STEP_STAIR){
+                ends[i] = BuildingWallCrossing(w,v,nb[i]);
+                f_stair = true;
+            }
+        }
+        LineThrough(w,v,nb,n,segs,f_stair ? ends : NULL);
         if (!f_road && n == 0){
             continue;   //enclosed ground with no gate onto it: no path to draw
         }

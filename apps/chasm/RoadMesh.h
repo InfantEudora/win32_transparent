@@ -46,6 +46,8 @@
     a stake. A gate's door gives and sags as it is hit, and hangs askew once broken. The jambs always stand.
 */
 
+#define ROAD_HALF_WIDTH         0.5f    //world units either side of the centre line: a road about a metre wide
+
 //How near a road's centre line no prop stands: half its width and a canopy. The view hides what is
 //nearer (RoadNear); the economy fells the trees in it before a planned road is laid.
 #define ROAD_PROP_CLEARANCE     1.3f

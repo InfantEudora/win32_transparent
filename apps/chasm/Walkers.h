@@ -108,6 +108,9 @@ int WalkDeckLayers(const ZoneState& z, int v, int* out);
     terrace's top is one exactly); a castle piece's deck over its level (ZoneCastleBase); a tower's over its ground.
 */
 int WalkNodeHalves(const ChasmWorld& w, const ZoneState& z, int plot, int layer);
+//A stone tower's floors (castle_plan.md), in half storeys as WalkNodeHalves: its first storey's over its level to its
+//guard room's, one every two.
+void StoneTowerFloors(const ChasmWorld& w, const ZoneState& z, int plot, int& lowest, int& highest);
 #define WALK_NO_JOIN            INT_MIN     //WalkJoin's: the two do not join
 /*
     Whether node (a, la) and node (b, lb) on neighbouring plots join - the height they meet at, in half storeys

@@ -4,9 +4,9 @@ aliases: flying, fly, hover, hovering, set down, setting down, moor, mooring, be
 kind: systems
 status: partial
 summary: A finished zeppelin flies where it is sent with a right click - to hover over the chasm, set down by an edge, or moor at a dock. It flies only over the chasm, and clears the clouds as it goes.
-plans: flight_plan.md > Decided (the user, 2026-10-24); flight_plan.md > As built: step 1 (2026-10-24)
-code: Economy.h: ZEPPELIN_SPEED ZEPPELIN_TURN ZEPPELIN_CLIMB ZEPPELIN_CRUISE ZEPPELIN_MAST_CLEAR ZEPPELIN_CLEAR ZEPPELIN_SET_DOWN_REACH ZEPPELIN_SET_DOWN_STEP EconomyFlyable EconomySetDownSpot; Flight.cpp: SendZeppelin TickFleet DockBerthFree ZeppelinFinished; ApplicationChasmFleet.cpp: UploadFleet SendZeppelinTo
-verified: 2026-10-24
+plans: flight_plan.md > Decided (the user, 2026-10-24); flight_plan.md > As built: step 1 (2026-10-24); flight_plan.md > As built: step 3, the mast and goods (2026-10-25)
+code: Economy.h: ZEPPELIN_SPEED ZEPPELIN_TURN ZEPPELIN_CLIMB ZEPPELIN_CRUISE ZEPPELIN_MAST_CLEAR ZEPPELIN_CLEAR ZEPPELIN_SET_DOWN_REACH ZEPPELIN_SET_DOWN_STEP EconomyFlyable EconomySetDownSpot; Flight.cpp: SendZeppelin TickFleet DockBerthFree ZeppelinFinished; ApplicationChasmFleet.cpp: UploadFleet SendZeppelinTo; ApplicationChasmSound.cpp: SignalZeppelins; Flight.cpp: MastBerthFree
+verified: 2026-10-25
 ---
 
 Once its last stage stands, a [[Zeppelin|zeppelin]] is a craft of its own - the colony's, not its
@@ -19,6 +19,7 @@ Click it to select it - by its envelope or its gondola - and **right-click** whe
 
 - **On a dock** with its berth free, it **moors** there: one standing whole that a zeppelin fits on, whose own
   zeppelin is finished, with no other moored on it or on its way there.
+- **On a [[Mooring mast|mast]]** with its berth free, it moors there **nose-in**, hanging out over the drop.
 - **On land** - the rim, a [[Terrace|balcony]], an island - it **sets down** beside it: alongside the edge, side-on,
   its deck a step over the ground, at the plot's own height. It comes alongside within {ZEPPELIN_SET_DOWN_REACH}
   of the plot, so a plot away from the edge is refused: "not at an edge".
@@ -39,18 +40,21 @@ where it is.
 - **It sees from the air**: it clears the [[Exploration|clouds]] round it as a person does from the ground, from its
   deck - high over the chasm, far.
 
-Its card says what it is doing and where, and how to send it. A dock's card says whether its zeppelin is moored
-there or away, and whether its berth is free.
+Its card says what it is doing and where, who is aboard, and how to send it. People go aboard and off it only by
+order ([[Passengers]]). Goods go aboard by its load list at a mast or a dock, and off by Unload
+([[Mooring mast|Mast]]). A dock's card says whether its zeppelin is moored there or away, and whether its berth is free.
 
-## How it looks
+## How it looks and sounds
 
 Off its mooring it bobs on the air and leans into its turns, and its two propellers turn with its pace - idling
-while it holds still, still when moored. The dock draws its mooring lines while one is moored on it.
+while it holds still, still when moored or set down. The dock draws its mooring lines while one is moored on it.
+Its engines are heard while it is in the air - the nearest one, louder near, higher at speed, swelling as it lifts
+off and dying away once it is down - and steam hisses as it lifts off and as it begins to come down.
+
+**Selected, the view rides its height** rather than the ground under the view, faded over to it and back: panned
+out over the chasm with it, the view stays up with it for an overview instead of dropping to the floor under the mist.
 
 ## Planned
 
-- [planned] People aboard and off by order, with their packs and tents; the cabin their pantry (`flight_plan.md`,
-  step 2).
-- [planned] Masts on any edge, and goods loaded there and unloaded into a mast's store or as a crate (step 3).
 - [planned] A new zeppelin begun on a dock once its own is away (step 4); routes, with porters (step 6).
 - [idea] Losing a zeppelin - the winter storm the favourite cause (step 7).

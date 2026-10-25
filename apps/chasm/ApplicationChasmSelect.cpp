@@ -516,18 +516,19 @@ std::string SelectionColony(const PlayPick& sel, const std::vector<uint32_t>& gr
     or its stock kept full (defence_plan.md, step 7), "for a tower". Made once a good, since Doing hands back a
     const char*.
 */
-const char* SiteErrand(int phase, int good, bool f_tower = false){
-    static const std::vector<std::array<std::string,6>> phrases = []{
-        std::vector<std::array<std::string,6>> p(GOOD_COUNT + 1);
+const char* SiteErrand(int phase, int good, bool f_tower = false, bool f_cabin = false){
+    static const std::vector<std::array<std::string,9>> phrases = []{
+        std::vector<std::array<std::string,9>> p(GOOD_COUNT + 1);
         for (int g = -1; g < GOOD_COUNT; g++){
             std::string what = (g < 0) ? "goods" : GoodIsFood(g) ? "food" : GoodName(g);
             p[g + 1] = {"fetching " + what + " for a site","picking up " + what,"carrying " + what + " to a site",
-                        "fetching " + what + " for a tower","picking up " + what,"carrying " + what + " to a tower"};
+                        "fetching " + what + " for a tower","picking up " + what,"carrying " + what + " to a tower",
+                        "fetching " + what + " for the zeppelin","picking up " + what,"carrying " + what + " to the zeppelin"};
         }
         return p;
     }();
     int i = (good >= 0 && good < GOOD_COUNT) ? good + 1 : 0;
-    return phrases[i][std::max(0,std::min(2,phase)) + (f_tower ? 3 : 0)].c_str();
+    return phrases[i][std::max(0,std::min(2,phase)) + (f_cabin ? 6 : f_tower ? 3 : 0)].c_str();
 }
 
 //A load on its way to a store, by name - "carrying beans to a store" - as a site's errand is: a store is given goods,
@@ -603,6 +604,13 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
     //Carrying for a guard tower - its site's goods, or its stock kept full (step 7).
     bool f_for_tower = z && k.site && !EconomyIsGroundSite(k.site) && k.site < z->buildings.size()
                        && z->buildings[k.site].kind == ZONE_KIND_TOWER;
+    //...or a zeppelin's cabin kept full on its dock (flight_plan.md step 2): a finished dock is no site.
+    bool f_for_cabin = z && e && k.site && !EconomyIsGroundSite(k.site) && k.site < z->buildings.size()
+                       && z->buildings[k.site].kind == ZONE_KIND_DOCK && EconomyZeppelinStage(*e,k.site) >= ZEPPELIN_STAGES;
+    //SENT ABOARD a zeppelin (flight_plan.md step 2): on his way to its landing, or waiting there for it.
+    if (k.zeppelin && (k.state == WORKER_TO_POST || k.state == WORKER_ON_POST)){
+        return (k.state == WORKER_TO_POST) ? "going aboard the zeppelin" : "waiting to go aboard the zeppelin";
+    }
     if (line_plot >= 0 && line_plot < (int)z->ground.size() && z->ground[line_plot] == ZONE_GROUND_WALL){
         if (k.state == WORKER_TO_ROAD){
             return "going to clear a wall's way";
@@ -650,9 +658,9 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
         case WORKER_TO_HOME:    return "going home";
         case WORKER_HOLDING:    return "waiting with a load";
         //For a site: whatever good it wants (defence_plan.md step 4) - rope too (goods_plan.md).
-        case WORKER_TO_FETCH:   return SiteErrand(0,k.carry_good,f_for_tower);
-        case WORKER_FETCHING:   return SiteErrand(1,k.carry_good,f_for_tower);
-        case WORKER_TO_SITE:    return SiteErrand(2,k.carry_good,f_for_tower);
+        case WORKER_TO_FETCH:   return SiteErrand(0,k.carry_good,f_for_tower,f_for_cabin);
+        case WORKER_FETCHING:   return SiteErrand(1,k.carry_good,f_for_tower,f_for_cabin);
+        case WORKER_TO_SITE:    return SiteErrand(2,k.carry_good,f_for_tower,f_for_cabin);
         case WORKER_BUILDING:   return "building";
         case WORKER_TO_ROAD:    return (k.prop >= 0) ? "going to clear a road" : "going to lay a road";
         case WORKER_CLEARING:   return "clearing a road";
@@ -689,6 +697,7 @@ const char* Doing(const EconomyWorker& k, const ZoneState* z = NULL, const Econo
                                      : (k.forage == FORAGE_FRUIT) ? "picking fruit"
                                      : (k.forage == FORAGE_WATER) ? "drawing water"
                                      : f_tower ? "on watch on the tower" : "standing guard";
+        case WORKER_ABOARD:     return "aboard the zeppelin";
         case WORKER_TO_RANGE:   return "going to the range";
         case WORKER_TRAINING:   return "training";
         //A builder as a caretaker: provisions for the sites (defence_plan.md, step 5) - or a ropemaker or a sailmaker,
@@ -736,6 +745,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_CONDENSER:   return "Condenser";
         case ZONE_KIND_SAIL_LOFT:   return "Sail loft";
         case ZONE_KIND_DOCK:        return "Zeppelin dock";
+        case ZONE_KIND_MAST:        return "Mooring mast";
         default:                    return "?";
     }
 }
@@ -988,6 +998,7 @@ struct CardLine{
     std::string text;
     uint32_t colour = HUD_TEXT;
     float bar = 0.0f;
+    uint32_t fill = 0;          //CARD_BAR: its fill, when not the text's colour - a good's own (0: the text's)
     GoodsMask chips_on = 0;       //CARD_CHIPS: the goods taken; CARD_TOGGLE: 1 while on
     bool f_locked = false;      //...and whether they can be changed here
     std::vector<std::pair<std::string,int>> choices;    //CARD_CHOICE: each chip's label and value
@@ -1019,12 +1030,13 @@ struct Card{
         Text(t,colour);
         lines.back().person = id;
     }
-    void Bar(const std::string& t, float f, uint32_t colour = HUD_TEXT){
+    void Bar(const std::string& t, float f, uint32_t colour = HUD_TEXT, uint32_t fill = 0){
         CardLine l;
         l.type = CARD_BAR;
         l.text = t;
         l.bar = std::max(0.0f,std::min(1.0f,f));
         l.colour = colour;
+        l.fill = fill;
         lines.push_back(l);
     }
     void Stock(const std::string& label, const std::string& whose, const std::array<int,GOOD_COUNT>& goods, int room,
@@ -1609,6 +1621,10 @@ void DockLines(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, u
         }else if (!moored){
             c.Text("Its berth is free: a zeppelin may moor here",HUD_TEXT_DIM);
         }
+        //A MAST too (flight_plan.md step 3): its store, what a zeppelin unloads here.
+        if (id < e.stock.size() && id < e.room.size()){
+            c.StockByGroup("Holds","what zeppelins unload here, anyone's",e.stock[id],e.room[id],false,EconomyReserved(e,id));
+        }
         return;
     }
     int next = stage + 1;
@@ -1638,6 +1654,31 @@ void DockLines(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, u
     }
     if (!then.empty()){
         c.Text(then,HUD_TEXT_DIM);
+    }
+}
+
+/*
+    A MOORING MAST (flight_plan.md step 3), once it stands: its store - what zeppelins unload here, anyone's to take - and
+    its berth: a zeppelin moored here or coming, free, or why none can moor here.
+*/
+void MastLines(const ChasmWorld& w, const ZoneState& z, const EconomyState& e, uint32_t id, Card& c){
+    if (id < e.stock.size() && id < e.room.size()){
+        c.StockByGroup("Holds","what zeppelins unload here, anyone's",e.stock[id],e.room[id],false,EconomyReserved(e,id));
+    }
+    const EconomyZeppelin* moored = EconomyZeppelinAtDock(e,id);
+    const EconomyZeppelin* bound = EconomyZeppelinAtDock(e,id,true);
+    vec2 at;
+    float y, heading;
+    int landing;
+    const char* why = "";
+    if (moored){
+        c.Text("A zeppelin is moored here");
+    }else if (bound){
+        c.Text("A zeppelin is coming in to moor",HUD_TEXT_DIM);
+    }else if (!EconomyMastBerth(w,z,FirstPlotOf(z,id),at,y,heading,landing,&why)){
+        c.Text(Format("No zeppelin can moor here: %s",why),HUD_AMBER);
+    }else{
+        c.Text("Its berth is free: a zeppelin may moor here",HUD_TEXT_DIM);
     }
 }
 
@@ -1896,6 +1937,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     if (b.kind == ZONE_KIND_DOCK && e && info.site_cells == 0 && info.floor_area > 0.0f){
         DockLines(w,z,*e,id,c);
     }
+    if (b.kind == ZONE_KIND_MAST && e && info.storeys > 0){
+        MastLines(w,z,*e,id,c);
+    }
     if (b.kind == ZONE_KIND_STORE && info.storeys > 0){
         int room = (id < e->room.size()) ? e->room[id] : 0;
         if (id < e->stock.size()){
@@ -2136,7 +2180,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
                     if (f_dug_out){
                         c.Text("A floatstone seam - worked out: nothing is left to dig",HUD_AMBER);
                     }else{
-                        c.Bar(Format("A floatstone seam - %i of %i left",left,dep.holds),(float)left / (float)std::max(1,dep.holds));
+                        //Its bar in floatstone's own colour, the top bar's (the user's, 2026-10-24).
+                        c.Bar(Format("A floatstone seam - %i of %i left",left,dep.holds),(float)left / (float)std::max(1,dep.holds),
+                              HUD_TEXT,HudGoodColour(GOOD_FLOATSTONE));
                     }
                 }else if (d >= 0){
                     c.Text(w.deposits->deposits[d].kind == DEPOSIT_MOUNTAIN ? "Dug into the mountain: its stone never runs out"
@@ -2516,7 +2562,7 @@ void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector
 void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& crate, uint64_t tick, Card& c){
     uint32_t id = ECONOMY_STORE_CRATE | crate.id;
     c.title = (crate.origin == CRATE_FOUND) ? "Found crate" : (crate.origin == CRATE_CAMP) ? "A camp's goods"
-            : (crate.origin == CRATE_SITE) ? "A site's goods"
+            : (crate.origin == CRATE_SITE) ? "A site's goods" : (crate.origin == CRATE_CARGO) ? "A zeppelin's cargo"
             : EconomyCrateCrystal(crate) ? "Floatstone" : EconomyCrateRubble(crate.origin) ? "Rubble" : "Crate";
     c.StockByGroup("Holds","anyone's",crate.stock,0,false,EconomyReserved(e,id));
     RotLines(crate.stock,crate.fresh,c);
@@ -2530,6 +2576,8 @@ void CrateCard(const ZoneState& z, const EconomyState& e, const EconomyCrate& cr
         c.Text("Left where a camp stood, " + date,HUD_TEXT_DIM);     //its last tent packed or erased (settlements_plan.md)
     }else if (crate.origin == CRATE_SITE){
         c.Text("Brought for a building taken off, " + date,HUD_TEXT_DIM);  //cancelled, or erased (construction_plan.md)
+    }else if (crate.origin == CRATE_CARGO){
+        c.Text("Unloaded from a zeppelin, " + date,HUD_TEXT_DIM);         //where no mast's store took it (flight_plan.md step 3)
     }else if (crate.origin == CRATE_RUBBLE && EconomyCrateCrystal(crate)){
         c.Text("Fallen from a seam in the wall",HUD_TEXT_DIM);      //a seam's crystal (stone_plan.md)
     }else if (crate.origin == CRATE_RUBBLE){
@@ -2658,10 +2706,12 @@ void GroupCard(const ZoneState& z, const EconomyState& e, const std::vector<uint
     A ZEPPELIN'S CARD (flight_plan.md): what it is doing and where - moored on a dock, on its way and to what, still over the
     chasm or set down by an edge - and how to send it, since a right click is all it takes.
 */
-void ZeppelinCard(const ChasmWorld& w, const EconomyZeppelin& f, Card& c){
+void ZeppelinCard(const ChasmWorld& w, const EconomyState& e, const EconomyZeppelin& f, Card& c){
     c.title = "Zeppelin";
-    auto dock_name = [&f](uint32_t dock){
-        return std::string((dock == f.built_at) ? "its dock" : "a dock");
+    //Moored at a mast, or bound for one, it has the mast's landing (step 3): named by the ground the mast stands on.
+    auto dock_name = [&](uint32_t dock){
+        return (f.plot >= 0) ? std::string("a mast on ") + EconomyEdgeName(w,f.plot)
+                             : std::string((dock == f.built_at) ? "its dock" : "a dock");
     };
     switch (f.doing){
         case ZEPPELIN_MOORED:   c.Text("Moored at " + dock_name(f.dock)); break;
@@ -2677,8 +2727,98 @@ void ZeppelinCard(const ChasmWorld& w, const EconomyZeppelin& f, Card& c){
             break;
         }
     }
+    /*
+        Its PASSENGERS (step 2): each a click from being selected - an order to him then takes him off while it is down
+        - and those on their way aboard. Its CABIN, their pantry, against full.
+    */
+    int grown = EconomyZeppelinAboard(e,f.id,true);
+    int coming = 0;
+    for (const EconomyWorker& k : e.workers){
+        if (k.state == WORKER_ABOARD && k.zeppelin == f.id){
+            c.Person(Format("  %s, %i - %s",EconomyPersonName(k).c_str(),EconomyAgeAt(k.born,e.tick),JobTitle(k.job)),k.id);
+        }else if (k.zeppelin == f.id){
+            coming++;
+        }
+    }
+    c.Text(grown ? Format("%i of %i places taken",grown,ZEPPELIN_PASSENGERS) : std::string("Nobody aboard"),HUD_TEXT_DIM);
+    if (coming){
+        c.Text(Format("%i on their way aboard",coming),HUD_TEXT_DIM);
+    }
+    c.Stock("Cabin","its passengers' food and water",f.cabin,ZEPPELIN_CABIN_WATER + ZEPPELIN_CABIN_PROVISIONS,false);
+    if (grown && (f.cabin[GOOD_WATER] <= 0 || f.cabin[GOOD_PROVISIONS] <= 0)){
+        c.Text((f.cabin[GOOD_WATER] <= 0 && f.cabin[GOOD_PROVISIONS] <= 0) ? "Nothing left aboard: they live on their packs"
+               : (f.cabin[GOOD_WATER] <= 0) ? "No water left aboard" : "No provisions left aboard",HUD_AMBER);
+    }else if (f.doing == ZEPPELIN_MOORED && EconomyCabinShort(f) != std::array<int,GOOD_COUNT>{}){
+        c.Text("The builders keep its cabin full while it is moored",HUD_TEXT_DIM);
+    }
+    if (grown && EconomyZeppelinLanding(w,f) >= 0){
+        CardLine off;
+        off.type = CARD_TOGGLE;
+        off.text = "Everyone off";
+        off.choice_action = OVERLAY_HIT_ZEPPELIN_OFF;
+        c.lines.push_back(off);
+    }
+    /*
+        Its CARGO and LOAD LIST (step 3): what it carries, and what is to be loaded - each listed good with its amounts to
+        choose from, 0 taking it off - and the goods to add to it, a row a group; loaded by the builders while it is moored
+        at a mast or a dock. UNLOAD while it is down: into the mast's store moored, a crate anywhere else.
+    */
+    int carried = EconomyGoodsTotal(f.cargo);
+    int listed = EconomyGoodsTotal(f.load);
+    c.Stock("Cargo","what it carries",f.cargo,ZEPPELIN_CARGO,false);
+    static const int amounts[] = {0,5,10,20,40,60};
+    for (int g : HudGoodsOrder()){
+        if (f.load[g] <= 0){
+            continue;
+        }
+        c.Text(Format("Load %i %s - %i aboard",f.load[g],GoodName(g),f.cargo[g]),
+               (f.cargo[g] >= f.load[g]) ? HUD_TEXT_DIM : HUD_TEXT);
+        CardLine pick;
+        pick.type = CARD_CHOICE;
+        for (int n : amounts){
+            if (n == 0 || n <= ZEPPELIN_CARGO - (listed - f.load[g])){
+                pick.choices.push_back(std::make_pair(std::to_string(n),g * 1000 + n));
+            }
+        }
+        pick.choice_on = g * 1000 + f.load[g];
+        pick.choice_action = OVERLAY_HIT_ZEPPELIN_LOAD;
+        c.lines.push_back(pick);
+    }
+    if (listed < ZEPPELIN_CARGO){
+        c.Text(listed ? "Load more:" : "Load list - choose what to load at a mast:",HUD_TEXT_DIM);
+        int first = std::min(10,ZEPPELIN_CARGO - listed);
+        for (int k = 0; k < HUD_GROUP_COUNT; k++){
+            CardLine add;
+            add.type = CARD_CHOICE;
+            for (int g : HudGoodsOrder()){
+                if (HudGoodsGroup(g) == k && f.load[g] <= 0){
+                    add.choices.push_back(std::make_pair(std::string(GoodName(g)),g * 1000 + first));
+                }
+            }
+            add.choice_action = OVERLAY_HIT_ZEPPELIN_LOAD;
+            if (!add.choices.empty()){
+                c.lines.push_back(add);
+            }
+        }
+    }
+    //Loaded by its mooring's settlement's builders: at a mast nobody lives by, nobody loads it.
+    bool f_short = EconomyLoadShort(f) != std::array<int,GOOD_COUNT>{};
+    if (f_short && f.doing != ZEPPELIN_MOORED){
+        c.Text("Loaded while it is moored at a mast or dock",HUD_TEXT_DIM);
+    }else if (f_short){
+        c.Text(EconomySettlementOf(e,f.dock) ? "The builders are loading it" : "Nobody lives here to load it",
+               EconomySettlementOf(e,f.dock) ? HUD_TEXT_DIM : HUD_AMBER);
+    }
+    if (carried > 0 && EconomyZeppelinLanding(w,f) >= 0){
+        CardLine unload;
+        unload.type = CARD_TOGGLE;
+        unload.text = (f.doing == ZEPPELIN_MOORED) ? "Unload into the store" : "Unload as a crate";
+        unload.choice_action = OVERLAY_HIT_ZEPPELIN_UNLOAD;
+        c.lines.push_back(unload);
+    }
     c.Text("Right click: over the chasm to hold still there,",HUD_TEXT_DIM);
-    c.Text("by an edge to set down, on a free dock to moor",HUD_TEXT_DIM);
+    c.Text("by an edge to set down, on a free mast or dock to moor",HUD_TEXT_DIM);
+    c.Text("Right click it with people selected to send them aboard",HUD_TEXT_DIM);
 }
 
 bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const EconomyState* e, uint64_t tick, Card& c,
@@ -2686,7 +2826,7 @@ bool MakeCard(const PlayPick& p, const ChasmWorld& w, const ZoneState& z, const 
     if (p.kind == PLAY_PICK_ZEPPELIN){
         const EconomyZeppelin* f = e ? EconomyZeppelinById(*e,p.id) : NULL;
         if (f){
-            ZeppelinCard(w,*f,c);
+            ZeppelinCard(w,*e,*f,c);
         }
         return f != NULL;
     }
@@ -2840,6 +2980,7 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
         case ZONE_KIND_WINCH:   return ground + SHAPE_WINCH;
         case ZONE_KIND_MINE:    return ground + SHAPE_WINCH;      //its portal, about a winch's height
         case ZONE_KIND_WELL:    return ground + SHAPE_WELL;
+        case ZONE_KIND_MAST:    return ground + ZONE_MAST_CUP + 0.45f;    //the dock's mast, to its rail (flight_plan.md step 3)
         case ZONE_KIND_BRIDGE:  return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK + 0.45f;
         default:{
             float foot = BuildingFootHalves(w,z,z.KindOf(plot),plot) * ZONE_STOREY_HEIGHT * 0.5f;
@@ -3223,13 +3364,20 @@ void ApplicationChasm::TakeBox(const std::vector<uint32_t>& ids, bool f_add){
     "Several people selected", step 3): a command each, nearest first, each spread round the plot - or to the next
     nearest ripe plant - and told as one line once all are done (group_orders, DrawBuildBar).
 */
-void ApplicationChasm::SendSelected(int plot, int layer, uint32_t tower, int forage){
+void ApplicationChasm::SendSelected(int plot, int layer, uint32_t tower, int forage, uint32_t zeppelin){
     std::vector<uint32_t> people = SelectedPeople();
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const ZoneState> z = GetZones();
     std::shared_ptr<const EconomyState> e = GetEconomy();
+    //Aboard a zeppelin (flight_plan.md step 2): its landing is where they go, the nearest first.
+    if (zeppelin && w && e && e->world == w){
+        const EconomyZeppelin* f = EconomyZeppelinById(*e,zeppelin);
+        plot = f ? EconomyZeppelinLanding(*w,*f) : -1;
+    }
     auto send = [&](uint32_t id, bool f_spread){
-        if (tower){
+        if (zeppelin){
+            SubmitBoard(id,zeppelin,f_spread);
+        }else if (tower){
             SubmitGuard(id,tower);
         }else if (forage != FORAGE_NONE){
             SubmitForage(id,plot,forage,f_spread);
@@ -3607,6 +3755,50 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                         SubmitZone(ZONE_OP_WORK_STOP,plot,want);
                     }
                 }
+            }else if (hit.action == OVERLAY_HIT_ZEPPELIN_LOAD || hit.action == OVERLAY_HIT_ZEPPELIN_UNLOAD){
+                //Its load list, or its cargo unloaded (flight_plan.md step 3) - recorded commands, refused as an order is.
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                if (sel.kind == PLAY_PICK_ZEPPELIN && hit.action == OVERLAY_HIT_ZEPPELIN_LOAD){
+                    SubmitLoad(sel.id,hit.value / 1000,hit.value % 1000);
+                }else if (sel.kind == PLAY_PICK_ZEPPELIN){
+                    SubmitUnload(sel.id);
+                }
+            }else if (hit.action == OVERLAY_HIT_ZEPPELIN_OFF){
+                /*
+                    EVERYONE OFF (flight_plan.md step 2): each grown-up aboard ordered onto its landing - a group's orders,
+                    spread round it and told as one line - and the children with them.
+                */
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                std::shared_ptr<const ChasmWorld> w = GetWorld();
+                std::shared_ptr<const EconomyState> e = GetEconomy();
+                const EconomyZeppelin* f = (w && e && e->world == w && sel.kind == PLAY_PICK_ZEPPELIN)
+                                           ? EconomyZeppelinById(*e,sel.id) : NULL;
+                int landing = f ? EconomyZeppelinLanding(*w,*f) : -1;
+                if (landing >= 0){
+                    std::vector<uint32_t> off;
+                    for (const EconomyWorker& k : e->workers){
+                        if (k.state == WORKER_ABOARD && k.zeppelin == f->id && EconomyCanOrder(k,e->tick)){
+                            off.push_back(k.id);
+                        }
+                    }
+                    if (off.size() >= 2){
+                        group_orders_refused_at = order_refusals.load();
+                        group_orders_done_at = order_commands_done.load() + (uint32_t)off.size();
+                        group_orders_since = std::chrono::steady_clock::now().time_since_epoch().count();
+                        group_orders = (uint32_t)off.size();
+                    }
+                    for (uint32_t id : off){
+                        SubmitOrder(id,landing,-1,off.size() >= 2);
+                    }
+                }
             }else if (hit.action == OVERLAY_HIT_SITE_CANCEL){
                 //A site taken off whole (construction_plan.md) - a recorded zone command, by a plot of it or a cell -
                 //and with it gone, nothing selected.
@@ -3687,6 +3879,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
     }
     if (f_right_click){
         std::vector<uint32_t> people = SelectedPeople();
+        //People selected and a zeppelin under the cursor (flight_plan.md step 2): they are sent aboard it.
+        PlayPick under_people = people.empty() ? PlayPick() : PlayPickUnder(px,hover);
         PlayPick selected;
         {
             std::lock_guard<std::mutex> lock(pick_mutex);
@@ -3699,6 +3893,8 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
         }else if (selected.kind == PLAY_PICK_ZEPPELIN){
             //A ZEPPELIN sent (flight_plan.md): onto a dock, by an edge or over the chasm - the rules say which, or why not.
             SendZeppelinTo(selected.id,px,hover);
+        }else if (under_people.kind == PLAY_PICK_ZEPPELIN){
+            SendSelected(-1,-1,0,FORAGE_NONE,under_people.id);
         }else if (!people.empty() && hover.f_hit && hover.plot >= 0){
             /*
                 An ORDER: the selected person goes to the plot under the cursor and stands there. The economy
@@ -4647,7 +4843,7 @@ void ApplicationChasm::DrawSelectionOverlay(float s){
             vec2 b0(c0.x + pad,y - 6.0f * s);
             vec2 b1(c1.x - pad,y - 2.0f * s);
             overlay->AddRect(b0,b1,2.0f * s,HudFaded(HUD_TEXT,45));
-            overlay->AddRect(b0,vec2(b0.x + (b1.x - b0.x) * l.bar,b1.y),2.0f * s,HudFaded(l.colour,210));
+            overlay->AddRect(b0,vec2(b0.x + (b1.x - b0.x) * l.bar,b1.y),2.0f * s,HudFaded(l.fill ? l.fill : l.colour,210));
         }else if (l.type == CARD_TOGGLE){
             y += f_toggle_row[i] ? chips_h : 0.0f;
             chip(c0.x + pad + toggle_x[i],l.text.c_str(),l.chips_on != 0,l.f_locked,
@@ -4747,7 +4943,8 @@ void ApplicationChasm::RegisterSelectTools(){
                                                   "take_tool","building","gate","ladder","tower_guards","guard_release",
                                                   "store_allow_group","keep","make_more","gather","family",
                                                   "group_drop","tent","pitch","settle","work_stop","forage","pick_up","stats",
-                                                  "replay_stop","site_cancel","place","stats_colony"};
+                                                  "replay_stop","site_cancel","place","stats_colony","zeppelin_off",
+                                                  "zeppelin_load","zeppelin_unload"};
             const int last = (int)(sizeof(actions) / sizeof(actions[0])) - 1;
             /*
                 The hover pinned at a pixel in place of the mouse's, until op hover with none - the overlay's (goods_plan.md:

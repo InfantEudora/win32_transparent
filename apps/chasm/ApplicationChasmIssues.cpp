@@ -95,6 +95,7 @@ const char* WorkplaceName(int kind){
         case ZONE_KIND_CONDENSER:   return "THE CONDENSER";
         case ZONE_KIND_SAIL_LOFT:   return "THE SAIL LOFT";
         case ZONE_KIND_STORE:       return "THE STORE";
+        case ZONE_KIND_MAST:        return "THE MAST";
         default:                    return "A WORKPLACE";
     }
 }

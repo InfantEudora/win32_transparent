@@ -381,6 +381,29 @@ struct PropInstance;
     over the rift's raster once, when it is sent, and flown at a pace, turning at a rate - up to its height, along its
     way, turned and down at the end. It cruises ZEPPELIN_CRUISE, over everything standing in the chasm, and over a
     dock's mast (ZEPPELIN_MAST_CLEAR). No pilot, no fuel, and it flies in winter too (the user's, 2026-10-24).
+    PASSENGERS (step 2): only by ORDER do people go aboard or off (the user's). Sent aboard (Board, CHASM_CMD_BOARD - a
+    right click on it with people selected), a grown-up is posted on its LANDING (EconomyZeppelinLanding: the plot it is
+    set down by, or the one under its berth) and, on his post there with it still there, goes aboard: WORKER_ABOARD,
+    standing on its deck where it goes (EconomyDeckPlace), out of every round - no errand, no job, no zombie reaches him.
+    At most ZEPPELIN_PASSENGERS grown-ups; a child going with his grown-up goes aboard and off with him and takes no
+    place. Off by an order, any order, while it is down: he steps onto its landing and goes on from there, and so is
+    set down on an island as on the rim. His pack and a tent go with him, nothing else - so an expedition founds a
+    settlement on an island as on land. Released aboard, he steps off and goes home. In the air, no order takes him off.
+    ITS CABIN is the passengers' pantry, as a guard tower is its guards' (the user's): water and provisions, eaten from
+    as at home, his pack only for a kind it has none of; stepping off he tops his pack up from it. Kept full at a dock
+    by its settlement's builders, as a tower is (KeepTowers, CabinLeft) - its own stock, apart from any load. Both empty,
+    he waits aboard hungry: nobody leaves unordered.
+    THE MAST AND GOODS (step 3): a MOORING MAST (ZONE_KIND_MAST) is one plot at a drop into the chasm, where a steam
+    collector could stand, built of wood and rope as a winch is. A zeppelin sent onto one moors NOSE-IN to its cup
+    (EconomyMastBerth), hanging out over the drop as high as on a dock, its LANDING the open plot beside the mast nearest
+    the cup. The dock is a mast too (the user's). Each has a STORE of ECONOMY_MAST_ROOM - what a zeppelin
+    unloads there, anyone's to take from as a store's (EconomyKindStores), never a carrier's to deliver to.
+    Its CARGO is goods carried, apart from the cabin, up to ZEPPELIN_CARGO in all. Its LOAD LIST (SetLoad,
+    CHASM_CMD_LOAD) is the player's: so much of a good. While it is moored at a mast or a dock, that settlement's
+    builders bring what the list still wants from wherever a site's goods come from - the mast's own store nearest - as
+    a site's goods (FindSiteWork, CabinLeft): into the cabin first, while it lacks, then the cargo. UNLOADED by order
+    (Unload, CHASM_CMD_UNLOAD): moored, into its mooring's store as far as there is room; what is left, and everything
+    set down anywhere else, a crate on the landing (CRATE_CARGO). In the air nothing is unloaded.
 
     --- STOCK KEPT (docs/goods_plan.md, "Kept in stock, and made to order") -------------------------
     A MADE good (GOODS_MADE: provisions, rope, canvas) has a KEPT number - the colony's, set by the player - of it to
@@ -572,6 +595,16 @@ struct PropInstance;
 #define ZEPPELIN_SET_DOWN_REACH 12.0f   //how far from an edge plot it may come alongside, from the plot's middle
 #define ZEPPELIN_DECK           1.35f   //its deck over its origin, as modelled (blender_chasm_props.py, ZEP_DECK_Z)...
 #define ZEPPELIN_SET_DOWN_STEP  0.25f   //...and over the edge's ground when it is set down: a step up to it
+//PASSENGERS (flight_plan.md step 2, current tuning).
+#define ZEPPELIN_PASSENGERS     8       //grown-ups aboard at most - a child with his grown-up takes no place
+#define ZEPPELIN_BOARD_REACH    8.0f    //posted this near its landing, he goes aboard: a group's spread round it too
+#define ZEPPELIN_CABIN_WATER    24      //its cabin full: six days' water for eight...
+#define ZEPPELIN_CABIN_PROVISIONS 16    //...and six days' provisions, which run out with it
+#define ZEPPELIN_CARGO          60      //goods it carries at most (step 3), apart from its cabin: a frame's worth of wood
+#define ZEPPELIN_NOSE           7.0f    //its nose's tip along it from its middle, as modelled (ZEP_LENGTH / 2)...
+#define ZEPPELIN_NOSE_Y         5.0f    //...and its height over its origin (ZEP_AXIS_Z): what goes into a mast's cup
+#define ECONOMY_MAST_ROOM       60      //a mast's store, and a dock's, whatever its size: a zeppelin's whole cargo
+#define ECONOMY_MAST_ROPE       4       //rope a mast's storey takes, with its wood: as a winch's
 #define ECONOMY_WINCH_ROPE          4       //rope a winch's storey takes, with its wood (goods_plan.md): the colony starts with none
 #define ECONOMY_TENT_ROPE           1       //...and a tent's, painted: its guy lines (settlements_plan.md) - one packed and pitched takes none
 #define ECONOMY_KEPT_START          0       //what the colony keeps of a made good before the player says (STOCK KEPT): none
@@ -614,6 +647,8 @@ struct PropInstance;
 #define ECONOMY_TOWER_WATER         6       //...its water - its stock full, and what it is built with: 12 days for the guard
 #define ECONOMY_TOWER_PROVISIONS    4       //...and its provisions, at 3 water to 2 provisions so both run out together
 #define ECONOMY_TOWER_GUARDS_PLACED 1       //a new tower's guard count (step 8, the user's): the player adds more
+#define ECONOMY_STONE_TOWER_STONE   10      //a STONE guard tower (ramparts_plan.md), a guard place: stone for its walls...
+#define ECONOMY_STONE_TOWER_WOOD    4       //...and wood for its floors and roof; its water and provisions a wooden one's
 //A WELL (water_tools_plan.md, current tuning): what one holds, from the seed - a unit is two days of an adult's water, so
 //ten people draw one dry in 20 to 40 days - and what an endless one is kept at, the settlers' water.
 #define ECONOMY_WELL_WATER_MIN      100
@@ -762,6 +797,7 @@ inline bool EconomyStageJob(int job){
 #define WORKER_TAKING_INPUT     30      //picking it up (timer)
 #define WORKER_TO_WORKSHOP      31      //to his builders' hut, with it or to make provisions there (defence_plan.md)
 #define WORKER_MAKING           32      //making one there (timer; its wheat and beans taken at the start)
+#define WORKER_ABOARD           33      //on a zeppelin's deck (FLIGHT, step 2): where it goes, until an order takes him off
 
 /*
     LIFELINES (docs/lifeline_plan.md, step 1). A person is BORN on a calendar tick - a settler before the
@@ -946,6 +982,8 @@ struct EconomyWorker{
     bool f_chosen = false;             //a guard posted BY HAND (POSTS, step 8): kept ahead of the auto-fill
     uint32_t with = 0;                  //WITH THE GROWN: who a child goes along with, or a baby is carried by, 0 none
                                         //(Economy::WithTheGrown) - a baby's kept until its mother is home again
+    uint32_t zeppelin = 0;              //PASSENGERS (FLIGHT): the zeppelin he is aboard, or sent aboard, 0 none
+    float deck_y = 0.0f;                //...and his feet's height on its deck, aboard
 };
 
 //Starts a timed part of his round: `timer` counts down from `ticks`, and `timer_full` keeps where it began, so his
@@ -1082,6 +1120,7 @@ struct EconomyField{
 #define CRATE_RUBBLE            3       //stone fallen from the chasm's walls, laid with a new colony (stone_plan.md)
 #define CRATE_BROKEN            4       //...and a rock's stone, left where a stonecutter broke it - rubble too
 #define CRATE_SITE              5       //what a building site was brought, left where it stood when it was taken off
+#define CRATE_CARGO             6       //a zeppelin's cargo, unloaded where no mast's store took it (flight_plan.md step 3)
 inline bool EconomyCrateRubble(int origin){ return origin == CRATE_RUBBLE || origin == CRATE_BROKEN; }
 #define ECONOMY_CRATE_RINGS     6       //rings of plots round him searched for open ground to put a load down on: past a camp's tents
 /*
@@ -1164,7 +1203,9 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_ZEPPELIN_STAGE    28      //a stage of the zeppelin on dock `building` stands, `amount` which (steam_plan.md step 5)
 #define EVENT_ROTTED            29      //at dawn, `amount` of the food in `what` rotted lying out on a colony's land - one a food
                                         //a colony a dawn, at `plot`, the first place it rotted (SPOILAGE)
-#define EVENT_COUNT             30
+#define EVENT_PUT_DOWN          30      //`person` put down by the debug tools (AddPerson) on `plot`, at home in `building` -
+                                        //neither born nor settled, so the ledger's check counts him in by this
+#define EVENT_COUNT             31
 //The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
 //chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
 #define CHASM_GOAL_WINTER       0
@@ -1538,6 +1579,9 @@ struct EconomyZeppelin{
     int next = 0;                   //...the point on it it is making for
     float end_heading = 0.0f;       //its heading at the end, and its height - set down or moored
     float end_y = 0.0f;
+    std::array<int,GOOD_COUNT> cabin = {};  //ITS CABIN (step 2): the water and provisions its passengers live on
+    std::array<int,GOOD_COUNT> cargo = {};  //ITS CARGO (step 3): goods carried, ZEPPELIN_CARGO in all at most...
+    std::array<int,GOOD_COUNT> load = {};   //...and its LOAD LIST, the player's: what is to be loaded at a mast
 };
 
 //A SETTLEMENT (Economy::Settle), worked out from the zones.
@@ -1732,6 +1776,34 @@ const EconomyZeppelin* EconomyZeppelinById(const EconomyState& e, uint32_t id);
 const EconomyZeppelin* EconomyZeppelinAtDock(const EconomyState& e, uint32_t dock, bool f_bound = false);
 //Whether a zeppelin may fly over `p`: the open chasm, ZEPPELIN_CLEAR inside the rift.
 bool EconomyFlyable(const ChasmWorld& w, const vec2& p);
+//PASSENGERS (step 2): the plot people go aboard from and step off onto - the edge plot it is set down by, or the plot
+//under its berth - and -1 while it is in the air...
+int EconomyZeppelinLanding(const ChasmWorld& w, const EconomyZeppelin& f);
+//...how many are aboard it, grown-ups alone with `f_grown`; and where on its deck someone aboard stands, his feet's
+//height in `y` - by his rank among them, in id order.
+int EconomyZeppelinAboard(const EconomyState& e, uint32_t id, bool f_grown);
+vec2 EconomyDeckPlace(const EconomyState& e, const EconomyZeppelin& f, const EconomyWorker& k, float* y);
+//...and how far it rises and sinks on the air at `tick`, off its mooring: the view's motion, which those on its deck
+//share (their deck_y has it).
+float EconomyZeppelinBob(const EconomyZeppelin& f, uint64_t tick);
+//What its cabin lacks of full.
+std::array<int,GOOD_COUNT> EconomyCabinShort(const EconomyZeppelin& f);
+//THE MAST AND GOODS (step 3): what its load list still wants loaded, by good...
+std::array<int,GOOD_COUNT> EconomyLoadShort(const EconomyZeppelin& f);
+//...and the goods in a stock, all of them: a cargo's, against ZEPPELIN_CARGO.
+int EconomyGoodsTotal(const std::array<int,GOOD_COUNT>& goods);
+/*
+    Where a zeppelin moors at the mast on `plot` (ZoneMastAt): nose-in to its cup, hanging out over the drop - its middle
+    ZEPPELIN_NOSE out from the cup, its origin ZEPPELIN_NOSE_Y under it, nothing under it as high as itself - and its
+    LANDING, where its people step off and its goods are taken: the open plot beside the mast, on its ground, nearest the
+    cup. False, and `why` says it, with no drop beside the plot, something under the zeppelin, or nowhere to step off.
+*/
+bool EconomyMastBerth(const ChasmWorld& w, const ZoneState& z, int plot, vec2& at, float& y, float& heading, int& landing,
+                      const char** why);
+//A kind whose stock is anyone's to take from as a store's: a store, and a mast's or a dock's - what a zeppelin unloaded.
+inline bool EconomyKindStores(int kind){
+    return kind == ZONE_KIND_STORE || kind == ZONE_KIND_MAST || kind == ZONE_KIND_DOCK;
+}
 /*
     Where a zeppelin comes alongside edge plot `plot` to set down by it: the nearest point within ZEPPELIN_SET_DOWN_REACH
     of its middle that is inside the rift with nothing under the zeppelin as high as its keel, at the height that puts
@@ -1789,7 +1861,7 @@ inline bool EconomyShutIn(const EconomyState& e, uint32_t id){
 inline bool EconomyDoorMatters(int kind){
     return kind == ZONE_KIND_STORE || kind == ZONE_KIND_WOODCUTTER || kind == ZONE_KIND_WATER || kind == ZONE_KIND_BUILDERS
            || kind == ZONE_KIND_ROPEWALK || kind == ZONE_KIND_STONECUTTER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_STEAM
-           || kind == ZONE_KIND_CONDENSER || kind == ZONE_KIND_SAIL_LOFT;
+           || kind == ZONE_KIND_CONDENSER || kind == ZONE_KIND_SAIL_LOFT || kind == ZONE_KIND_MAST;
 }
 
 //A mother's children so far (BIRTHS), the living and the dead.
@@ -1883,9 +1955,10 @@ public:
     //waiting for it. A WELL holds water alone: `f_endless` makes it endless, and an amount without it finite again.
     //False if none, or refused.
     //With `f_site`, what has been BROUGHT to its site instead, which then builds what that pays for (Build) - a zeppelin's
-    //stages among them (steam_plan.md step 5), for testing without the carrying.
+    //stages among them (steam_plan.md step 5), for testing without the carrying. Its storeys rise on the next tick.
+    //With `f_cargo`, a dock's or mast's: the CARGO of the zeppelin moored there (flight_plan.md step 3).
     bool SetStock(const ZoneState& z, uint32_t id, int good, int amount, bool f_pantry = false, bool f_endless = false,
-                  bool f_site = false);
+                  bool f_site = false, bool f_cargo = false);
     /*
         PROVISIONS (POSTS): how many are still wanted in settlement `settlement` (its id) - by its sites, its towers
         and its colony's level kept (STOCK KEPT) - beyond what is made and being made there; below 0, made and not
@@ -1981,6 +2054,24 @@ public:
     */
     bool SendZeppelin(uint32_t id, const vec2& at, int plot, uint32_t dock, const ZoneState& z, std::string* why);
     /*
+        SENT ABOARD (FLIGHT, step 2, CHASM_CMD_BOARD): person `person` ordered onto zeppelin `zeppelin`'s landing - spread
+        round it as one of a group's with `f_spread` - to go aboard when he stands there with it. Refused, `why` saying
+        it, in the air, full, already aboard, or as an order is.
+    */
+    bool Board(uint32_t person, uint32_t zeppelin, bool f_spread, const ZoneState& z, Walkers& walkers, std::string* why);
+    /*
+        THE LOAD LIST (FLIGHT, step 3, CHASM_CMD_LOAD): zeppelin `zeppelin` to have `amount` of good `good` loaded - cut
+        to what ZEPPELIN_CARGO leaves beside the rest of its list. 0 takes the good off it. False for no such zeppelin
+        or good, or no change.
+    */
+    bool SetLoad(uint32_t zeppelin, int good, int amount, std::string* why);
+    /*
+        UNLOADED (FLIGHT, step 3, CHASM_CMD_UNLOAD): zeppelin `zeppelin`'s cargo, while it is down - moored, into its
+        mast's or dock's store as far as there is room, the rest a crate on its landing; set down, all of it a crate on
+        the edge plot. Refused in the air, or with nothing aboard.
+    */
+    bool Unload(uint32_t zeppelin, const ZoneState& z, std::string* why);
+    /*
         A PERSON PUT DOWN by the debug tools (CHASM_CMD_PERSON, test_maps_plan.md step 5): an ordinary villager on
         `plot`, grown up, who lives by the rules from then on - housed, given work, eating as anyone does. `house` a home
         that stands, whose family he joins (a camp's: a family of his own there), or 0 - a family of his own with
@@ -2015,6 +2106,8 @@ public:
     const std::vector<int>& GroundRaises() const { return ground_raises; }
     //The field cells built this tick - a field site's, all at once - the app raises them (ZONE_OP_FIELD_RAISE).
     const std::vector<int>& FieldRaises() const { return field_raises; }
+    //...and once it has, the three start empty again: the raises a command makes between ticks wait for the next.
+    void RaisesApplied(){ raises.clear(); ground_raises.clear(); field_raises.clear(); }
     //A cell of each field that waited ECONOMY_CROP_GRACE for a crop this tick - the app starts it with AUTO.
     const std::vector<int>& CropDefaults() const { return crop_defaults; }
     //The tents packed this tick - the app takes their plots out of their camps (ZONE_OP_BUILD_ERASE).
@@ -2386,11 +2479,22 @@ private:
     void Build(const ZoneState& z, uint32_t id);
     //A DOCK that stands whole, its zeppelin fitting and not finished: a site again, for its zeppelin (step 5).
     bool ZeppelinSite(const ZoneState& z, uint32_t id) const;
-    //FLIGHT (Flight.cpp): every zeppelin a tick on; one made, moored on the dock it was finished on.
+    //FLIGHT (Flight.cpp): every zeppelin a tick on - its passengers on its deck with it; one made, moored on the dock it
+    //was finished on.
     void TickFleet(const ZoneState& z, float dt);
+    //PASSENGERS (step 2): aboard, if he stands by the landing of the one he was sent aboard and it is there; off onto
+    //its landing, if it is down, his pack topped up from its cabin - false, and he stays aboard, in the air.
+    bool BoardIfThere(EconomyWorker& k, const ZoneState& z);
+    bool StepOff(EconomyWorker& k);
+    //...a cabin to keep full: the zeppelin moored on dock `dock`, by its index in the fleet, -1 none; and what it lacks of
+    //full less what is on its way (TowerLeft's reckoning).
+    int CabinOf(uint32_t dock) const;
+    std::array<int,GOOD_COUNT> CabinLeft(uint32_t dock, const EconomyWorker* except) const;
     void ZeppelinFinished(uint32_t dock);
     //A dock zeppelin `f` may moor on: standing whole, fitting, its own zeppelin finished, its berth nobody else's.
     bool DockBerthFree(const ZoneState& z, uint32_t dock, const EconomyZeppelin& f, std::string* why) const;
+    //...and a MAST (step 3): standing whole, with a berth and a landing (EconomyMastBerth), nobody else's.
+    bool MastBerthFree(const ZoneState& z, uint32_t mast, const EconomyZeppelin& f, std::string* why) const;
     //Road works: the next piece to do (from home, or on a stint - near where he stands), and what he does when a
     //piece is done. The trees in a plot's way are RoadTrees, public.
     bool FindRoadWork(EconomyWorker& k, const ZoneState& z, Walkers& walkers, bool f_stint);

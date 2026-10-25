@@ -7,6 +7,7 @@ not told apart from the wavs. Mono stays mono, stereo stays stereo.
     python tools/sound_ogg.py chasm              # every .wav under apps/chasm/assets/sound/
     python tools/sound_ogg.py chasm --dry-run    # say what it would do
     python tools/sound_ogg.py chasm --again speech/     # the kept sources again, after a rule here changed
+    python tools/sound_ogg.py chasm --only airship_     # just the new wavs named so - others dropped there wait
 
 For each wav there, in a subfolder or not:
   - encodes it to <name>.ogg beside it, replacing an .ogg of that name;
@@ -125,6 +126,8 @@ def main():
     ap.add_argument("--again", nargs="?", const="", metavar="PATH",
                     help="encode the wavs kept in art_source/<app>/sound/ once more (those under PATH, e.g. speech/), "
                          "leaving them there")
+    ap.add_argument("--only", metavar="PATH", help="only the wavs whose path under sound/ starts with PATH - "
+                                                    "when others dropped there are not ready to go yet")
     args = ap.parse_args()
 
     sound_dir = os.path.join(ROOT, "apps", args.app, "assets", "sound")
@@ -145,6 +148,8 @@ def main():
                 wavs.append(os.path.relpath(os.path.join(folder, f), from_dir).replace(os.sep, "/"))
     if f_again:
         wavs = [w for w in wavs if w.startswith(args.again.replace(os.sep, "/"))]
+    if args.only:
+        wavs = [w for w in wavs if w.startswith(args.only.replace(os.sep, "/"))]
     wavs.sort()
     if not wavs:
         print("nothing to do: no .wav under %s" % os.path.join(from_dir, args.again or ""))

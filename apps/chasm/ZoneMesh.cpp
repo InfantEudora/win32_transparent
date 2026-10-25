@@ -247,9 +247,9 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
                 break;
             }
         }
-        //The debug castle's stone (ramparts_plan.md).
+        //The debug castle's stone (ramparts_plan.md), and its stone towers (castle_plan.md).
         for (int k = 0; k < 4; k++){
-            if (ZoneCastleShape(z,quad.v[k]) != ZONE_CASTLE_NONE){
+            if (ZoneCastleShape(z,quad.v[k]) != ZONE_CASTLE_NONE || ZoneTowerStone(z,quad.v[k])){
                 BuildCastleCell(w,z,q,out);
                 break;
             }

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 69bfd5e2-d3af-47c9-869a-da8e0eaa395a
-  modified: 2026-10-23T12:24:36.534Z
+  modified: 2026-10-25T20:12:38.278Z
 ---
 
 Terraced hill towns for Chasm, `apps/chasm/docs/terraces_plan.md`.
@@ -38,6 +38,12 @@ Stage 3 BUILT 2026-10-23 (user: own people walk through, onto open terrace groun
 - `ZoneUpperDoor` + `ZONE_STEP_DOOR`; one door a level per plot;
 - a building is walked inside by a walk to or from it (any of its plots) - a general change in `Walkers::EdgeOpen`;
 - upper doors always drawn (`BuildingUpperDoorAt`); figures drawn through them via `RouteDoorLeg` (view only).
+
+Look reworked 2026-10-25 (user asked: n-gon not star, more retaining-wall feel, slant, decoration):
+- outline now `BuildingWallCrossing` (house n-gon); road stairs, road ends and `RouteHeight` follow the crossing;
+- user CHOSE: batter with the FOOT spreading out onto the lower ground (not the top pulling in); footing, capstones,
+  quoins, buttresses, creepers (+ tufts). Not chosen: weep holes / course lines.
+- Check: `saves/terraces_test.json` + a top-1 terrace painted at (162.08, 6.25), a 6-cell point.
 
 **Single definitions, use them in new code:**
 - `ZoneGroundAt` / `ZoneGroundHeight`: the ground a plot has (a terrace's top, or the terrain). Anything placing something on a plot must ask these, not `Terrain::GroundHeight` or `ground[]`.
