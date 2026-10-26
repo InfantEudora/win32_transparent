@@ -26,3 +26,7 @@ apps/music/assets/music/sounds/*.wav
 !/apps/music/samples/exports.csv
 /apps/music/renders
 *.rec
+
+#Chasm's autosaves rotate through three slots on every machine and every running copy, so tracking them
+#only makes merge conflicts. A save worth keeping gets a name of its own (chasm_save) and is committed.
+/apps/chasm/saves/autosave_*.json
