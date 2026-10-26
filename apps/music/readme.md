@@ -142,7 +142,7 @@ change to another root (a held note the new scale lacks still plays); chasm stay
 A **section** may name its own `mode` and `root`, which it takes on its first downbeat, so choosing
 the section is enough to hear it as it is meant. A key change asked for afterwards still applies,
 until the next section that names one. The modes are pentatonic_minor, aeolian, dorian, phrygian,
-pentatonic_major, ionian, lydian and mixolydian.
+pentatonic_major, ionian, lydian, mixolydian and phrygian_dominant (`hijaz` names it too).
 
 ### chasm.json
 
@@ -167,7 +167,7 @@ It can land under the theme, which it harmonises.
 - **winter**: aeolian, sparse; snow wind, a drone and the angelical pad, cold strings when tense;
   metallophone "ice", breath flute and a low cello. Theme on a high flute, half as fast again.
 
-Two more are asked for by name, and are meant to play in the game on players of their own, faded
+Three more are asked for by name, and are meant to play in the game on players of their own, faded
 in by what the camera looks at, rather than taking a turn:
 
 - **clouds**: phrygian, over unexplored ground - unease, not horror. Winds, whistles, a low
@@ -178,9 +178,24 @@ in by what the camera looks at, rather than taking a turn:
   horn) is for the first time the chasm comes into sight. Dorian because the choir is recorded on
   the white keys, which IS D dorian, so it plays as recorded; lydian (wonder) would need it three
   semitones down.
+- **desert** (2026-10-26; the sitar re-exported the same day with the reverb the user gave it, as it
+  was dry beside the rest): phrygian dominant - maqam hijaz,
+  D Eb F# G A Bb C - over the far side's sand, where the pyramid is. Heat and distance, and
+  something under the sand when tense. Sand wind and low wind over the root drone, a buried rumble
+  only when tense; an oud walking low, sitar glints, a frame-drum dum, three tambourines loose on
+  and off the beat (the riq), and a snake's hiss and rattle that come with suspense. The theme on
+  sitar in half-beat steps, where 2 to 3 is the augmented second that makes it hijaz; a `taqsim` on
+  the oud, the hijaz descent from the octave down to the root; and a `caravan`, the maqsum rhythm
+  (dum tek . tek dum . tek .) on the frame drum, dum on D2 and tek on A2, more often when tense.
+  The oud stays below D3 and the theme is on the sitar so that neither is pitched more than an
+  octave from its recording. The mandolin is left out: it measures 24 cents flat of E3, which
+  would beat against the oud, and a score cannot retune a sample by less than a semitone.
 
 Measured on 60-second renders at suspense 0.2, every section is within 1.8 dB: spring -25.1,
-summer -25.7, autumn -26.9, winter -26.1, clouds -26.7, chasm -26.0 dB RMS.
+summer -25.7, autumn -26.9, winter -26.1, clouds -26.7, chasm -26.0 dB RMS. The desert, on
+120-second renders at suspense 0.2, is -26.8, -25.7 and -25.0 on three seeds (chasm -26.1 and
+winter -24.8 the same way), and -23.7 at 0.8; 65-77% of it under 200 Hz, as dark as the chasm's
+72%. samplescan reads its key as a weak D or A major, since its profiles are major and minor only.
 
 The guitar went up in spring, summer and autumn on 2026-10-16 (more guitar and strum notes, the
 other chords, the `pick`). On 120-second renders at suspense 0.2, two seeds each, that added
@@ -191,9 +206,10 @@ to A major rather than D major, both times by a margin of 0.03 to 0.04 (it was D
 
 The bench plays one section at a time, so the blend of the land with clouds or chasm is not heard
 here. **The game plays it since 2026-10-16** (`apps/chasm/ApplicationChasmMusic.cpp`): one player
-in the season's section, which it is sent at each season's turn; the `clouds` and `chasm` sections
-on players of their own, faded in by how much of the view is unexplored ground and seen chasm, with
-the season's turned down under them; `reveal` when the chasm is first seen. It plays on in a pause.
+in the season's section, which it is sent at each season's turn; the `clouds`, `chasm` and `desert`
+sections on players of their own, faded in by how much of the view is unexplored ground, seen chasm
+and seen desert, with the season's turned down under them - out altogether under the desert, which
+has no seasons (since 2026-10-26); `reveal` when the chasm is first seen. It plays on in a pause.
 The layering is the game's (`MUSIC_*` in that file); everything else is this score's.
 
 **Pause** is the game's pause, tried here before any game uses it. It fades the music out over

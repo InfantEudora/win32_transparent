@@ -2,6 +2,7 @@
 #include "Debug.h"
 #include "UIOverlay.h"
 #include "ChasmHud.h"
+#include "ChasmVersion.h"
 #include "Window.h"
 #include "File.h"
 #ifdef USE_SOUND
@@ -115,7 +116,18 @@ std::string EntryLabel(const ChasmSaveEntry& e){
     if (!when.empty()){
         label += "      " + when;
     }
+    //A colony begun in an older version (ChasmSave.h): it loads, but may lack what a new game has since.
+    if (ChasmVersionOlder(e.game_version)){
+        label += "      (older version)";
+    }
     return label;
+}
+
+//...and what is said of one: under LOAD while its row is chosen, and once it is loaded.
+std::string OlderSaveText(const std::string& version){
+    bool f_number = !version.empty() && version.find_first_not_of("0123456789.") == std::string::npos;
+    return "Saved with an older version" + (f_number ? " (" + version + ")" : std::string()) +
+           ": it might miss some newer features";
 }
 
 }
@@ -285,13 +297,22 @@ void ApplicationChasm::BuildScreen(){
             std::lock_guard<std::mutex> lock(menu_text_mutex);
             ours = colony_save;
         }
+        std::vector<std::string> notes;     //by item: an older save's line, for DrawScreen - which may not read the list
         for (int i = from; i < to; i++){
             std::string label = f_replays ? RecordingLabel(screen_recordings[i]) : EntryLabel(screen_saves[i]);
             //The save the colony in play came from, marked: several of one colony read alike but for their dates.
             if (!f_replays && !ours.empty() && screen_saves[i].name == ours){
                 label += "      (this game)";
             }
-            screen_menu.AddButton(label.c_str(),SCREEN_ITEM_ROW + i);
+            int item = screen_menu.AddButton(label.c_str(),SCREEN_ITEM_ROW + i);
+            if (!f_replays && ChasmVersionOlder(screen_saves[i].game_version)){
+                notes.resize((size_t)item + 1);
+                notes[(size_t)item] = OlderSaveText(screen_saves[i].game_version);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(menu_text_mutex);
+            screen_notes.swap(notes);
         }
         if (screen != CHASM_SCREEN_SAVE && count == 0){
             screen_menu.SetEnabled(screen_menu.AddButton(f_replays ? "No recordings yet" : "No saves yet",SCREEN_ITEM_NONE),false);
@@ -511,7 +532,9 @@ bool ApplicationChasm::LoadSaveNamed(const std::string& name, std::string& error
     LoadSave(save,refused);
     std::string colony = meta_text("colony");
     EnteredColony(colony.empty() ? "Seed " + std::to_string(save.settings.seed) : colony,name);
-    error = refused;
+    //Told as it is loaded too, by whatever loaded it - Continue and the quick load have no list to say it under.
+    error = ChasmVersionOlder(save.game_version) ? OlderSaveText(save.game_version) : std::string();
+    error += (!error.empty() && !refused.empty()) ? "; " + refused : refused;
     debug->Info("Loaded %s: %s\n",name.c_str(),SaveTitle().c_str());
     return true;
 }
@@ -776,6 +799,12 @@ void ApplicationChasm::DrawScreen(float s){
         detail = std::to_string(EconomySettlerCount()) + " settlers and their camp, on the first day of spring";
     }else if (screen == CHASM_SCREEN_LOAD){
         heading = "LOAD";
+        //The chosen row's, if it is a save from an older version (BuildScreen).
+        int focus = screen_menu.Focus();
+        std::lock_guard<std::mutex> lock(menu_text_mutex);
+        if (focus >= 0 && focus < (int)screen_notes.size()){
+            detail = screen_notes[(size_t)focus];
+        }
     }else if (screen == CHASM_SCREEN_REPLAY){
         heading = "REPLAY A RECORDING";
         detail = "A run played again from where it began - STOP on its bar ends it";

@@ -1192,7 +1192,8 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
 #define EVENT_BALCONY_REACHED   17      //`person` the first on a balcony, lowered by a winch, on `plot` (demo_plan.md)
 #define EVENT_GOAL_MET          18      //the demo's goal `amount` (CHASM_GOAL_*) met - by `person`, if one made it so
 #define EVENT_GOAL_FAILED       19      //...or failed: `person` the death that failed it
-#define EVENT_DEMO_COMPLETE     20      //both of the demo's goals decided; `amount` how many were met
+#define EVENT_DEMO_COMPLETE     20      //every goal in play decided; `amount` how many were met, `what` of how many (0 before
+                                        //there were more than two)
 #define EVENT_COLONY_LOST       21      //nobody left alive: `person` the last to die
 #define EVENT_WALL_BROKEN       22      //zombies broke the palisade on `plot` (zombies_plan.md step 4)
 #define EVENT_GATE_BROKEN       23      //...the door of the gate on `plot`
@@ -1205,12 +1206,24 @@ inline bool EconomyCrateCrystal(const EconomyCrate& c){
                                         //a colony a dawn, at `plot`, the first place it rotted (SPOILAGE)
 #define EVENT_PUT_DOWN          30      //`person` put down by the debug tools (AddPerson) on `plot`, at home in `building` -
                                         //neither born nor settled, so the ledger's check counts him in by this
-#define EVENT_COUNT             31
-//The demo's goals (demo_plan.md step 7), EVENT_GOAL_*'s `amount`: through the first winter with nobody dead, and the
-//chasm reached - a winch built and someone lowered by it. Worked out by the app (ApplicationChasmGoals.cpp).
+#define EVENT_GOAL_SET          31      //the demo's goal `amount` (CHASM_GOAL_*) appeared (swamp_huts_plan.md step 2)
+#define EVENT_WAVE              32      //THE WAVE: the swamp huts' doors open, `amount` zombies to come, the first hut's door `plot`
+#define EVENT_WAVE_SEEN         33      //...and the first of them out from under the clouds, at `pos`
+#define EVENT_COUNT             34
+/*
+    The demo's goals (demo_plan.md step 7; swamp_huts_plan.md step 2), EVENT_GOAL_*'s `amount`: through the first winter
+    with nobody dead; the chasm reached - a winch built and someone lowered by it; an archer trained, from the second
+    spring; the swamp kept out of without an archer, once it is found; and the first wave survived. Worked out by the app
+    (ApplicationChasmGoals.cpp).
+*/
 #define CHASM_GOAL_WINTER       0
 #define CHASM_GOAL_CHASM        1
-#define CHASM_GOALS             2
+#define CHASM_GOAL_ARCHER       2
+#define CHASM_GOAL_SWAMP        3
+#define CHASM_GOAL_WAVE         4
+#define CHASM_GOALS             5
+#define ARCHER_TRAINED          (ARCHERY_FULL / 5)  //archery that makes an archer, for the goal and an escort: 20%
+#define ESCORT_REACH            10.0f   //world units: an archer this near someone in the swamp escorts him
 #define ECONOMY_EVENTS_KEPT     64      //the last few, for each reader to find the new ones among
 struct EconomyEvent{
     uint64_t tick = 0;          //the calendar's
@@ -1464,6 +1477,45 @@ float EconomyFallenRising(const EconomyFallen& f, uint64_t now);        //a pers
 */
 bool EconomyReachable(const EconomyWorker& k, uint64_t tick);
 
+/*
+    THE FIRST WAVE (swamp_huts_plan.md step 2; the user's, 2026-10-26): the zombies out of the swamp huts. Not on a date
+    but once the colony is ready for it - the app calls it (CallWave) when the goal of an archer trained is met, for the
+    WAVE_AFTER_DAWNS'th dawn after; one that falls in winter, when the swamp is frozen, waits for the first dawn of
+    spring. Then each hut lets out WAVE_FIRST_PER_HUT, one at a time from the plot before its door (ZoneHutDoor),
+    HUT_TRICKLE_SECONDS apart and each hut on its own beat, and they march as they come out: no gathering. A door with
+    something standing on it tries again a trickle later. The wave is beaten once its huts are empty and the zombies it
+    let out have all fallen - those dropped by the debug tools are none of it. On the calendar and the journal, so a
+    replay makes it again with no command recorded. Tuning, like the rest.
+*/
+#define WAVE_AFTER_DAWNS        2       //the doors open at this dawn after the archer is trained: the second
+#define WAVE_FIRST_PER_HUT      1       //the first wave's zombies a hut: met by one novice archer
+#define HUT_TRICKLE_SECONDS     5.0f    //between one stepping out of a hut and the next
+#define HUT_BEAT_SECONDS        1.7f    //...and each hut that much after the one before it, so they do not step out together
+struct EconomyWaveHut{
+    uint32_t hut = 0;           //the building
+    int door = -1;              //the plot before its door, where they step down (ZoneHutDoor)
+    int left = 0;               //still inside
+    uint64_t next = 0;          //the tick the next steps out
+};
+struct EconomyWave{
+    uint64_t due = 0;                   //the tick its doors open, 0 not called
+    bool f_open = false;                //...and opened: told as EVENT_WAVE, its huts filled
+    bool f_seen = false;                //EVENT_WAVE_SEEN told
+    std::vector<EconomyWaveHut> huts;   //by building id
+    std::vector<uint32_t> zombies;      //the zombies it let out still standing, in id order
+};
+//Its zombies still to beat: still inside and out, standing.
+inline int EconomyWaveLeft(const EconomyWave& w){
+    int left = (int)w.zombies.size();
+    for (const EconomyWaveHut& h : w.huts){
+        left += h.left;
+    }
+    return left;
+}
+inline bool EconomyWaveBeaten(const EconomyWave& w){
+    return w.f_open && EconomyWaveLeft(w) == 0;
+}
+
 //An ARROW (above), in the air or come down: who loosed it at what, and where it goes.
 struct EconomyArrow{
     uint32_t by = 0;            //who loosed it, a person's id
@@ -1630,6 +1682,7 @@ struct EconomyState{
     std::vector<EconomyArrow> arrows;                   //ARROWS, in the order loosed
     std::vector<EconomyHarm> harm;                      //WALLS BREAK, by what and id
     std::vector<EconomyFallen> fallen;                  //THE FALLEN, in the order they fell
+    EconomyWave wave;                                   //THE FIRST WAVE, once it is called
     //Derived from the zones, not saved: what each building takes (0 for none - not a store), and room.
     std::vector<GoodsMask> accepts;
     std::vector<GoodsMask> attached;                      //the goods of the workplaces a store is next to
@@ -1924,7 +1977,8 @@ struct EconomySaved{
     std::vector<EconomyArrow> arrows;
     std::vector<EconomyHarm> harm;
     std::vector<EconomyFallen> fallen;
-    bool f_before_land = false;         //read from a save older than land (land_plan.md): its fields have no owner
+    EconomyWave wave;
+    bool f_before_land = false;        //read from a save older than land (land_plan.md): its fields have no owner
     EconomyHistory history;
     bool f_history = false;             //...a save from before the history has none: it begins at the load
 };
@@ -2092,6 +2146,14 @@ public:
     //exploration looks for both, as it does for seams, until each is in the journal.
     void BoulderFound(uint32_t person, int plot){ Event(EVENT_BOULDER_FOUND,person,0,plot,vec2()); }
     void BalconyReached(uint32_t person, int plot){ Event(EVENT_BALCONY_REACHED,person,0,plot,vec2()); }
+    /*
+        THE FIRST WAVE (above), called by the app's goals once an archer is trained (`met`, that tick): due at the
+        WAVE_AFTER_DAWNS'th dawn after it, or spring's first if that falls in winter. Once only - a second call is
+        nothing.
+    */
+    void CallWave(uint64_t met);
+    //...and the first of its zombies out from under the clouds, which the app's exploration knows: told once.
+    void WaveSeen(const vec2& at);
     /*
         AN EVENT (above) made by a rule that runs in the app - TickEconomy raising what the builders finished, a tent
         pitched by its command - stamped with `tick`, the calendar tick it belongs to. Into the ring, and the journal
@@ -2329,6 +2391,9 @@ private:
     //ZOMBIES (above, Zombies.cpp): every zombie a tick on - a look for its target on its tick, then its walk. With
     //`f_zones_moved`, whatever was built or taken down this tick: each one after a target looks again at once.
     void TickZombies(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt, bool f_zones_moved);
+    //THE FIRST WAVE (above): its doors opened when it is due, the next out of each hut on its beat, and its fallen struck
+    //off - before the zombies' tick, so one just out looks for its target on it.
+    void TickWave(const ZoneState& z);
     //...its look: after the nearest person it can get to - its way planned again with `f_replan`, even to the one it is
     //after. False, and it stands, with nobody it can.
     bool ZombieLook(EconomyZombie& m, const ZoneState& z, Walkers& walkers, bool f_replan);
@@ -2536,13 +2601,27 @@ std::array<int,GOOD_COUNT> EconomyStoredTotals(const EconomyState& e, const Zone
 //cell over it: the view no longer draws it (ApplicationChasm::PropHidden, the same rule less the road's), so nobody
 //fells it or waits on it. A SITE covers nothing yet: its trees stand until a woodcutter fells them (EconomyTreeSite).
 bool EconomyPropCovered(const ZoneState& z, int plot, int coarse);
+/*
+    What a GARDEN KEEPS (gardens_plan.md, the user's 2026-10-26): a broadleaf tree or a garden plant (ForestGardenKeeps) on
+    a plot whose ground is garden - a site or standing - and never on a terrace, built up over whatever grew there. It is
+    no garden's tree site (EconomyPropSite), and COVERED from the moment the garden is painted (the prop's
+    EconomyPropCovered), so no woodcutter fells it - nor finishes felling it, if he set out before (the felling's own
+    check); yet the view draws it (ApplicationChasm::PropHidden). Its fruit goes once the garden stands, as under any
+    building (PlantsCovered): nobody goes into a walled garden to pick it. The zone's alone: nothing saved. Erase the
+    garden and it is an ordinary tree again.
+*/
+bool EconomyGardenKeeps(const ZoneState& z, const PropInstance& p);
+//...covered by what is built over its plot or cell, or kept by a garden: what the rules ask of a prop itself.
+bool EconomyPropCovered(const ZoneState& z, const PropInstance& p);
 //The site a standing tree on `plot` (in coarse cell `coarse`) is in the way of (woodcutting_plan.md: only a woodcutter
 //fells, and a site over trees rises once they are down): a building whose storey there is not yet standing, a field's
 //cell not yet built, a garden's or lot's plot still a site (ECONOMY_SITE_GROUND | plot). 0 for none.
 uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse);
+//...for a prop itself: none for what a garden keeps (EconomyGardenKeeps).
+uint32_t EconomyPropSite(const ZoneState& z, const PropInstance& p);
 //The standing trees on `plot` - or, `coarse` >= 0, in that coarse cell - a site there would wait on: the price tag's
-//count. Any thread, on a published state.
-int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse);
+//count. `f_garden`: a garden's - only what it would not keep, its pines. Any thread, on a published state.
+int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse, bool f_garden = false);
 //...and the BOULDERS still standing there, which only a stonecutter breaks (stone_plan.md).
 int EconomyBouldersOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse);
 //FORAGING: the fruit a plant holds ripe - FORAGE_BUSH_FRUIT, FORAGE_TREE_FRUIT - and 0 for a prop that bears none;

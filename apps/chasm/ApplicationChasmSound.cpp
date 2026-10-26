@@ -1193,7 +1193,7 @@ void ApplicationChasm::RegisterSoundTools(){
         "`lines` (default 30): pass, cue, play or skip and why, sound, gain, pan. op play: `cue` at full strength, as "
         "if its trigger came (CueSystem::Audition). `volume` 0..1, with any op, sets the master: 0 mutes without "
         "changing what the cues decide or log. `music`, with any op, steers the score as the Music panel does: "
-        "section (a section's name, \"\" the season's), clouds and chasm (0..1 hold the layers' shares of the view, "
+        "section (a section's name, \"\" the season's), clouds, chasm and desert (0..1 hold the layers' shares of the view, "
         "below 0 lets them go), stinger (play one of the score's), suspense and brightness (0..1, below 0 the "
         "score's own). The status's `music` says what each player plays, what drives it (section_from, "
         "shares_held, mood) and what the game `sent` it last.",
@@ -1203,7 +1203,7 @@ void ApplicationChasm::RegisterSoundTools(){
                 {"op",{{"type","string"},{"description","status (default) or play"}}},
                 {"cue",{{"type","string"},{"description","op play: the cue's name"}}},
                 {"volume",{{"type","number"},{"description","0..1, the master"}}},
-                {"music",{{"type","object"},{"description","section, clouds, chasm, stinger, suspense, brightness"}}},
+                {"music",{{"type","object"},{"description","section, clouds, chasm, desert, stinger, suspense, brightness"}}},
                 {"lines",{{"type","integer"},{"description","the cue log's last lines, default 30"}}}
             }}
         },

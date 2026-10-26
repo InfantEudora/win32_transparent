@@ -35,6 +35,15 @@
 #define TERRACE_CREEPER_LEAF 0.22f  //about this wide a leaf's facet along the drape
 #define TERRACE_TUFT_FROM   0.4f    //tufts at the foot of a wall at least this high
 #define TERRACE_DECAL       0.012f  //creepers stand this far proud of the face, as a house's windows do
+//A GARDEN on the terrace (gardens_plan.md, the hanging garden): its own wall gives way to the retaining wall...
+#define TERRACE_HEDGE_GAP   0.03f   //...and a clipped hedge stands this far in from the capstones' inner edge...
+#define TERRACE_HEDGE_THICK 0.24f   //...this thick...
+#define TERRACE_HEDGE_H     0.34f   //...this high, its top's edges cut back by...
+#define TERRACE_HEDGE_CUT   0.04f   //...this
+#define TERRACE_GARDEN_DRAPE 0.5f   //every face under it is hung, as far as this share of the wall...
+#define TERRACE_FLOWER      0.14f   //...with flowers this wide among the leaves, at about every other leaf
+#define TERRACE_CYPRESS_IN  0.72f   //a cypress at about every other outer corner, this far in from both faces...
+#define TERRACE_CYPRESS_TALL 2.5f   //...about this tall
 
 #define TERRACE_JOIN_ON     0       //at the cell's centre the wall goes straight on, or ends
 #define TERRACE_JOIN_CORNER 1       //...turns round an outer corner, mitred
@@ -128,6 +137,8 @@ static void BuildTerraceFace(const ChasmWorld& w, const ZoneState& z, const Terr
     //A road's stair or a building's upper door against it: nothing hung on the face there.
     int step = ZoneTerraceStep(w,z,f.high,f.low);
     bool f_way = (step == ZONE_STEP_STAIR || step == ZONE_STEP_DOOR);
+    //A garden standing on the top (gardens_plan.md): a hanging garden - hedged along the head, its wall hung all over.
+    bool f_garden = z.ground[f.high] == ZONE_GROUND_GARDEN && z.ground_built[f.high] && z.storeys[f.high] == 0;
 
     //The face, battered.
     MeshQuad(out,V(at(0,yb[0]),yb[0]),V(at(1,yb[1]),yb[1]),V(f.at[1],f.top),V(f.at[0],f.top),n3,PAL_STONE);
@@ -232,11 +243,53 @@ static void BuildTerraceFace(const ChasmWorld& w, const ZoneState& z, const Terr
         MeshQuad(out,V(along(sw,f1),f1),V(base1,f1),V(head1,y_head),V(along(sw,y_cap),y_cap),dir3,PAL_STONE);
     }
 
+    /*
+        The hanging garden's HEDGE along the head, just behind the capstones, on the garden's lawn: in along each end's
+        `out`, so at a corner it meets the next face's hedge on the mitre and at the crossing the next cell's. Clipped: its
+        top's two edges cut back. Ends closed, where it meets nothing; inside a joined hedge they are never seen.
+    */
+    if (f_garden && f_cap && !f_way){
+        float in0 = TERRACE_CAP_IN + TERRACE_HEDGE_GAP;
+        float in1 = in0 + TERRACE_HEDGE_THICK;
+        float y0 = f.top - 0.05f;
+        float y1 = f.top + TERRACE_HEDGE_H - TERRACE_HEDGE_CUT;
+        float y2 = f.top + TERRACE_HEDGE_H;
+        vec2 a[2], b[2], ca[2], cb[2];      //its outer and inner faces, and its top's, cut in
+        for (int i = 0; i < 2; i++){
+            a[i] = f.at[i] - f.out[i] * in0;
+            b[i] = f.at[i] - f.out[i] * in1;
+            ca[i] = f.at[i] - f.out[i] * (in0 + TERRACE_HEDGE_CUT);
+            cb[i] = f.at[i] - f.out[i] * (in1 - TERRACE_HEDGE_CUT);
+        }
+        int leaf = PAL_BUSH;
+        MeshQuad(out,V(a[0],y0),V(a[1],y0),V(a[1],y1),V(a[0],y1),n3,leaf,f.row);
+        MeshQuad(out,V(b[0],y0),V(b[1],y0),V(b[1],y1),V(b[0],y1),n3 * -1.0f,leaf,f.row);
+        MeshQuad(out,V(a[0],y1),V(a[1],y1),V(ca[1],y2),V(ca[0],y2),n3 + up,leaf,f.row);
+        MeshQuad(out,V(b[0],y1),V(b[1],y1),V(cb[1],y2),V(cb[0],y2),up - n3,leaf,f.row);
+        MeshQuad(out,V(ca[0],y2),V(ca[1],y2),V(cb[1],y2),V(cb[0],y2),up,leaf,f.row);
+        for (int i = 0; i < 2; i++){
+            vec3 end = (i == 0) ? dir3 * -1.0f : dir3;
+            MeshQuad(out,V(a[i],y0),V(b[i],y0),V(b[i],y1),V(a[i],y1),end,leaf,f.row);
+            MeshQuad(out,V(a[i],y1),V(b[i],y1),V(cb[i],y2),V(ca[i],y2),end,leaf,f.row);
+        }
+    }
+
+    //...and a CYPRESS at about every other outer corner of it, set in behind the hedge: drawn by the corner's first face.
+    if (f_garden && f_cap && f.join == TERRACE_JOIN_CORNER && f.f_first && least >= TERRACE_QUOIN_FROM
+        && MeshHash(f.seed,61u) % 2u == 0u){
+        vec2 at_tree = f.at[1] - f.out[1] * TERRACE_CYPRESS_IN;
+        float tall = TERRACE_CYPRESS_TALL * (0.88f + 0.24f * (float)(MeshHash(f.seed,62u) % 1000u) / 1000.0f);
+        MeshCypress(out,V(at_tree,f.top),tall,MeshHash(f.seed,63u),f.row);
+    }
+
     //Creepers hanging from under the capstones down some walls - chosen by the two plots, so a wall is hung along its
-    //whole length - with a ragged hem. The leaf columns keep summer's all year, so they read as ivy.
+    //whole length - with a ragged hem. The leaf columns keep summer's all year, so they read as ivy. Under a garden, every
+    //wall and further down, flowers in it.
     uint32_t pair = MeshHash((uint32_t)std::min(f.high,f.low),(uint32_t)std::max(f.high,f.low),41u);
-    if (f_cap && !f_way && pair % 100u < TERRACE_CREEPER_SHARE && least >= TERRACE_CREEPER_FROM){
-        float most = std::min(TERRACE_CREEPER_MOST,least - 0.25f);
+    if (f_cap && !f_way && (f_garden || pair % 100u < TERRACE_CREEPER_SHARE) && least >= TERRACE_CREEPER_FROM){
+        float most = f_garden ? std::max(TERRACE_CREEPER_MOST,least * TERRACE_GARDEN_DRAPE)
+                              : TERRACE_CREEPER_MOST;
+        most = std::min(most,least - 0.25f);
         int count = std::max(2,(int)std::lround(len / TERRACE_CREEPER_LEAF));
         //How far it hangs at each step along: at the crossing the edge's own, so the drapes either side of it meet.
         auto drop = [&](int i){
@@ -258,6 +311,16 @@ static void BuildTerraceFace(const ChasmWorld& w, const ZoneState& z, const Terr
             vec3 b = V(along(s1,lo - d1) + lift(s1),lo - d1);
             MeshQuad(out,a,b,V(along(s1,lo) + lift(s1),lo),V(along(s0,lo) + lift(s0),lo),n3,leaf,f.row);
             MeshTri(out,a,b,V(along(sm,lo - dm) + lift(sm),lo - dm),n3,leaf,f.row);
+            //A flower in the drape, somewhere down this leaf's share of it: a small diamond, proud of the leaves.
+            uint32_t bloom = MeshHash(f.seed,(uint32_t)i,29u);
+            if (f_garden && bloom % 2u == 0u){
+                float down = 0.1f + (std::min(d0,d1) - 0.1f) * (float)((bloom >> 4) % 1000u) / 1000.0f;
+                float sf = s0 + (s1 - s0) * (float)((bloom >> 14) % 1000u) / 1000.0f;
+                float r = TERRACE_FLOWER * (0.7f + 0.6f * (float)((bloom >> 24) % 100u) / 100.0f) * 0.5f;
+                vec2 c = along(sf,lo - down) + lift(sf) * 2.0f;
+                float y = lo - down;
+                MeshQuad(out,V(c - dir * r,y),V(c,y - r),V(c + dir * r,y),V(c,y + r),n3,PAL_ACCENT,f.row);
+            }
             d0 = d1;
         }
     }

@@ -1091,7 +1091,9 @@ float ApplicationChasm::DrawBuildBar(float s){
                                 || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED
                                 || kind == EVENT_RANKED || kind == EVENT_ZEPPELIN_STAGE
                                 || (kind == EVENT_BUILDING_FINISHED && discovery_of(ne->events[i]) >= 0)
-                                || ((kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED) && TriggerOn(ne->events[i].amount));
+                                || ((kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED || kind == EVENT_GOAL_SET)
+                                    && TriggerOn(ne->events[i].amount))
+                                || kind == EVENT_WAVE || kind == EVENT_WAVE_SEEN;
                 newest = f_notice ? &ne->events[i] : newest;
                 frosts += (kind == EVENT_FROST_TOOK) ? 1 : 0;
             }
@@ -1133,9 +1135,20 @@ float ApplicationChasm::DrawBuildBar(float s){
                                                                                                          : "the builders' hut")
                                                                      + " is finished"
                              : name + " has run out of " + ((f_water && f_food) ? "food and water" : f_water ? "water" : "food");
-            //The demo's goals (demo_plan.md step 7): met or failed, by name.
-            if (n.kind == EVENT_GOAL_MET || n.kind == EVENT_GOAL_FAILED){
-                told = std::string(n.kind == EVENT_GOAL_MET ? "goal met: " : "goal failed: ") + ChasmGoalTitle(n.amount);
+            //The demo's goals (demo_plan.md step 7): met or failed, by name - and appeared (swamp_huts_plan.md step 2).
+            if (n.kind == EVENT_GOAL_MET || n.kind == EVENT_GOAL_FAILED || n.kind == EVENT_GOAL_SET){
+                told = std::string(n.kind == EVENT_GOAL_MET ? "goal met: " : n.kind == EVENT_GOAL_SET ? "new goal: " : "goal failed: ")
+                       + ChasmGoalTitle(n.amount);
+            }
+            //...the swamp's failed by whoever went in.
+            if (n.kind == EVENT_GOAL_FAILED && n.amount == CHASM_GOAL_SWAMP){
+                told = "goal failed: " + name + " went into the swamp unescorted";
+            }
+            //THE FIRST WAVE (swamp_huts_plan.md step 2): its doors opening, and the first of it in sight.
+            if (n.kind == EVENT_WAVE){
+                told = "something stirs in the swamp";
+            }else if (n.kind == EVENT_WAVE_SEEN){
+                told = "zombies, from the swamp!";
             }
             //The frost (fields_plan.md): one line for all it took at the turn of winter.
             if (n.kind == EVENT_FROST_TOOK){

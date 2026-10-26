@@ -8,6 +8,7 @@ This plan gives them a home there, and then a first wave out of it.
 
 - **A few solitary, shabby huts in the swamp** are where the zombies come from.
 - **The first thing in the demo**: zombies come out of them **after the first year** and **creep up on the village**.
+  Changed in step 2: not on a date, but once the colony has trained an archer.
 - **Not modelled in Blender**: generated in code, the way every building on the terrain is.
 
 ## Step 1: the huts (as built, 2026-10-26)
@@ -59,7 +60,8 @@ On the four maps New game offers:
 | Seed 27 | 3 | 120, 124, 148 | yes - every spot can |
 | Seed 41 | 3 | 213, 226, 231 | yes for these three; 694 of its 2,033 spots can |
 
-The villagers' own route-finder (`chasm_pick` with `to_x`/`to_z`) agrees on all twelve huts.
+The villagers' own route-finder (`chasm_pick` with `to_x`/`to_z`) agrees on all twelve huts. Since step 2 zombies wade
+rivers, so seed 3's reach the camp too; "walk" here is still the dry walk, which the huts are placed by.
 
 ### How it looks (`BuildSwampHut`)
 
@@ -115,59 +117,122 @@ At the game's zoom it is a small dark shack among the willows.
 **One thing changed for every new game**: a new map's zones now hold three more buildings, so a new colony's state hash
 is not what it was. Saves and recordings made before are unchanged.
 
-## Step 2: the first wave (proposed)
+## Step 2: the way to the first wave (as built, 2026-10-26)
 
-Not built. This is the design for "after the first year, creeping up on our village". The questions for the user are
-collected below.
+The first draft opened the huts' doors on a date, the second day of year 2's spring. The user, 2026-10-26: that is far
+too soon to have an archer to defend with, and starting the colony with one would make it too easy. So the wave waits
+until the colony is ready for it, and two goals on the way say how to get ready.
 
-- **When**: the swamp thaws with year 2's spring (`gameplay_plan.md`: no zombies while it is frozen; spring is the
-  dangerous moment). Proposed: the huts' doors open at **dawn on the second day of spring, year 2**, so not on the same
-  dawn as "Through the winter" is met. `chasm_time set_day 41` reaches it.
-- **How many**: proposed **two a hut** (six on a three-hut map), the smallest wave there will be. For scale, from
-  step 3's sums:
-  - a fed villager is a fair fight for one zombie;
-  - a trained archer usually drops one walking at them from 20 units;
-  - a colony starts with one or two archers.
+### What the user asked (2026-10-26)
 
-  Six reaching an undefended camp would cost lives; two archers on a tower and a wall should hold them.
-- **How they come out**: one at a time, `HUT_TRICKLE` apart (about 5 s), from the plot before each hut's door, each
-  hut on its own beat. This uses the existing `SpawnZombies`, one zombie per call.
-- **Creeping up**:
-  - They walk for the colony as any zombie does: the nearest person, the wave sharing itself out (step 1c).
-  - They are not drawn under the clouds, so the swamp hides them. The first the player sees is a zombie stepping out
-    of the cloud's edge.
-  - At the measured pace (about 0.5 a second in the swamp, 0.95 out of it) a hut 130-230 units off is **three to six
-    minutes** away at normal speed, four to eight days. That is time to see it coming and man the walls, and it is
-    the creep.
-- **The warning**: when the doors open, a notice with a chime, "Something stirs in the swamp", and the crows go up
-  over the huts. When the first zombie comes into anyone's sight (exploration's), a second notice, "Zombies, from the
-  swamp!", whose click takes the camera to it. Both are events on the notice line and in the journal.
-- **In the rules**:
-  - The wave runs on the calendar, as the seasons do, so a replay makes it again with no command recorded.
-  - The economy keeps it: when the next wave is due, and for each hut how many are still inside and when the next
-    steps out.
-  - It is saved and hashed only once a wave has started, so older states hash as before.
-- **The demo's goal**: a third goal, "Survive the first wave", met when its last zombie has fallen
-  (`modes_plan.md` keeps goals by mode).
+- **After surviving the winter**, a new goal appears: **train an archer**.
+- **Once the swamp is found**, a goal is added: **don't venture into the swamp unescorted**. Failing it does not end
+  the game. It is failed when someone goes into the swamp without an archer.
+- **Only after an archer has trained**, with a bit of archery skill, may the zombies come.
 
-### For the user to decide
+### Decided (the user, 2026-10-26)
 
-1. **Seed 3: the river between the swamp and the camp.** Its zombies would stand lost at their huts until the player
-   bridges the river. Three ways:
-   - **A.** The river is a moat until it is bridged. This fits "walls, palisades and moats are the defence", but seed
-     3's demo would have no first wave until a bridge is built.
-   - **B.** Zombies wade rivers, slowly (a high cost per step in the water, as breaking a wall is a cost): a river
-     buys time but never safety. Moats the player digs could be deeper later.
-   - **C.** Huts only where their zombies can walk to the camp, which on seed 3 means none in its swamp.
+- "After surviving the winter" is the date: the archer's goal appears whether the winter's goal was met or failed.
+- "Without an archer" is per person: no trained archer near him, which is what "unescorted" says.
+- The swamp's goal is **met when the first wave is beaten**.
+- **Anyone** in the swamp counts, ordered there or at work.
+- The numbers: 20% archery, an escort within 10 units, the second dawn after, **one zombie a hut**, about 5 s apart.
+- **Zombies wade rivers**, slowly: a river buys time, never safety (seed 3).
+- **They march as they come out**: no gathering at the swamp's edge.
+- **Saves from before the huts are left as they are**: only a new game has huts, and so a wave.
 
-   I'd suggest B: the first wave then reaches every map, and a river still matters.
-2. **Together or strung out?** Today each zombie heads off the moment it steps out, so a wave arrives in a long file,
-   the nearest hut's first. The alternative is that they gather at the swamp's edge until all are out and come as one
-   pack. That needs a new "wait for the rest" state; the file needs nothing new.
-3. **The numbers**: two a hut, the second day of spring, about 5 s apart.
-4. **Saves from before the huts** have none, so they would never get a wave. They could be placed on loading a chasm
-   save that has none. That is cheap, and the same every time, since they come from the seed.
-5. **Later waves**: how often, and growing how fast. They are not needed for the demo, which only needs the first.
+### The goals, in order
+
+| # | Goal | Appears | Met | Failed |
+|---|---|---|---|---|
+| 0 | Through the winter, nobody lost | at the start (as before) | the first dawn of year 2 | a death before then, but of old age |
+| 1 | Reach the chasm | at the start (as before) | someone lowered to a balcony | never |
+| 2 | Train an archer | the first dawn of year 2 | someone alive with `ARCHER_TRAINED` (20%) archery | never |
+| 3 | Don't venture into the swamp unescorted | the swamp found, on a map with huts, before the wave is beaten | the first wave beaten | someone in the swamp with no trained archer near |
+| 4 | Survive the first wave | the huts' doors open | its last zombie fallen | never: the colony lost is its own end |
+
+- **A goal that has not appeared has no row** on the GOALS panel or the end's page. When one appears, the notice line
+  says "New goal: train an archer". That is a new event, `EVENT_GOAL_SET` (31), journaled like met and failed, so a
+  load doesn't tell it again. `ChasmGoalShown` is the test.
+- **Train an archer** says the way there in its right-hand column, as the chasm's goal does: BUILD A BUILDERS' HUT
+  (which brings the range), BUILD A RANGE, then TRAINING 12% OF 20% for the best anyone has. An archer trained before
+  it appears meets it the moment it does.
+- **The swamp goal** (`SwampUnescorted`, looked at twice a second):
+  - **In the swamp**: a grown-up (young adult or older) out of doors and on the ground, on a swamp plot.
+  - **Escorted**: a trained archer out of doors within `ESCORT_REACH` (10). A trained archer escorts himself.
+  - The first one unescorted fails it, told by name: "Maud Hoeve went into the swamp unescorted".
+  - Its right-hand column says KEEP OUT until anyone has trained, then ONLY WITH AN ARCHER.
+  - A scout walking toward unexplored swamp sees it before he is in it: the goal appears then, and the player has his
+    last few steps to call him back.
+- **The demo is complete** once every goal in play is decided: the first three always; the wave's on a map with huts;
+  the swamp's once it has appeared. `EVENT_DEMO_COMPLETE` keeps how many were in play in its `what`, so the journal
+  says "4 of 5 goals"; one from before says "of 2".
+- **The switches**: `CHASM_TRIGGER_*` sits after the goals, so its bits moved up by three. They are the viewer's,
+  never saved, and `chasm_menu` names them: `archer`, `swamp` and `wave` are new.
+
+### The wave
+
+- **Called** by `TickGoals` once Train an archer is met on a map with huts (`Economy::CallWave`), due at the
+  `WAVE_AFTER_DAWNS`'th (second) dawn after. A dawn that falls in winter, when the swamp is frozen, waits for the first
+  dawn of spring. Met on day 68 or day 74, it is due on day 80.
+- **The doors open** at the due tick (`Economy::TickWave`, before the zombies' tick): every hut standing, by id, each
+  with `WAVE_FIRST_PER_HUT` (1) inside, each `HUT_BEAT_SECONDS` (1.7 s) after the one before. A hut lets one out every
+  `HUT_TRICKLE_SECONDS` (5 s) from the plot before its door - or, with something standing there, the nearest open plot
+  round the hut; with none, a trickle later. A hut taken down meanwhile lets out no more.
+- **They march as they come out**, for the nearest person they can get to, as any zombie does.
+- **Beaten** once the huts are empty and the zombies it let out have all fallen (`EconomyWaveBeaten`). Zombies the
+  debug tools drop are none of it; clearing them all with the debug tools beats it.
+- **Told**: `EVENT_WAVE` (32) as the doors open, "something stirs in the swamp", and `EVENT_WAVE_SEEN` (33) when the
+  first of them stands on explored ground, "zombies, from the swamp!" - both in the journal and on the notice line, with
+  the chime for now (`wave`, `wave_seen` in the cue table).
+- **In the rules**: the wave follows from the goals, which are rules, and the calendar, so a replay makes it again with
+  no command recorded. `EconomyWave` - when it is due, opened and seen, each hut's still inside and next out, its
+  zombies standing - is saved (`wave` in a save's economy) and hashed only once it is called, so older saves and states
+  are as before. `chasm_zombie`'s status shows it as `wave`.
+
+### Zombies wade
+
+A zombie's walk (`WALK_WHO_ZOMBIE`) is no longer closed by water: an edge with a wet end, off a bridge, is open to it at
+`WALKER_SPEED_WADE` (0.4, against 1.6 on open ground and 1.0 in the swamp), times its own pace. A* takes the dry way
+round where that is quicker. Placing the huts is unchanged: `ZoneSwampHutSpots` still prefers huts with a dry walk to
+the camp, with its own flood, so no map's huts moved.
+
+### Files
+
+- `Economy.h`: the goals, the events, `ARCHER_TRAINED`, `ESCORT_REACH`, `EconomyWave` and its numbers, `CallWave`,
+  `WaveSeen`, `TickWave`. `Economy.cpp`: names, the journal, save and restore, the call in `Tick`.
+- `Zombies.cpp`: `CallWave`, `WaveSeen`, `TickWave`.
+- `Walkers.h`, `Walkers.cpp`: wading.
+- `ApplicationChasmGoals.cpp`: goals that appear, `SwampUnescorted`, the right-hand columns, the wave's first sight, the
+  demo complete. `ApplicationChasm.h`: `goal_set`, `f_swamp_seen`, `ChasmGoalShown`. `ApplicationChasmExplore.cpp`:
+  both read from the journal.
+- `ChasmSave.cpp` and `ApplicationChasmEconomy.cpp`: the wave saved and hashed.
+- `ChasmStats.cpp`, `ApplicationChasmStats.cpp`, `ApplicationChasmTime.cpp`: titles, journal lines, notices, and the
+  end's page with room for five goals. `ApplicationChasmZombies.cpp`, `ApplicationChasmTitle.cpp`: the tools.
+- `assets/cues/chasm.json`: `goal_set`, `wave`, `wave_seen`.
+
+### Checked (debug, a copy on 8769, paused and stepped)
+
+- **Seed 12**: no new goal in year 1; Train an archer appeared at day 40. An archer (30%) and a villager put down at a
+  hut's door: the swamp goal appeared as he found the swamp, and held while they stood together. The villager sent on
+  alone failed it 10.6 units from him, by her name. The wave was due at tick 94,500, the second dawn; the doors opened
+  on it, and the three came out 85 ticks apart, one a hut. All five goals and the notices were in the journal.
+- **The creep**: on seed 12 about 0.4 units a second through the swamp toward the colony.
+- **Seed 3** (the river): an archer trained at the camp. All three zombies reached the camp in 11,000-14,000 ticks
+  (4-5 minutes at normal speed), none lost; a villager killed them by hand and Survive the first wave was met. The
+  swamp's goal never appeared: nobody found the swamp.
+- **Met together**: an archer alone in the swamp (his own escort), the wave cleared: the swamp's and the wave's goals
+  both met.
+- **Winter**: met on day 68 and on day 74, both due on day 80.
+- **A save at the doors' opening**, loaded: the wave as it was, huts, zombies and goals.
+- **On screen**, in play: the GOALS panel with all five, and the colony lost's page with five goals in its foot.
+- `chasm_check` no failures; the statistics' check empty.
+
+**Not checked**: a wave against walls and a tower; the release build; a woodcutter at work in the swamp failing the
+goal on his own (the rule counts him; not run).
+
+**Not built**, of the first draft: the crows going up over the huts as the doors open, and a click on the second
+notice taking the camera to the zombie - the notice line takes no clicks yet.
 
 ## Later (ideas, nothing agreed)
 

@@ -56,7 +56,7 @@
 - [Minimized screenshots have no UI](minimized_screenshot_no_ui.md) — restore with ShowWindow(h,4) to check UI; posted wheel scrolls, clicks don't
 - [Wind system plan](wind_system_plan.md) — archer stream-function wind with sway/leaves/streaks/fireflies; clouds left
 - [Core changes: other apps separately](core_changes_other_apps_separately.md) — after a core change, the user builds/runs other apps
-- [Adaptive music plan](adaptive_music_plan.md) — apps/music designs (port 8767), core/Music* plays
+- [Adaptive music plan](adaptive_music_plan.md) — apps/music designs (port 8767), core/Music* plays; chasm desert layer built + published 2026-10-26
 - [Lock claim before build](lock_claim_before_build.md) — never build/run in the same parallel step as its #build/#port claim
 - [Cue plan](cue_plan.md) — archer event layer: SoundSystem buses, CueLog baselines, core/CueSystem; one per scene; cue panel next
 - [Bridge and crumble plan](bridge_crumble_plan.md) — archer rope bridges (snap, creaks) + crumbling rocks built; new blocks go LAST
@@ -100,7 +100,7 @@
 - [Chasm goods plan](chasm_goods_plan.md) — all 6 steps built: food/water/materials, hemp, rope; kept stock + orders
 - [Chasm villager animation](chasm_villager_animation.md) — 15-bone rigs, crossfaded clips, bone props via IntoBone
 - [Chasm saves not migrated](chasm_saves_not_migrated.md) — saves needn't survive rule changes; no migrations
-- [Ramparts plan](ramparts_plan.md) — walk nodes plot+layer; debug castle with real arches + stone tower (debug only); castle task (tower heights, battlements) wanted
+- [Ramparts plan](ramparts_plan.md) — walk nodes plot+layer; debug castle: arches, stone tower, gate, drag-laid stairs (flight/landing/turret); keep + armoury next
 - [Chasm person picking](chasm_person_picking.md) — G-buffer readback + 8 px fallback; skinned outlines; multi-select built
 - [Minimised app took keystrokes](minimized_focus_leak.md) — FIXED 2026-10-18: HasFocus asks GetForegroundWindow + !IsIconic
 - [Chasm settlements](chasm_settlements.md) — part one done; part two step 1 (per colony) BUILT; porters next
@@ -136,6 +136,9 @@
 - [Chasm steam plan](chasm_steam_plan.md) — steps 1-5 BUILT (collector P, condenser L, sail loft I, dock no key); no letter keys left
 - [Chasm flight plan](chasm_flight_plan.md) — steps 1-3 BUILT (flies, passengers, mast + goods 2026-10-25); new-zeppelin button next
 - [Chasm modes plan](chasm_modes_plan.md) — Tutorial/Demo/Free play; step 0 (GOALS honours switches) built
-- [Chasm terraces plan](chasm_terraces_plan.md) — stages 1-3 BUILT, battered wall look 2026-10-25; ZoneGroundAt/ZoneTerraceStep/ZoneUpperDoor the single rules
+- [Chasm terraces plan](chasm_terraces_plan.md) — stages 1-3 BUILT, battered wall look 2026-10-25; road stairs built from below 2026-10-26; ZoneGroundAt/ZoneTerraceStep/ZoneUpperDoor the single rules
 - [Chasm rainbow plan](chasm_rainbow_plan.md) — step 1 BUILT: angle-coloured light per fall's spray; sunlit-only next
 - [Chasm wall ends](chasm_wall_ends.md) — palisade ends meet faces/drops/corners; view only; saves/wall_ends_test.json
+- [Chasm gardens plan](chasm_gardens_plan.md) — ALL BUILT 2026-10-26: gardens keep broadleaf trees, per-quad planting + cypresses, hanging gardens
+- [Chasm swamp huts plan](chasm_swamp_huts_plan.md) — huts + first wave BUILT 2026-10-26: wave called by an archer trained, swamp escort goal
+- [MCP errors are JSON](mcp_errors_are_json.md) — a refused tool returns {"error"}; sim_step unpaused does nothing; raise on it

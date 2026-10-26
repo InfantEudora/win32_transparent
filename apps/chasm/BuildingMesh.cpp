@@ -1038,8 +1038,8 @@ vec2 SideOut(const vec2& p, const vec2& a, const vec2& b){
     A STONE GUARD TOWER (Zones.h, ZoneTowerStone; castle_plan.md): the guard tower's rules in a castle's geometry, a quarter
     at a time with the castle (CastleMesh.h) - its plot's whole tile, as a castle piece's, so its walls and a wall-walk's
     share their edges. A shaft on a plinth from the ground to its storeys over its LEVEL (ZoneTowerLevel), a string
-    course at each storey, arrow slits on its free sides. On top, on a plot of three cells, a CRENELLATED parapet on a
-    corbel table, its guards behind the merlons; on every other the GUARD ROOM corbelled out over the shaft, a window in
+    course at each storey, arrow slits on its free sides. On top, on a plot of any but four cells, a CRENELLATED parapet
+    on a corbel table, its guards behind the merlons; on a four-cell one the GUARD ROOM corbelled out over the shaft, a window in
     each wall, and a pointed roof over it to a spike over the plot's point. A doorway wherever a castle's deck meets one of
     its floors (Walkers.h, WalkJoin) - on top the room's door, or a gap in the parapet - and its own door at the foot of
     the side its ladder would stand on (ZoneBuilding::ladder). An opening is drawn whole by the lower-numbered of the two

@@ -348,6 +348,102 @@ bool Economy::SpawnZombies(int plot, int count, const ZoneState& z, std::string*
     return true;
 }
 
+//--- The first wave (Economy.h; swamp_huts_plan.md step 2) -----------------------------------------------------------
+
+void Economy::CallWave(uint64_t met){
+    if (state.wave.due){
+        return;
+    }
+    //Dawn is the day's first tick. The swamp is frozen in winter (gameplay_plan.md): a dawn then waits for spring's first.
+    uint64_t due = (met / CALENDAR_DAY_TICKS + WAVE_AFTER_DAWNS) * (uint64_t)CALENDAR_DAY_TICKS;
+    if (CalendarDateOf(due).season == SEASON_WINTER){
+        due = (due / CALENDAR_YEAR_TICKS + 1) * (uint64_t)CALENDAR_YEAR_TICKS;
+    }
+    state.wave.due = std::max(due,(uint64_t)1);
+    state.version++;
+}
+
+void Economy::WaveSeen(const vec2& at){
+    if (!state.wave.f_open || state.wave.f_seen){
+        return;
+    }
+    state.wave.f_seen = true;
+    Event(EVENT_WAVE_SEEN,0,0,-1,at);
+    state.version++;
+}
+
+void Economy::TickWave(const ZoneState& z){
+    EconomyWave& wave = state.wave;
+    if (!wave.due || !state.world || z.world != state.world || now < wave.due){
+        return;
+    }
+    const ChasmWorld& w = *state.world;
+    //Its fallen struck off: the ones it let out that stand no more - shot, struck down, or taken off by the debug tools.
+    size_t standing = wave.zombies.size();
+    wave.zombies.erase(std::remove_if(wave.zombies.begin(),wave.zombies.end(),[&](uint32_t id){
+        return std::none_of(state.zombies.begin(),state.zombies.end(),[id](const EconomyZombie& m){ return m.id == id; });
+    }),wave.zombies.end());
+    if (wave.zombies.size() != standing){
+        state.version++;
+    }
+    const uint64_t trickle = (uint64_t)Ticks(HUT_TRICKLE_SECONDS);
+    if (!wave.f_open){
+        //The doors open: every hut there is, by its id, each on its own beat.
+        wave.f_open = true;
+        for (size_t v = 0; v < z.building.size(); v++){
+            uint32_t id = z.building[v];
+            if (id && id < z.buildings.size() && z.buildings[id].kind == ZONE_KIND_HUT){
+                EconomyWaveHut h;
+                h.hut = id;
+                h.door = ZoneHutDoor(w,(int)v);
+                h.left = WAVE_FIRST_PER_HUT;
+                wave.huts.push_back(h);
+            }
+        }
+        std::sort(wave.huts.begin(),wave.huts.end(),[](const EconomyWaveHut& a, const EconomyWaveHut& b){
+            return a.hut < b.hut;
+        });
+        for (size_t i = 0; i < wave.huts.size(); i++){
+            wave.huts[i].next = now + (uint64_t)Ticks(HUT_BEAT_SECONDS) * i;
+        }
+        if (EconomyWaveLeft(wave) > 0){
+            Event(EVENT_WAVE,0,wave.huts[0].hut,wave.huts[0].door,vec2(),EconomyWaveLeft(wave));
+        }
+        state.version++;
+    }
+    for (EconomyWaveHut& h : wave.huts){
+        if (h.left <= 0 || now < h.next){
+            continue;
+        }
+        h.next = now + trickle;
+        //Out at its door - or, with something standing there now, the nearest open plot round the hut; with none, a
+        //trickle later.
+        int hut = -1;
+        for (size_t v = 0; v < z.building.size() && hut < 0; v++){
+            hut = (z.building[v] == h.hut) ? (int)v : -1;
+        }
+        std::vector<int> ways;
+        if (h.door >= 0){
+            ways.push_back(h.door);
+        }
+        if (hut >= 0){
+            int nb[8];
+            int k = ZonePlotNeighbours(w,hut,nb,8);
+            ways.insert(ways.end(),nb,nb + k);
+        }
+        for (int plot : ways){
+            if (plot >= 0 && plot < (int)z.ground.size() && !EconomyDropRefusal(w,z,plot) && SpawnZombies(plot,1,z,NULL)){
+                wave.zombies.push_back(state.next_zombie - 1);
+                h.left--;
+                break;
+            }
+        }
+        //...and a hut taken down meanwhile lets out no more.
+        h.left = (hut < 0) ? 0 : h.left;
+        state.version++;
+    }
+}
+
 void Economy::TickZombies(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt, bool f_zones_moved){
     if (f_zones_moved){
         ForgetHarm(z);

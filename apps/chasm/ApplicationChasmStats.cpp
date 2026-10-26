@@ -34,7 +34,7 @@ static Debugger* debug = new Debugger("ChasmStats",DEBUG_ALL);
 #define STATS_AXIS          UIColor(255,255,255,70) //a chart's baseline, and the hover's line
 #define STATS_SEASONS_SHOWN 8                       //the seasons a bar chart shows: two years
 #define STATS_SCROLL_LINES  3                       //journal lines a turn of the wheel scrolls
-#define STATS_END_FOOT      62.0f                   //the end's foot under the columns: its goals and buttons (x s)
+#define STATS_END_FOOT      112.0f                  //the end's foot under the columns: its goals - room for five - and buttons (x s)
 #define STATS_END_BUTTON_W  190.0f
 #define STATS_END_BUTTON_H  40.0f
 
@@ -345,9 +345,12 @@ uint32_t JournalColour(int kind){
         case EVENT_ZEPPELIN_STAGE:      return HudGoodColour(GOOD_CANVAS);
         case EVENT_BALCONY_REACHED:     return UIColor(120,190,230);
         case EVENT_GOAL_MET:
+        case EVENT_GOAL_SET:
         case EVENT_DEMO_COMPLETE:       return HUD_SELECT;
         case EVENT_GOAL_FAILED:
         case EVENT_COLONY_LOST:
+        case EVENT_WAVE:
+        case EVENT_WAVE_SEEN:
         case EVENT_WALL_BROKEN:
         case EVENT_GATE_BROKEN:
         case EVENT_BREACHED:            return HUD_DANGER;
@@ -556,15 +559,20 @@ void ApplicationChasm::DrawEndFoot(float s){
     overlay->AddLine(vec2(l.a0,l.bottom + 6.0f * s),vec2(l.c1,l.bottom + 6.0f * s),1.0f * s,STATS_GRID);
     std::shared_ptr<const EconomyState> e = GetEconomy();
     std::shared_ptr<const ChasmDiscoveries> d = GetDiscoveries();
-    float line_y = l.bottom + 30.0f * s;
+    float line_y = l.bottom + 28.0f * s;
     if (e && d){
+        //The goals that appeared (swamp_huts_plan.md step 2), one under another.
+        int row = 0;
         for (int g = 0; g < CHASM_GOALS; g++){
+            if (!ChasmGoalShown(g,*d)){
+                continue;
+            }
             int state = ChasmGoalState(g,*e,*d);
             uint32_t colour = (state == CHASM_GOAL_MET) ? UIColor(140,200,110) : (state == CHASM_GOAL_FAILED) ? HUD_DANGER : HUD_TEXT_DIM;
             std::string text = ChasmGoalTitle(g);
             std::transform(text.begin(),text.end(),text.begin(),::toupper);
             text += (state == CHASM_GOAL_MET) ? " - MET" : (state == CHASM_GOAL_FAILED) ? " - FAILED" : " - NOT YET";
-            float y = line_y + (float)g * 20.0f * s;
+            float y = line_y + (float)row++ * 18.0f * s;
             const float mark = 8.0f * s;
             overlay->AddRect(vec2(l.a0,y - 9.0f * s),vec2(l.a0 + mark,y - 9.0f * s + mark),mark * 0.5f,colour);
             overlay->AddText(text.c_str(),vec2(l.a0 + mark + 9.0f * s,y),13.0f * s,HUD_TEXT,UI_ALIGN_LEFT);

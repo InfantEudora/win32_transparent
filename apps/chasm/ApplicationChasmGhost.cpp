@@ -291,8 +291,9 @@ void ApplicationChasm::UpdateGhost(){
     key.crates_version = (es && es->world == w) ? es->crates_version : 0;
     key.felled_version = (es && es->world == w) ? es->felled_version : 0;
     //The trees a site there would wait on (THE PRICE TAG, woodcutting_plan.md): standing ones on the plot or cell.
-    auto trees_on = [&](int at_plot, int at_cell){
-        return (es && es->world == w) ? EconomyTreesOn(*w,*es,at_plot,at_cell) : 0;
+    //A garden's are only those it would not keep, its pines (gardens_plan.md).
+    auto trees_on = [&](int at_plot, int at_cell, bool f_garden = false){
+        return (es && es->world == w) ? EconomyTreesOn(*w,*es,at_plot,at_cell,f_garden) : 0;
     };
     //...and what a woodcutter's hut or a water or steam collector `owner` (0 a new one) of `kind` would keep the more for
     //`more` floor, once all of it stands: a hut none for the floor he works in (EconomyHutRoom), a collector a load at
@@ -451,7 +452,7 @@ void ApplicationChasm::UpdateGhost(){
                     if (a.ground[v] == ground && z.ground[v] != ground){
                         GhostPlotTile(cw,z,(int)v,verts);
                         cost[GOOD_WOOD] += EconomyGroundKindCost(cw,ground,(int)v);
-                        trees += ZoneEnclosesGround(ground) ? trees_on((int)v,-1) : 0;
+                        trees += ZoneEnclosesGround(ground) ? trees_on((int)v,-1,ground == ZONE_GROUND_GARDEN) : 0;
                         placed++;
                     }
                 }
@@ -713,7 +714,7 @@ void ApplicationChasm::UpdateGhost(){
             cost[GOOD_WOOD] = EconomyGroundKindCost(cw,ground,plot);
             f_cost = true;
             //A garden's or lot's own trees (a road's and wall's are along its line: RoadTrees, the economy's alone).
-            trees = ZoneEnclosesGround(ground) ? trees_on(plot,-1) : 0;
+            trees = ZoneEnclosesGround(ground) ? trees_on(plot,-1,ground == ZONE_GROUND_GARDEN) : 0;
         }
     }else if (f_field){
         bool f_can = (tool == CHASM_TOOL_DOCK) ? ZoneCanDock(cw,z,hover.coarse_quad,NULL) : ZoneCanField(cw,z,hover.coarse_quad,NULL);

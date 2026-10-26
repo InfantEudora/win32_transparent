@@ -107,6 +107,18 @@ int Pick(float r, int first, const float* weights, int n){
 
 }
 
+//ForestData::plot_prop, once every prop is placed: the first tree, bush or rock standing in each plot.
+static void IndexPlotProps(const Grid& g, ForestData& out){
+    out.plot_prop.assign(g.fine.pos.size(),-1);
+    for (size_t i = 0; i < out.props.size(); i++){
+        const PropInstance& p = out.props[i];
+        bool f_cover = p.kind >= PROP_COVER_FIRST && p.kind < PROP_BOULDER;
+        if (!f_cover && p.plot >= 0 && p.plot < (int)out.plot_prop.size() && out.plot_prop[p.plot] < 0){
+            out.plot_prop[p.plot] = (int)i;
+        }
+    }
+}
+
 void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, const TerrainMeshData& mesh,
                  const DepositData* deposits, ForestData& out){
     auto t0 = std::chrono::steady_clock::now();
@@ -165,6 +177,7 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             Place(kind,g.fine.pos[v] + vec2(std::cos(a),std::sin(a)) * r,Chance(seed,v,125) * 6.2831853f,
                   (0.85f + Chance(seed,v,126) * 0.30f) * TREE_SCALE);
         }
+        IndexPlotProps(g,out);
         out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
         return;
     }
@@ -453,5 +466,6 @@ void BuildForest(const Grid& g, const GridPicker& picker, const Terrain& t, cons
             chunk.swap(left);
         }
     }
+    IndexPlotProps(g,out);
     out.build_ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
 }

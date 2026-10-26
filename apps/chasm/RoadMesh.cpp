@@ -62,7 +62,8 @@ vec2 Unit(const vec2& d){
     What plot v's road joins, by a fine edge, each once. Their order is the plot quads' order round v,
     which is fixed, so a vertex is always drawn the same way.
       - For a road plot: its road neighbours, and the plot behind its gate if it ends at one - so the
-        road runs on into the gateway.
+        road runs on into the gateway. And a planned road its steps go up to (ZONE_STEP_STAIR, built from
+        below): the road runs to the wall and up it, before the one on the terrace is laid.
       - For an enclosed plot behind a gate: the road plot outside it - the path through the gate,
         which goes on one plot into the garden or town and stops.
     Nothing for any other plot.
@@ -81,7 +82,8 @@ int RoadNeighbours(const ChasmWorld& w, const ZoneState& z, int v, int* out){
         int k = qc % 4;
         int both[2] = {q.v[(k + 1) % 4],q.v[(k + 3) % 4]};
         for (int u : both){
-            bool f_joined = f_road ? (ZoneRoadStands(z,u) || u == gate)
+            bool f_joined = f_road ? (ZoneRoadStands(z,u) || u == gate
+                                      || (ZoneRoadPlanned(z,u) && ZoneTerraceStep(w,z,v,u) == ZONE_STEP_STAIR))
                                    : (z.ground[u] == ZONE_GROUND_ROAD && ZoneGateOf(w,z,u) == v);
             if (!f_joined){
                 continue;
@@ -156,9 +158,10 @@ int RoadCentreLine(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
 }
 
 //A plot a wall's line runs through: a wall plot, planned or standing, or a gate - a road plot it crosses - or a
-//guard tower standing in it (defence_plan.md), which the palisade ends against.
+//guard tower standing in it (defence_plan.md), which the palisade ends against. Not a castle's gate, which is its wall's
+//(castle_plan.md).
 bool WallLine(const ZoneState& z, int v){
-    return z.ground[v] == ZONE_GROUND_WALL || z.gate[v] || z.KindOf(v) == ZONE_KIND_TOWER;
+    return z.ground[v] == ZONE_GROUND_WALL || (z.gate[v] && !ZoneCastleGate(z,v)) || z.KindOf(v) == ZONE_KIND_TOWER;
 }
 
 //Every plot beside v, by a fine edge, that a wall's line runs through - in the plot quads' fixed order.
@@ -732,8 +735,8 @@ void BuildPalisade(const ChasmWorld& w, const ZoneState& z, int v, std::vector<v
         }
         float len = along.back();
         //A jamb where the piece meets a gate: the logs stop short of it.
-        bool f_gate_start = p.at_start >= 0 && z.gate[p.at_start];
-        bool f_gate_end = p.at_end >= 0 && z.gate[p.at_end];
+        bool f_gate_start = p.at_start >= 0 && z.gate[p.at_start] && !ZoneCastleGate(z,p.at_start);
+        bool f_gate_end = p.at_end >= 0 && z.gate[p.at_end] && !ZoneCastleGate(z,p.at_end);
         float from = f_gate_start ? WALL_GATE_POST_W : 0.0f;
         float to = len - (f_gate_end ? WALL_GATE_POST_W : 0.0f);
         if (f_gate_start){
@@ -1545,8 +1548,9 @@ void BuildRoadCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::
     for (int k = 0; k < 4; k++){
         int v = quad.v[k];
         //A wall (Zones.h, WALLS): staked out while planned, a palisade once it stands; over a gate's road,
-        //its crossbeam - the road itself is drawn below like any other.
-        if (z.ground[v] == ZONE_GROUND_WALL || z.gate[v]){
+        //its crossbeam - the road itself is drawn below like any other. Not a castle's gate: the castle draws it
+        //(CastleMesh.cpp).
+        if (z.ground[v] == ZONE_GROUND_WALL || (z.gate[v] && !ZoneCastleGate(z,v))){
             if (RoadVertexOwner(w,v) == fine_quad){
                 //Harmed by zombies (step 4d): a broken plot is a wall site again, drawn as what is left of it. One
                 //standing at its strength has been built again, as whole, the moment before the rules forget it.

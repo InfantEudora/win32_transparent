@@ -2478,7 +2478,9 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     zone command (OVERLAY_HIT_GATE) - and what that means for the walks through it.
 */
 void GateCard(const ChasmWorld& w, const ZoneState& z, int plot, Card& c){
-    c.title = "Gate";
+    //A castle's gate (castle_plan.md) has a portcullis besides its doors, each opened and shut on its own.
+    bool f_castle = ZoneCastleGate(z,plot);
+    c.title = f_castle ? "Castle gate" : "Gate";
     bool f_shut = ZoneGateShut(z,plot);
     if (f_shut){
         c.Text("Shut - nobody passes, our own people neither",HUD_AMBER);
@@ -2487,10 +2489,18 @@ void GateCard(const ChasmWorld& w, const ZoneState& z, int plot, Card& c){
     }
     CardLine door;
     door.type = CARD_CHOICE;
-    door.choices = {{"Open",0},{"Shut",1}};
-    door.choice_on = f_shut ? 1 : 0;
+    door.choices = {{f_castle ? "Doors open" : "Open",0},{f_castle ? "Doors shut" : "Shut",1}};
+    door.choice_on = ZoneGateDoorShut(z,plot) ? 1 : 0;
     door.choice_action = OVERLAY_HIT_GATE;
     c.lines.push_back(door);
+    if (f_castle){
+        CardLine port;
+        port.type = CARD_CHOICE;
+        port.choices = {{"Portcullis up",0},{"Portcullis down",1}};
+        port.choice_on = ZonePortcullisDown(z,plot) ? 1 : 0;
+        port.choice_action = OVERLAY_HIT_PORTCULLIS;
+        c.lines.push_back(port);
+    }
     //Its wall still planned beside it: a gap the door does not close.
     int nb[8];
     int n = ZonePlotNeighbours(w,plot,nb,8);
@@ -2528,7 +2538,7 @@ void GroundSiteCard(const ZoneState& z, const EconomyState* e, const std::vector
     int trees = 0;
     int boulders = 0;       //...and boulders (stone_plan.md)
     for (int v : patch){
-        trees += (e && GroundSitePlot(z,v)) ? EconomyTreesOn(*z.world,*e,v,-1) : 0;
+        trees += (e && GroundSitePlot(z,v)) ? EconomyTreesOn(*z.world,*e,v,-1,f_garden) : 0;    //a garden fells only pines
         boulders += (e && GroundSitePlot(z,v)) ? EconomyBouldersOn(*z.world,*e,v,-1) : 0;
     }
     if (trees > 0){
@@ -3005,9 +3015,11 @@ vec3 CrateMiddle(const ChasmWorld& w, const EconomyCrate& c){
     The building the ray through a pixel meets first, BY ITS SHAPE: sampled from well above the ground
     the cursor is over down to that ground, each sample asking the plot under it whether what stands
     there reaches that high. So a tall house is picked by its roof, not by the ground behind it. 0 if
-    the ray reaches the ground first.
+    the ray reaches the ground first. How far along the ray it was met in `along_out`, for a mine's props to
+    be weighed against (MineAlongRay).
 */
-uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r, const GridPick& ground, int* plot_out){
+uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r, const GridPick& ground, int* plot_out,
+                          float* along_out = NULL){
     if (!ground.f_hit || r.direction.y >= -1e-4f){
         return 0;
     }
@@ -3034,9 +3046,15 @@ uint32_t BuildingAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r,
                     continue;
                 }
                 *plot_out = at.plot;
+                if (along_out){
+                    *along_out = t * r.direction.length();
+                }
                 return z.ArchOwnerOf(at.plot);
             }
             *plot_out = at.plot;
+            if (along_out){
+                *along_out = t * r.direction.length();
+            }
             return z.building[at.plot];
         }
     }
@@ -3072,11 +3090,11 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
     }
     float s = std::max(0.5f,(float)main_window->height / 810.0f);
     vec2 at((float)px.x,(float)px.y);
+    InputController* input = main_scene->inputcontroller;
+    int2 read_at = input->GetHoveredPixel();
+    bool f_read_here = std::abs(read_at.x - px.x) <= PICK_READ_SLOP && std::abs(read_at.y - px.y) <= PICK_READ_SLOP;
+    objectid_t under = f_read_here ? input->GetHoveredObjectID() : OBJECTID_INVALID;
     if (e && e->world == w){
-        InputController* input = main_scene->inputcontroller;
-        int2 read_at = input->GetHoveredPixel();
-        bool f_read_here = std::abs(read_at.x - px.x) <= PICK_READ_SLOP && std::abs(read_at.y - px.y) <= PICK_READ_SLOP;
-        objectid_t under = f_read_here ? input->GetHoveredObjectID() : OBJECTID_INVALID;
         if (under != OBJECTID_INVALID){
             std::lock_guard<std::mutex> lock(pick_mutex);
             for (const auto& f : person_objects){
@@ -3150,7 +3168,22 @@ PlayPick ApplicationChasm::PlayPickUnder(int2 px, const GridPick& hover){
     if (z && z->world == w && !z->building.empty()){
         ray r = main_scene->camera->GetPixelRay(px);
         int plot = -1;
-        uint32_t b = BuildingAlongRay(*w,*z,r,hover,&plot);
+        float along = INFINITY;
+        uint32_t b = BuildingAlongRay(*w,*z,r,hover,&plot,&along);
+        /*
+            A MINE by its props too, which stand out past its plot (MineAlongRay), if met before any building's shape. Only
+            where the engine read nothing there: its props are instanced, which it cannot read back, while the ground and
+            the houses it can - so a cliff top or a house in front of the portal is what the cursor is on.
+        */
+        if (under == OBJECTID_INVALID){
+            int mine_plot = -1;
+            float mine_along = INFINITY;
+            uint32_t mine = MineAlongRay(*w,*z,r,&mine_along,&mine_plot);
+            if (mine && mine_along < along){
+                b = mine;
+                plot = mine_plot;
+            }
+        }
         if (b){
             out.kind = PLAY_PICK_BUILDING;
             out.id = b;
@@ -3588,6 +3621,16 @@ void ApplicationChasm::UpdatePlayPick(GridPick& hover, int2 px, bool& f_over_sce
                 }
                 if (sel.kind == PLAY_PICK_GATE && sel.plot >= 0){
                     SubmitZone(ZONE_OP_GATE_SHUT,sel.plot,hit.value);
+                }
+            }else if (hit.action == OVERLAY_HIT_PORTCULLIS){
+                //A castle gate's card: its portcullis let down (1) or raised (0) - a recorded zone command (castle_plan.md).
+                PlayPick sel;
+                {
+                    std::lock_guard<std::mutex> lock(pick_mutex);
+                    sel = play_selected;
+                }
+                if (sel.kind == PLAY_PICK_GATE && sel.plot >= 0){
+                    SubmitZone(ZONE_OP_PORTCULLIS,sel.plot,hit.value);
                 }
             }else if (hit.action == OVERLAY_HIT_LADDER){
                 //A guard tower's card: its ladder round to the next open side - a recorded zone command.

@@ -1,6 +1,7 @@
 #include "ApplicationChasm.h"
 #include "MeshBuild.h"
 #include "Palette.h"
+#include <algorithm>
 #include <math.h>
 
 /*
@@ -11,7 +12,8 @@
     temperate strata, it stood out brown on grey (the props' note, stone_plan.md "The props"). On an
     outcrop, `quarry_crane` beside the beds, its boom over them, the outcrop itself left in sight (PropHidden). One
     instance set of each, rebuilt when the zones change. Where they stand is MinePropsAt's alone: the play ghost and the
-    selection's outline draw the same props there (AppendMineProps), since a mine has no house body to draw them from.
+    selection's outline draw the same props there (AppendMineProps), since a mine has no house body to draw them from -
+    and a pick meets them there too (MineAlongRay), since the portal stands out past its plot, into the rock.
 
     And every floatstone seam's BAND (TerrainSeamBand): kept out of the terrain's chunks, an object of its crystal and
     one of the rock it would be, the crystal shown while the seam has floatstone left and the rock once it is dug out -
@@ -81,6 +83,70 @@ void ApplicationChasm::AppendMineProps(const ChasmWorld& w, int plot, std::vecto
     }
 }
 
+//How far along a ray (o, d) it enters the box lo..hi, in d's lengths: INFINITY if it misses, or the box is behind it.
+static float RayIntoBox(const vec3& o, const vec3& d, const vec3& lo, const vec3& hi){
+    const float oo[3] = {o.x,o.y,o.z};
+    const float dd[3] = {d.x,d.y,d.z};
+    const float ll[3] = {lo.x,lo.y,lo.z};
+    const float hh[3] = {hi.x,hi.y,hi.z};
+    float t0 = 0.0f;
+    float t1 = INFINITY;
+    for (int k = 0; k < 3; k++){
+        if (fabsf(dd[k]) < 1e-9f){
+            if (oo[k] < ll[k] || oo[k] > hh[k]){
+                return INFINITY;
+            }
+            continue;
+        }
+        float ta = (ll[k] - oo[k]) / dd[k];
+        float tb = (hh[k] - oo[k]) / dd[k];
+        t0 = std::max(t0,std::min(ta,tb));
+        t1 = std::min(t1,std::max(ta,tb));
+        if (t0 > t1){
+            return INFINITY;
+        }
+    }
+    return t0;
+}
+
+/*
+    A standing mine is only its props, which stand out past its plot - the portal over the wall's foot and into the rock,
+    the cart out on its rails - so its plot's shape (ShapeTop) misses most of what is drawn, and the ground under the
+    cursor, which PickUnderPixel never finds on a wall, is no help over the portal's frame. So each prop is met by its
+    model's own box, turned and moved as it stands. A mine is only ever on a deposit's plot, so those are all looked at.
+*/
+uint32_t ApplicationChasm::MineAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r, float* along, int* plot_out) const{
+    uint32_t best = 0;
+    float best_t = INFINITY;
+    if (w.deposits){
+        for (const Deposit& d : w.deposits->deposits){
+            for (int v : d.plots){
+                if (v < 0 || v >= (int)z.standing.size() || z.KindOf(v) != ZONE_KIND_MINE || z.standing[v] <= 0){
+                    continue;
+                }
+                MineProp props[2];
+                int n = MinePropsAt(w,v,props);
+                for (int k = 0; k < n; k++){
+                    if (!f_mine_box[props[k].prop]){
+                        continue;
+                    }
+                    quat back = props[k].facing;
+                    back.inverse();
+                    float t = RayIntoBox(back * (r.origin - props[k].at),back * r.direction,
+                                         mine_box_lo[props[k].prop],mine_box_hi[props[k].prop]);
+                    if (t < best_t){
+                        best_t = t;
+                        best = z.building[v];
+                        *plot_out = v;
+                    }
+                }
+            }
+        }
+    }
+    *along = best ? best_t * r.direction.length() : INFINITY;
+    return best;
+}
+
 //RENDER THREAD, from PreRender.
 void ApplicationChasm::UploadMines(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
@@ -104,6 +170,13 @@ void ApplicationChasm::UploadMines(){
                 set->SetInstances(std::vector<fmat4>());
                 set->SetVisibility(false);
                 world_scene->AddObject(set);
+                //Its model's box, for a pick to meet (MineAlongRay): the physics thread picks, and this holds it still.
+                Mesh* m = assetmanager->GetMeshFromAsset(mine_asset_names[i]);
+                if (m && m->HasBounds()){
+                    mine_box_lo[i] = m->GetBoundsMin();
+                    mine_box_hi[i] = m->GetBoundsMax();
+                    f_mine_box[i] = true;
+                }
             }
             mine_sets[i] = set;
         });

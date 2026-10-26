@@ -462,6 +462,16 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
             economy["fallen"] = fallen;
         }
+        //THE FIRST WAVE (swamp_huts_plan.md step 2): when it is due, whether opened and seen, each hut as [building,
+        //door plot, still inside, next out's tick], and its zombies still standing - only once it is called.
+        if (e.wave.due){
+            json huts = json::array();
+            for (const EconomyWaveHut& h : e.wave.huts){
+                huts.push_back(json::array({h.hut,h.door,h.left,h.next}));
+            }
+            economy["wave"] = json{{"due",e.wave.due},{"open",e.wave.f_open},{"seen",e.wave.f_seen},{"huts",huts},
+                                   {"zombies",e.wave.zombies}};
+        }
         /*
             THE HISTORY (statistics_plan.md): where it began, the journal - an event a line, [tick, kind, person,
             building, plot, what, amount, x, z], its kind a number (Economy.h never renumbers them) - and the ledger:
@@ -514,10 +524,16 @@ json ChasmSaveToJson(const ChasmSave& s){
             }
         }
     }
-    //The debug castle (ramparts_plan.md): plot, piece and level - only with some, so a save without one is as before.
+    //The debug castle (ramparts_plan.md): plot, piece and level - only with some, so a save without one is as before -
+    //and a gate's portcullis, 1 where it is down (castle_plan.md); a stair's, the stair it climbs to fifth, where it has
+    //one (castle_plan.md "The stairs").
     json castle = json::array();
     for (const ZoneSavedCastle& pc : s.castle){
-        castle.push_back(json::array({pc.plot,pc.piece,pc.base}));
+        if (pc.up >= 0){
+            castle.push_back(json::array({pc.plot,pc.piece,pc.base,pc.f_portcullis ? 1 : 0,pc.up}));
+        }else{
+            castle.push_back(pc.f_portcullis ? json::array({pc.plot,pc.piece,pc.base,1}) : json::array({pc.plot,pc.piece,pc.base}));
+        }
     }
     //Terraces (terraces_plan.md stage 2): plot, top, built - only with some.
     json terraces = json::array();
@@ -526,6 +542,7 @@ json ChasmSaveToJson(const ChasmSave& s){
     }
     json out = json{
         {"chasm_save",CHASM_SAVE_VERSION},
+        {"game_version",s.game_version},
         {"grid",{
             {"seed",g.seed},
             {"target_fine_cells",g.target_fine_cells},
@@ -718,12 +735,30 @@ bool GridWaterFromJson(const json& j, GridWater& out, std::string& error){
     return true;
 }
 
+/*
+    The version a save's colony was started in: its own, or - from before saves kept it - the version its meta's build
+    begins with ("0.0.3 (acd22ec+, 2026-10-26, debug)"); "" with neither. Read with care, as a file anyone may have edited.
+*/
+static std::string SavedGameVersion(const json& j){
+    if (j.contains("game_version") && j["game_version"].is_string() && !j["game_version"].get<std::string>().empty()){
+        return j["game_version"].get<std::string>();
+    }
+    const json meta = j.value("meta",json::object());
+    if (!meta.is_object() || !meta.contains("build") || !meta["build"].is_string()){
+        return "";
+    }
+    std::string build = meta["build"].get<std::string>();
+    std::string version = build.substr(0,build.find(' '));
+    return (!version.empty() && version.find_first_not_of("0123456789.") == std::string::npos) ? version : "";
+}
+
 bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
     out = ChasmSave();
     if (!j.is_object() || !j.contains("chasm_save")){
         error = "not a chasm save";
         return false;
     }
+    out.game_version = SavedGameVersion(j);
     int version = j["chasm_save"].get<int>();
     if (version < 1 || version > CHASM_SAVE_VERSION){
         error = "save version " + std::to_string(version) + ", expected 1 to " +
@@ -1100,6 +1135,26 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             f.tick = fj.value("tick",(uint64_t)0);
             out.economy.fallen.push_back(f);
         }
+        //THE FIRST WAVE (swamp_huts_plan.md step 2): absent before it, and until it is called.
+        if (e.contains("wave") && e["wave"].is_object()){
+            const json& wj = e["wave"];
+            EconomyWave& wave = out.economy.wave;
+            wave.due = wj.value("due",(uint64_t)0);
+            wave.f_open = wj.value("open",false);
+            wave.f_seen = wj.value("seen",false);
+            for (const json& hj : wj.value("huts",json::array())){
+                if (!hj.is_array() || hj.size() != 4){
+                    continue;
+                }
+                EconomyWaveHut h;
+                h.hut = hj[0].get<uint32_t>();
+                h.door = hj[1].get<int>();
+                h.left = hj[2].get<int>();
+                h.next = hj[3].get<uint64_t>();
+                wave.huts.push_back(h);
+            }
+            wave.zombies = wj.value("zombies",std::vector<uint32_t>());
+        }
         //THE HISTORY. A save from before it has none, and the history begins at its load (Economy::Restore).
         if (e.contains("history") && e["history"].is_object()){
             const json& hj = e["history"];
@@ -1278,6 +1333,8 @@ bool ChasmSaveFromJson(const json& j, ChasmSave& out, std::string& error){
             c.plot = pc[0].get<int>();
             c.piece = pc[1].get<int>();
             c.base = (pc.size() >= 3 && pc[2].is_number_integer()) ? pc[2].get<int>() : ZONE_CASTLE_NO_BASE;     //an older save's: none
+            c.f_portcullis = pc.size() >= 4 && pc[3].is_number_integer() && pc[3].get<int>() != 0;
+            c.up = (pc.size() >= 5 && pc[4].is_number_integer()) ? pc[4].get<int>() : -1;
             out.castle.push_back(c);
         }
     }
@@ -1401,6 +1458,7 @@ std::vector<ChasmSaveEntry> ChasmSaveEntries(){
                 e.title = name + ((day != std::string::npos) ? e.title.substr(day) : " - " + e.title);
             }
         }
+        e.game_version = SavedGameVersion(j);
         if (j.contains("calendar") && j["calendar"].is_number_unsigned()){
             e.calendar_tick = j["calendar"].get<uint64_t>();
         }

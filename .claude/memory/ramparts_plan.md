@@ -1,11 +1,11 @@
 ---
 name: ramparts-plan
-description: Chasm layered walking + debug castle (ramparts_plan.md) - plot+layer walk nodes; real arches and a debug stone guard tower built 2026-10-24; aim is a king's castle
+description: Chasm layered walking + debug castle (ramparts_plan.md, castle_plan.md) - plot+layer walk nodes; arches, stone tower, gate, and drag-laid stairs (flight/landing/turret) built; aim is a king's castle
 metadata:
   node_type: memory
   type: project
   originSessionId: 9c1efb04-f5be-4246-803d-f0b9ad53ecb3
-  modified: 2026-10-25T22:23:28.795Z
+  modified: 2026-10-26T21:35:29.446Z
 ---
 
 apps/chasm/docs/ramparts_plan.md, agreed and built 2026-10-10 (steps 1 and 2). Walls people walk on, roads under
@@ -48,12 +48,22 @@ them, Stronghold-style.
   (needed by the ballista); other buildings are open suggestions.
 - **Stone tower steps 1-2 BUILT 2026-10-25**: guard tower's rules, castle geometry - whole tile, `ZoneTowerLevel`, 2-4
   storeys, a doorway at every floor a deck meets (`WalkJoin`/`StoneTowerFloors`), drawn by `BuildStoneTowerQuarter` from
-  `BuildCastleCell`. User's rules: 3-cell plot = crenellated top, else roofed guard room; ground door kept (move it to the
+  `BuildCastleCell`. User's rules: 4-cell plot = roofed guard room, any other (3/5/6 cells, changed 2026-10-26) crenellated; ground door kept (move it to the
   INSIDE face later, once "inside the walls" exists); emergent towers from tall blocks noted for later. Castle quarters now
   meet at `BuildingWallCrossing`. Save `saves/castle_tower_heights_test.json`.
 - **Step 3 BUILT 2026-10-25**: corbelled battlements, plinth, arrow slits; drawn per CELL by `Outlines`/`OutlineJoin`
   (mitred corner/inside/straight/end) - the corner seams were unmitred per-half-edge parapets. No battlements against a
-  wall a sill over the deck (`StandingTop`). Next on the castle: keep, gatehouse, armoury (castle_plan.md).
+  wall a sill over the deck (`StandingTop`).
+- **Castle GATE BUILT 2026-10-26** (castle_plan.md "The gate"): road x castle block >= 2 storeys -> `ZONE_CASTLE_GATE`;
+  1 storey leaves a gap (user). Fixed passage height (wall above just taller). Doors = `ZoneState::gate`, portcullis =
+  `ZoneState::portcullis`, two separate commands; `ZoneGateShut` = either. `ZoneCastleGateWay`: in/out only along its road.
+  Save `saves/castle_gates_test.json`.
+- **Castle STAIRS overhauled 2026-10-26** (castle_plan.md "The stairs", user's choices): the DRAG gives direction
+  (down from a deck a storey a plot, or up from the ground), one storey a plot max; forms from neighbours, stored as shape:
+  FLIGHT (STAIR), LANDING (where the drag turns), open TURRET (spiral round a core, when it must climb >1 storey with no
+  flight below); `castle_up` links each stair to the one it climbs to; taken off from the foot up. Balustrades (user's
+  pick) on flights/landings, dark arched doorways under high ones. `ZonePlanStair` is THE drag rule (op + hover).
+  Save `saves/castle_stairs_test.json` (flat map seed 12). Next on the castle: keep, armoury.
 
 **Why:** prototype to judge whether stacked walkable layers READ from the camera before weaving it into play.
 **How to apply:** next steps (ramparts on walls, gatehouse, storeys for archer reach) wait on the user's verdict.

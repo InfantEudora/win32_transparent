@@ -236,6 +236,9 @@ const char* EconomyEventName(int kind){
         case EVENT_ZEPPELIN_STAGE:      return "zeppelin_stage";
         case EVENT_ROTTED:              return "rotted";
         case EVENT_PUT_DOWN:            return "put_down";
+        case EVENT_GOAL_SET:            return "goal_set";
+        case EVENT_WAVE:                return "wave";
+        case EVENT_WAVE_SEEN:           return "wave_seen";
         default:                        return "unknown";
     }
 }
@@ -252,7 +255,8 @@ int EconomyEventByName(const std::string& name){
 //What is worth remembering one by one: who came and went, grew up or old and was expected, what was reaped, raised and lost
 //to the frost, where the colony spread, what it found, and who rose a rank - not what happens tens of times a day,
 //which the ledger counts, nor the scouts' troubles. The DISCOVERIES (demo_plan.md) are read from here, so what they
-//need is kept - and the demo's goals and its end, each made once, by whether the journal has it yet.
+//need is kept - and the demo's goals and its end, each made once, by whether the journal has it yet, and the first
+//wave's coming.
 bool EconomyJournaled(int kind){
     return kind == EVENT_BORN || kind == EVENT_DIED || kind == EVENT_HARVEST || kind == EVENT_BUILDING_FINISHED
            || kind == EVENT_SETTLED || kind == EVENT_SEAM_SEEN || kind == EVENT_DISCOVERED || kind == EVENT_FROST_TOOK
@@ -260,7 +264,8 @@ bool EconomyJournaled(int kind){
            || kind == EVENT_BALCONY_REACHED || kind == EVENT_GOAL_MET || kind == EVENT_GOAL_FAILED
            || kind == EVENT_DEMO_COMPLETE || kind == EVENT_COLONY_LOST
            || kind == EVENT_WALL_BROKEN || kind == EVENT_GATE_BROKEN || kind == EVENT_BREACHED || kind == EVENT_RANKED
-           || kind == EVENT_GREW_OLD || kind == EVENT_ZEPPELIN_STAGE || kind == EVENT_PUT_DOWN;
+           || kind == EVENT_GREW_OLD || kind == EVENT_ZEPPELIN_STAGE || kind == EVENT_PUT_DOWN
+           || kind == EVENT_GOAL_SET || kind == EVENT_WAVE || kind == EVENT_WAVE_SEEN;
 }
 
 //--- Kills and ranks (Economy.h, KILLS and RANKS; ranks_plan.md) ----------------------------------------------------
@@ -1282,10 +1287,11 @@ bool EconomyStraightClear(const ChasmWorld& w, const ZoneState& z, const vec2& a
             if (!f_neighbour){
                 return false;
             }
-            //Onto a guard tower and off it only by its ladder, as the walkers' edges allow (Walkers::EdgeOpen).
+            //Onto a guard tower and off it only by its ladder, as the walkers' edges allow (Walkers::EdgeOpen) - and
+            //through a castle's gate only along its road (castle_plan.md).
             int ladder_v = ZoneTowerLadder(z,v);
             int ladder_prev = ZoneTowerLadder(z,prev);
-            if ((ladder_v >= 0 && prev != ladder_v) || (ladder_prev >= 0 && v != ladder_prev)){
+            if ((ladder_v >= 0 && prev != ladder_v) || (ladder_prev >= 0 && v != ladder_prev) || !ZoneCastleGateWay(z,prev,v)){
                 return false;
             }
             if (ZoneBoundaryBetween(z,prev,v) != ZONE_BOUNDARY_NONE && !ZoneGateBetween(w,z,prev,v)){
@@ -3598,7 +3604,7 @@ void Economy::Derive(const ZoneState& z, Walkers& walkers, bool f_share){
     if (w.forest){
         for (size_t i = 0; i < w.forest->props.size() && i < state.prop_state.size(); i++){
             const PropInstance& pr = w.forest->props[i];
-            uint32_t site = (IsTree(pr.kind) && state.prop_state[i] == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
+            uint32_t site = (IsTree(pr.kind) && state.prop_state[i] == PROP_STATE_STANDING) ? EconomyPropSite(z,pr) : 0;
             if (site){
                 note(site,reach_of(pr));
             }
@@ -4137,7 +4143,7 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walk
                 bool f_over_ice = false;
                 if (!(d <= reach) && f_ice && ps == PROP_STATE_STANDING && pr.plot >= 0
                     && (std::binary_search(in_way.begin(),in_way.end(),i)
-                        || (EconomyTreeSite(z,pr.plot,pr.coarse) && Ours(k,EconomyTreeSite(z,pr.plot,pr.coarse))))){
+                        || (EconomyPropSite(z,pr) && Ours(k,EconomyPropSite(z,pr))))){
                     if (ice_walk.empty()){
                         walkers.MapFlood(z,std::vector<int>(1,from.plot),reach,ice_walk,WALK_ICE_NOW);
                     }
@@ -4147,15 +4153,16 @@ void Economy::WoodNear(const EconomyWorker& k, const ZoneState& z, Walkers& walk
                 if (!(d <= reach) || (!f_from_hut && (p - hut).length() > ECONOMY_WOODCUTTER_REACH)){
                     continue;       //too far to walk, or none to be walked at all
                 }
-                //Under a building, a garden or lot, or a field: as good as not there (EconomyPropCovered).
-                if (EconomyPropCovered(z,pr.plot,pr.coarse)){
+                //Under a building, a garden or lot, or a field: as good as not there (EconomyPropCovered). Nor a tree a
+                //garden keeps (gardens_plan.md) - but a log lying there is still his to fetch.
+                if (EconomyPropCovered(z,pr.plot,pr.coarse) || (ps == PROP_STATE_STANDING && EconomyGardenKeeps(z,pr))){
                     continue;
                 }
                 if (std::find(claimed.begin(),claimed.end(),i) != claimed.end()){
                     continue;
                 }
-                //In the way of a line, or of a site of his own settlement's (EconomyTreeSite): first.
-                uint32_t site = (ps == PROP_STATE_STANDING) ? EconomyTreeSite(z,pr.plot,pr.coarse) : 0;
+                //In the way of a line, or of a site of his own settlement's (EconomyPropSite): first.
+                uint32_t site = (ps == PROP_STATE_STANDING) ? EconomyPropSite(z,pr) : 0;
                 bool f_way = std::binary_search(in_way.begin(),in_way.end(),i) || (site && Ours(k,site));
                 //A FRUIT TREE (foraging_plan.md) he passes by - felled only when it stands in the way of something.
                 //...and over the ice, only what is in the way.
@@ -5291,6 +5298,8 @@ void Economy::TickWorker(EconomyWorker& k, const ZoneState& z, Walkers& walkers,
                 }
             }else if (k.job == WORKER_JOB_STONECUTTER && state.prop_state[k.prop] == PROP_STATE_STANDING){
                 BreakRock(k,z,walkers);     //its stone left as rubble, and a load of it lifted (stone_plan.md)
+            }else if (state.prop_state[k.prop] == PROP_STATE_STANDING && EconomyGardenKeeps(z,state.world->forest->props[k.prop])){
+                GoHome(k,z,walkers);        //a garden painted over it meanwhile keeps it (gardens_plan.md): left standing
             }else if (state.prop_state[k.prop] == PROP_STATE_STANDING){
                 //Felled: it lies as a log, which he now picks up - and a wall or site it stood in the way of, all it
                 //takes there, goes up (only a woodcutter fells, woodcutting_plan.md).
@@ -6562,6 +6571,8 @@ void Economy::Tick(const ZoneState& z, Walkers& walkers, uint64_t tick, float dt
             }
         }
     }
+    //THE FIRST WAVE (swamp_huts_plan.md step 2): its doors, and the next out of each hut.
+    TickWave(z);
     //ZOMBIES (zombies_plan.md): after everyone has moved, so each goes for where its target is now.
     TickZombies(z,walkers,tick,dt,f_zones_moved);
     //WALLS BREAK: those at what stops them hit it, once they have walked - before the spacing, which moves no route.
@@ -9399,6 +9410,19 @@ bool EconomyPropCovered(const ZoneState& z, int plot, int coarse){
     return coarse >= 0 && coarse < (int)z.field.size() && z.field[coarse] && z.field_built[coarse];
 }
 
+bool EconomyGardenKeeps(const ZoneState& z, const PropInstance& p){
+    return p.plot >= 0 && p.plot < (int)z.ground.size() && z.ground[p.plot] == ZONE_GROUND_GARDEN && z.storeys[p.plot] == 0
+           && !ZoneTerraced(z,p.plot) && ForestGardenKeeps(p.kind);
+}
+
+bool EconomyPropCovered(const ZoneState& z, const PropInstance& p){
+    return EconomyGardenKeeps(z,p) || EconomyPropCovered(z,p.plot,p.coarse);
+}
+
+uint32_t EconomyPropSite(const ZoneState& z, const PropInstance& p){
+    return EconomyGardenKeeps(z,p) ? 0 : EconomyTreeSite(z,p.plot,p.coarse);
+}
+
 uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse){
     if (plot >= 0 && plot < (int)z.storeys.size()){
         if (z.building[plot] && z.storeys[plot] > 0 && z.standing[plot] == 0){
@@ -9414,8 +9438,9 @@ uint32_t EconomyTreeSite(const ZoneState& z, int plot, int coarse){
     return 0;
 }
 
-//The trees standing on a plot or coarse cell - or, f_boulders, the boulders (stone_plan.md).
-static int StandingOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse, bool f_boulders){
+//The trees standing on a plot or coarse cell - or, f_boulders, the boulders (stone_plan.md). f_garden: only the trees a
+//garden would not keep (ForestGardenKeeps).
+static int StandingOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse, bool f_boulders, bool f_garden){
     if (!w.forest || !w.mesh || (plot < 0 && coarse < 0)){
         return 0;
     }
@@ -9442,7 +9467,7 @@ static int StandingOn(const ChasmWorld& w, const EconomyState& e, int plot, int 
         for (int i : w.forest->chunk_props[c]){
             const PropInstance& pr = w.forest->props[i];
             bool f_standing = (size_t)i >= e.prop_state.size() || e.prop_state[i] == PROP_STATE_STANDING;
-            bool f_kind = f_boulders ? pr.kind == PROP_BOULDER : IsTree(pr.kind);
+            bool f_kind = f_boulders ? pr.kind == PROP_BOULDER : (IsTree(pr.kind) && !(f_garden && ForestGardenKeeps(pr.kind)));
             if (f_kind && f_standing && ((coarse >= 0) ? pr.coarse == coarse : pr.plot == plot)){
                 n++;
             }
@@ -9451,12 +9476,12 @@ static int StandingOn(const ChasmWorld& w, const EconomyState& e, int plot, int 
     return n;
 }
 
-int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse){
-    return StandingOn(w,e,plot,coarse,false);
+int EconomyTreesOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse, bool f_garden){
+    return StandingOn(w,e,plot,coarse,false,f_garden);
 }
 
 int EconomyBouldersOn(const ChasmWorld& w, const EconomyState& e, int plot, int coarse){
-    return StandingOn(w,e,plot,coarse,true);
+    return StandingOn(w,e,plot,coarse,true,false);
 }
 
 void Economy::RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const{
@@ -9497,7 +9522,7 @@ void Economy::RoadTrees(const ZoneState& z, int v, std::vector<int>& out) const{
                 int i = tree_items[j];
                 const PropInstance& pr = props[i];
                 if (state.prop_state[i] != PROP_STATE_STANDING || pr.plot < 0 || !w.terrain->SameGround(pr.plot,v)
-                    || EconomyPropCovered(z,pr.plot,pr.coarse)){
+                    || EconomyPropCovered(z,pr)){
                     continue;
                 }
                 vec2 p(pr.pos.x,pr.pos.z);
@@ -9543,7 +9568,7 @@ void Economy::Felled(const ZoneState& z, int prop){
             RaiseWall(z,v);
         }
     }
-    uint32_t site = EconomyTreeSite(z,pr.plot,pr.coarse);
+    uint32_t site = EconomyPropSite(z,pr);
     if (site){
         Build(z,site);
     }
@@ -9587,7 +9612,7 @@ bool Economy::SiteTreesStanding(const ZoneState& z, uint32_t id) const{
                 for (int j = tree_start[b]; j < tree_start[b + 1]; j++){
                     int i = tree_items[j];
                     const PropInstance& pr = w.forest->props[i];
-                    if (state.prop_state[i] == PROP_STATE_STANDING && EconomyTreeSite(z,pr.plot,pr.coarse) == id){
+                    if (state.prop_state[i] == PROP_STATE_STANDING && EconomyPropSite(z,pr) == id){
                         return true;
                     }
                 }
@@ -10896,6 +10921,7 @@ EconomySaved EconomySaveState(const EconomyState& state){
     s.zombies = state.zombies;
     s.harm = state.harm;
     s.fallen = state.fallen;
+    s.wave = state.wave;
     s.next_zombie = state.next_zombie;
     s.arrows = state.arrows;
     s.history = state.history;
@@ -11051,6 +11077,7 @@ void Economy::Restore(std::shared_ptr<const ChasmWorld> world, const EconomySave
     state.zombies = saved.zombies;
     state.harm = saved.harm;
     state.fallen = saved.fallen;    //THE FALLEN lying where they fell, as long as they had left
+    state.wave = saved.wave;        //THE FIRST WAVE, once called: none before (swamp_huts_plan.md step 2)
     state.next_zombie = saved.next_zombie;
     for (const EconomyZombie& m : state.zombies){
         state.next_zombie = std::max(state.next_zombie,m.id + 1);

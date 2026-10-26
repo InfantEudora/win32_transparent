@@ -30,6 +30,13 @@
 #define CHASM_SAVE_VERSION  2
 
 struct ChasmSave{
+    /*
+        THE GAME'S VERSION ITS COLONY WAS STARTED IN (ChasmVersion.h; the user's, 2026-10-26) - not the build that wrote
+        the file: saved over, it keeps the number it came with, since a colony begun before something a new game places
+        (the swamp's huts, the stone at the chasm's edge) never gets it. Older than this build's, the load screen says so.
+        Absent before it was kept: then the version the save's meta.build begins with, else "".
+    */
+    std::string game_version;
     GridSettings settings;
     std::string world_hash;                             //Grid::Hash() as hex, when saved
     std::vector<ZoneSavedBuilding> buildings;           //version 2
@@ -87,6 +94,7 @@ struct ChasmSaveEntry{
     std::string kind;                   //"save", "auto", "quick", or empty with no meta
     std::string colony;
     std::string build;                  //the build that wrote it
+    std::string game_version;           //...and the version its colony was started in (ChasmSave::game_version)
     uint64_t calendar_tick = 0;
     int people = 0;
     int64_t written = 0;                //seconds since 1970

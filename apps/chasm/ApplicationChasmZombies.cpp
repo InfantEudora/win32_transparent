@@ -519,7 +519,9 @@ void ApplicationChasm::RegisterZombieTools(){
         "place; `crowd`, its pace behind one walking ahead of it, 1 free. WALLS BREAK (step 4): a zombie's way goes through a standing palisade plot, a shut gate or a "
         "building's door at the cost of breaking it; `hit` names what stops it - what (wall, gate, door), id (a plot, or "
         "a building), `hitting` (at it now), harm_s and strength_s in seconds of one zombie. `harm` lists every thing harmed "
-        "so far, with `broken` (a gate's door) or `breached` (a building's) once it is.",
+        "so far, with `broken` (a gate's door) or `breached` (a building's) once it is. `wave`: THE FIRST WAVE out of the "
+        "swamp huts (swamp_huts_plan.md step 2) - due_tick (0 not called yet: an archer trained calls it), open, seen, "
+        "each hut's zombies still inside and its next one's tick, the wave's zombies still standing, left, beaten.",
         json{
             {"type","object"},
             {"properties",{
@@ -656,6 +658,15 @@ void ApplicationChasm::RegisterZombieTools(){
             result["fallen"] = fallen;
             result["count"] = (int)e->zombies.size();
             result["next_id"] = e->next_zombie;
+            //THE FIRST WAVE (swamp_huts_plan.md step 2): when it is due, opened, seen, each hut's still inside and next
+            //out, its zombies still standing - and beaten.
+            json huts = json::array();
+            for (const EconomyWaveHut& h : e->wave.huts){
+                huts.push_back(json{{"hut",h.hut},{"door",h.door},{"left",h.left},{"next_tick",h.next}});
+            }
+            result["wave"] = json{{"due_tick",e->wave.due},{"open",e->wave.f_open},{"seen",e->wave.f_seen},{"huts",huts},
+                                  {"zombies",e->wave.zombies},{"left",EconomyWaveLeft(e->wave)},
+                                  {"beaten",EconomyWaveBeaten(e->wave)}};
             return result;
         });
 }

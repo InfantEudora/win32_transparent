@@ -22,12 +22,14 @@ static Debugger* debug = new Debugger("ChasmMusic",DEBUG_ALL);
     `make publish GAME=chasm SCORE=chasm`, which writes assets/music/chasm.json and its samples as .ogg. Run that again
     after a change there; the game plays whatever it was last given.
 
-    THREE PLAYERS ON THE ONE SCORE, each on a bus of its own under `music`:
+    FOUR PLAYERS ON THE ONE SCORE, each on a bus of its own under `music`:
       - the LAND plays the season's section - spring, summer, autumn, winter - and is sent the next when the calendar
         turns, which it takes at its next bar line with the score's crossfade. It plays under the title too;
-      - the CLOUDS and the CHASM play those sections as LAYERS over it, each faded in by its SHARE of the view: how
-        much of the ground round the view's centre is unexplored, and how much is chasm someone has seen. The land
-        is turned down under them, so two keys are never heard at full together. Only while the world shows.
+      - the CLOUDS, the CHASM and the DESERT play those sections as LAYERS over it, each faded in by its SHARE of the
+        view: how much of the ground round the view's centre is unexplored, how much is chasm someone has seen, and how
+        much is desert someone has seen. The land is turned down under them, so two keys are never heard at full
+        together - and out altogether under the desert, which has no seasons: it takes the land's place rather than
+        lying over it. Only while the world shows.
     A layer silent for a few seconds is paused, so its engine costs nothing, and let go again the moment it is wanted.
 
     It plays on in a pause, as the water does: a colony is often paused to think. The score's stingers come from the
@@ -37,10 +39,16 @@ static Debugger* debug = new Debugger("ChasmMusic",DEBUG_ALL);
 */
 
 #define CHASM_MUSIC_SCORE       "music/chasm.json"
-//A layer is heard from FROM of the view to FULL, on a smooth step; the land goes down by DUCK under a layer at full.
+//A layer is heard from FROM of the view to FULL, on a smooth step; the land goes down by DUCK under a layer at full -
+//by DESERT_DUCK under the desert, whose hijaz clashes with every season's scale.
 #define MUSIC_SHARE_FROM        0.15f
 #define MUSIC_SHARE_FULL        0.60f
 #define MUSIC_LAND_DUCK         0.70f
+#define MUSIC_DESERT_DUCK       1.00f
+//music_cells: any area's ground, the chasm's floor, the desert. One cell can be more than one, on an area's edge.
+#define MUSIC_CELL_LAND         1
+#define MUSIC_CELL_CHASM        2
+#define MUSIC_CELL_DESERT       4
 //The layers move over about this long - the camera sweeping past a patch of cloud is not a swell.
 #define MUSIC_EASE_S            3.0f
 //The view's ground: within this share of the camera's distance of its centre, looked at on a grid this many across,
@@ -58,7 +66,11 @@ static Debugger* debug = new Debugger("ChasmMusic",DEBUG_ALL);
 namespace {
 
 const char* PlayerName(int i){
-    return (i == CHASM_MUSIC_CLOUDS) ? "clouds" : (i == CHASM_MUSIC_CHASM) ? "chasm" : "land";
+    return (i == CHASM_MUSIC_CLOUDS) ? "clouds" : (i == CHASM_MUSIC_CHASM) ? "chasm" : (i == CHASM_MUSIC_DESERT) ? "desert" : "land";
+}
+
+float LayerDuck(int i){
+    return (i == CHASM_MUSIC_DESERT) ? MUSIC_DESERT_DUCK : MUSIC_LAND_DUCK;
 }
 
 //0 below FROM, 1 from FULL, smooth between.
@@ -83,7 +95,7 @@ void ApplicationChasm::SetupMusic(){
     music_score = score;
     int bus = soundsystem->AddBus("music");
     music_bus = (bus >= 0) ? bus : SOUND_BUS_MASTER;
-    static const char* bus_names[CHASM_MUSIC_PLAYERS] = {"music_land","music_clouds","music_chasm"};
+    static const char* bus_names[CHASM_MUSIC_PLAYERS] = {"music_land","music_clouds","music_chasm","music_desert"};
     //The land starts in the season the world is in - a debug build starts in one; a ship build's title in spring.
     music_season = CalendarSeasonName(CalendarDateOf(calendar_tick).season);
     for (int i = 0; i < CHASM_MUSIC_PLAYERS; i++){
@@ -194,24 +206,27 @@ void ApplicationChasm::HoldMusicMood(float suspense, float brightness){
 
 /*
     THE VIEW'S SHARES: round the view's centre, on a grid out to MUSIC_VIEW_REACH of the camera's distance, each point
-    weighed by how near the middle it is - how much of the land there is unexplored, and how much is chasm that has
-    been seen. Off the land - past the grid's ragged edge, a balcony or an island - is not counted either way.
+    weighed by how near the middle it is - how much of the land there is unexplored, how much is chasm that has been
+    seen, and how much is desert that has been seen. Off the land - past the grid's ragged edge, a balcony or an
+    island - is not counted either way.
 */
 void ApplicationChasm::MeasureMusicShares(){
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const Exploration> ex = GetExploration();
     if (!w || !w->areas || !w->sight || !ex || ex->Empty()){
-        music_share[CHASM_MUSIC_CLOUDS] = 0.0f;
-        music_share[CHASM_MUSIC_CHASM] = 0.0f;
+        for (int i = CHASM_MUSIC_CLOUDS; i < CHASM_MUSIC_PLAYERS; i++){
+            music_share[i] = 0.0f;
+        }
         return;
     }
     if (music_cells_world != w.get()){
         music_cells_world = w.get();
         music_cells.assign((size_t)w->sight->width * w->sight->height,0);
         for (const Area& a : w->areas->areas){
+            uint8_t mark = MUSIC_CELL_LAND | ((a.kind == AREA_CHASM) ? MUSIC_CELL_CHASM : 0)
+                                           | ((a.kind == AREA_DESERT) ? MUSIC_CELL_DESERT : 0);
             for (int c : a.cells){
-                uint8_t mark = (a.kind == AREA_CHASM) ? 2 : 1;
-                music_cells[(size_t)c] = std::max(music_cells[(size_t)c],mark);
+                music_cells[(size_t)c] |= mark;
             }
         }
     }
@@ -220,6 +235,7 @@ void ApplicationChasm::MeasureMusicShares(){
     float total = 0.0f;
     float clouds = 0.0f;
     float chasm = 0.0f;
+    float desert = 0.0f;
     for (int i = 0; i < MUSIC_VIEW_SAMPLES; i++){
         for (int j = 0; j < MUSIC_VIEW_SAMPLES; j++){
             vec2 off(-reach + step * (float)i,-reach + step * (float)j);
@@ -232,13 +248,19 @@ void ApplicationChasm::MeasureMusicShares(){
             total += weight;
             if (!ex->cells[(size_t)c]){
                 clouds += weight;
-            }else if (music_cells[(size_t)c] == 2){
+                continue;
+            }
+            if (music_cells[(size_t)c] & MUSIC_CELL_CHASM){
                 chasm += weight;
+            }
+            if (music_cells[(size_t)c] & MUSIC_CELL_DESERT){
+                desert += weight;
             }
         }
     }
     music_share[CHASM_MUSIC_CLOUDS] = (total > 0.0f) ? clouds / total : 0.0f;
     music_share[CHASM_MUSIC_CHASM] = (total > 0.0f) ? chasm / total : 0.0f;
+    music_share[CHASM_MUSIC_DESERT] = (total > 0.0f) ? desert / total : 0.0f;
 }
 
 void ApplicationChasm::UpdateMusic(){
@@ -281,22 +303,20 @@ void ApplicationChasm::UpdateMusic(){
     }
     //The layers only while the world shows: under the title, the land alone.
     const bool f_shown = !TitleShowing() && world_scene && main_scene == world_scene;
-    if (!f_shown){
-        music_share[CHASM_MUSIC_CLOUDS] = 0.0f;
-        music_share[CHASM_MUSIC_CHASM] = 0.0f;
-    }else if (f_music_shares_held){
-        music_share[CHASM_MUSIC_CLOUDS] = music_share_held[CHASM_MUSIC_CLOUDS];
-        music_share[CHASM_MUSIC_CHASM] = music_share_held[CHASM_MUSIC_CHASM];
+    if (!f_shown || f_music_shares_held){
+        for (int i = CHASM_MUSIC_CLOUDS; i < CHASM_MUSIC_PLAYERS; i++){
+            music_share[i] = f_shown ? music_share_held[i] : 0.0f;
+        }
     }else if (sound_pass % MUSIC_SHARE_PASSES == 0){
         MeasureMusicShares();
     }
     const float ease = std::min(1.0f,1.0f / (MUSIC_EASE_S * (float)CALENDAR_TICKS_PER_SECOND));
-    float over = 0.0f;
+    float duck = 0.0f;
     for (int i = CHASM_MUSIC_CLOUDS; i < CHASM_MUSIC_PLAYERS; i++){
         music_layer[i] += (LayerLevel(music_share[i]) - music_layer[i]) * ease;
-        over = std::max(over,music_layer[i]);
+        duck = std::max(duck,LayerDuck(i) * music_layer[i]);
     }
-    music_layer[CHASM_MUSIC_LAND] = 1.0f - MUSIC_LAND_DUCK * over;
+    music_layer[CHASM_MUSIC_LAND] = 1.0f - duck;
     for (int i = 0; i < CHASM_MUSIC_PLAYERS; i++){
         soundsystem->SetBusGain(music_buses[i],music_layer[i]);
         if (i == CHASM_MUSIC_LAND){
@@ -360,8 +380,8 @@ json ApplicationChasm::MusicStatusJson(){
 
 /*
     chasm_sound's `music`, at a tick boundary - what the Music panel does: section (a section's name, "" the season's),
-    clouds and chasm (0..1 hold the layers' shares, below 0 lets them go), stinger (one of the score's), suspense and
-    brightness (0..1, below 0 the score's own).
+    clouds, chasm and desert (0..1 hold the layers' shares, below 0 lets them go), stinger (one of the score's), suspense
+    and brightness (0..1, below 0 the score's own).
 */
 void ApplicationChasm::SteerMusic(const json& m){
 #ifdef USE_SOUND
@@ -383,8 +403,7 @@ void ApplicationChasm::SteerMusic(const json& m){
                 f_music_shares_held = false;
             }else{
                 if (!f_music_shares_held){
-                    music_share_held[CHASM_MUSIC_CLOUDS] = music_share[CHASM_MUSIC_CLOUDS];
-                    music_share_held[CHASM_MUSIC_CHASM] = music_share[CHASM_MUSIC_CHASM];
+                    std::copy(music_share,music_share + CHASM_MUSIC_PLAYERS,music_share_held);
                 }
                 f_music_shares_held = true;
                 music_share_held[i] = std::min(1.0f,v);
@@ -477,14 +496,16 @@ void ApplicationChasm::RenderMusicPanel(){
     bool f_shares = f_music_shares_held;
     if (ImGui::Checkbox("hold the layers' shares##music",&f_shares)){
         if (f_shares && !f_music_shares_held){
-            music_share_held[CHASM_MUSIC_CLOUDS] = music_share[CHASM_MUSIC_CLOUDS];
-            music_share_held[CHASM_MUSIC_CHASM] = music_share[CHASM_MUSIC_CHASM];
+            std::copy(music_share,music_share + CHASM_MUSIC_PLAYERS,music_share_held);
         }
         f_music_shares_held = f_shares;
     }
     if (f_music_shares_held){
-        ImGui::SliderFloat("clouds##musicshare",&music_share_held[CHASM_MUSIC_CLOUDS],0.0f,1.0f,"%.2f");
-        ImGui::SliderFloat("chasm##musicshare",&music_share_held[CHASM_MUSIC_CHASM],0.0f,1.0f,"%.2f");
+        for (int i = CHASM_MUSIC_CLOUDS; i < CHASM_MUSIC_PLAYERS; i++){
+            char label[32];
+            snprintf(label,sizeof(label),"%s##musicshare",PlayerName(i));
+            ImGui::SliderFloat(label,&music_share_held[i],0.0f,1.0f,"%.2f");
+        }
     }
     bool f_mood = music_mood_held[0] >= 0.0f || music_mood_held[1] >= 0.0f;
     MusicParams p = music[CHASM_MUSIC_LAND]->GetParams();

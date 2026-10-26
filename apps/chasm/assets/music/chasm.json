@@ -12,7 +12,9 @@
         "theme":    "1 - 2 3 | 5 - 6 5 | 3 - 2 1 | 2 - 1 -",
         "fragment": "1 - 2 - | 1 - - - | . . 5, - | - -",
         "call":     "1 - - - | 5 - - - | 2' - - - | - - - -",
-        "pick":     "1, 5, 1 3 5 3 1 5, | 1, 5, 2 3 5 - - -"
+        "pick":     "1, 5, 1 3 5 3 1 5, | 1, 5, 2 3 5 - - -",
+        "taqsim":   "1 - 7, 6, 5, - 6, 5, | 4, 3, 2, 3, 2, - 1, - | - - . . 3, 4, 5, 4, | 3, 2, 1, - - - - -",
+        "caravan":  "1 5 . 5 1 . 5 . | 1 5 . 5 1 . 5 . | 1 5 . 5 1 . 5 . | 1 . 5 5 1 . . ."
     },
 
     "sections": [
@@ -199,6 +201,43 @@
             "motifs": [
                 {"name": "call", "phrase": "call", "sample": "music/sounds/hang_G4.ogg", "root": "G4", "home": "D4",
                  "ring": true, "gain": 0.55, "every_bars": 8, "chance_calm": 0.5, "chance_tense": 0.4, "spread": 0.9}
+            ]
+        },
+        {
+            "name": "desert",
+            "rotation": false,
+            "mode": "phrygian_dominant",
+            "beds": [
+                {"name": "sand wind",  "sample": "music/sounds/desert_wind.ogg",   "gain_calm": 0.60, "gain_tense": 0.75},
+                {"name": "low wind",   "sample": "music/sounds/low_bass_wind.ogg", "gain_calm": 0.20, "gain_tense": 0.28},
+                {"name": "drone",      "sample": "music/sounds/synth_bass_A1.ogg", "gain_calm": 0.12, "gain_tense": 0.16, "root": "A1", "degree": 0, "fade_s": 3},
+                {"name": "buried",     "sample": "music/sounds/rumble_G2.ogg",     "gain_calm": 0.00, "gain_tense": 0.18, "root": "G2", "degree": 0, "fade_s": 4}
+            ],
+            "voices": [
+                {"name": "oud",        "sample": "music/sounds/oud_G2.ogg",            "root": "G2",  "low": "D2", "high": "D3",
+                 "density_calm": 0.14, "density_tense": 0.08, "gain": 0.16, "spread": 0.2, "offbeat": 0.3},
+                {"name": "sitar",      "sample": "music/sounds/sitar_A4.ogg",          "root": "A4",  "low": "D4", "high": "A4",
+                 "density_calm": 0.04, "density_tense": 0.02, "gain": 0.50, "spread": 0.6, "offbeat": 0.5},
+                {"name": "dum",        "sample": "music/sounds/frame_drum_Gs2.ogg",    "root": "G#2", "low": "D2", "high": "D2",
+                 "density_calm": 0.05, "density_tense": 0.10, "gain": 0.35, "spread": 0.1, "offbeat": 0.0},
+                {"name": "riq",        "sample": "music/sounds/tambourine.ogg",        "unpitched": true,
+                 "density_calm": 0.08, "density_tense": 0.16, "gain": 0.35, "spread": 0.5, "offbeat": 0.6},
+                {"name": "riq ring",   "sample": "music/sounds/tambourine_bright.ogg", "unpitched": true,
+                 "density_calm": 0.03, "density_tense": 0.06, "gain": 0.25, "spread": 0.6, "offbeat": 0.3},
+                {"name": "riq slap",   "sample": "music/sounds/tambourine_hit.ogg",    "unpitched": true,
+                 "density_calm": 0.03, "density_tense": 0.05, "gain": 0.35, "spread": 0.4, "offbeat": 0.0},
+                {"name": "rattle",     "sample": "music/sounds/snake_rattle.ogg",      "unpitched": true,
+                 "density_calm": 0.0, "density_tense": 0.03, "gain": 0.12, "spread": 0.9},
+                {"name": "hiss",       "sample": "music/sounds/snake_hiss.ogg",        "unpitched": true,
+                 "density_calm": 0.004, "density_tense": 0.03, "gain": 1.70, "spread": 0.9}
+            ],
+            "motifs": [
+                {"name": "theme", "phrase": "theme", "sample": "music/sounds/sitar_A4.ogg", "root": "A4", "home": "D4",
+                 "ring": true, "step_beats": 0.5, "gain": 1.00, "every_bars": 8, "chance_calm": 0.6, "chance_tense": 0.3, "spread": 0.2},
+                {"name": "taqsim", "phrase": "taqsim", "sample": "music/sounds/oud_A2.ogg", "root": "A2", "home": "D3",
+                 "ring": true, "step_beats": 0.5, "gain": 0.55, "every_bars": 4, "chance_calm": 0.35, "chance_tense": 0.2, "spread": 0.1},
+                {"name": "caravan", "phrase": "caravan", "sample": "music/sounds/frame_drum_Gs2.ogg", "root": "G#2", "home": "D2",
+                 "ring": true, "step_beats": 0.5, "gain": 0.30, "every_bars": 8, "chance_calm": 0.3, "chance_tense": 0.6, "spread": 0.2}
             ]
         }
     ],

@@ -369,6 +369,7 @@ enum ZoneOp{
     ZONE_OP_TERRACE_RAISE,  //plot: its terrace site is built - the builders'
     ZONE_OP_DOCK_PAINT,     //coarse cell: join the stroke's zeppelin dock, or start one (steam_plan.md step 5) - erased as a field
     ZONE_OP_TOWER_STONE,    //plot: its guard tower of stone (value[1] 1, or 2-4 for that many storeys) or of wood (0) - debug only, for now (castle_plan.md)
+    ZONE_OP_PORTCULLIS,     //plot: a castle gate's portcullis down (value[1] 1) or up (0) - its doors are ZONE_OP_GATE_SHUT's (castle_plan.md)
     ZONE_OP_COUNT
 };
 //Whether an op names a coarse cell (a field's, a range's or a dock's) rather than a plot.
@@ -435,6 +436,7 @@ struct ZoneState{
     std::vector<uint8_t> ground_built;          //per fine vertex: 0 for a garden, lot, road or wall still a site
     std::vector<uint32_t> line;                 //per fine vertex: a road's or wall's line - its place in the queue, 0 none
     std::vector<uint8_t> gate;                  //per fine vertex: on a road plot a wall runs through, its door (ZONE_GATE_*)
+    std::vector<uint8_t> portcullis;            //...and a castle gate's portcullis: 1 down (castle_plan.md)
     std::vector<uint32_t> ground_owner;         //per fine vertex: the building a garden or lot is the yard of, 0 nobody (ZoneGroundOwner)
     std::vector<uint32_t> field;                //per coarse quad: the field - or range (ZoneKindOnCells) - it is part of, 0 none
     std::vector<uint8_t> field_built;           //per coarse quad: 0 for a field's cell still a site
@@ -453,6 +455,7 @@ struct ZoneState{
     std::vector<uint8_t> castle;                //per fine vertex: the DEBUG CASTLE's piece on it (ZoneCastlePiece), 0 none
     std::vector<uint8_t> castle_over;           //...and the piece over that one (ZoneCastlePiece): an arch, or a stair on an arch
     std::vector<int8_t> castle_base;            //...and the LEVEL both stand on, in whole storeys (ZoneCastleBase)
+    std::vector<int32_t> castle_up;             //...and its stair's, the stair it climbs to: -1 its decks' (ZoneStairUp)
     std::vector<int8_t> terrace;                //per fine vertex: a TERRACE's top in storeys (ZoneTerraceTop), ZONE_NO_TERRACE none
     std::vector<uint8_t> terrace_built;         //...0 while it is a site (terraces_plan.md stage 2)
     //The drag in progress: its stroke number and the building it is making (0: none yet).
@@ -464,9 +467,13 @@ struct ZoneState{
     */
     uint32_t line_stroke = 0;
     uint32_t line_id = 0;
-    //The castle drag in progress (ZoneCastleLevelFor): its stroke and the level its first piece took - not saved.
+    //The castle drag in progress (ZoneCastleLevelFor): its stroke and the level its first piece took - not saved. A
+    //stair's drag (ZonePlanStair) its last plot besides - the piece it started from, until it paints one - and whether
+    //it climbs from the ground.
     uint32_t castle_stroke = 0;
     int castle_stroke_base = 0;
+    int castle_stroke_last = -1;
+    bool f_castle_stroke_climb = false;
     std::vector<uint32_t> chunk_version;        //per terrain chunk: bumped when its zones change
     uint32_t version = 0;
     int built_plots = 0;
@@ -542,6 +549,8 @@ struct ZoneSavedCastle{
     int plot = 0;
     int piece = 0;
     int base = ZONE_CASTLE_NO_BASE;             //storeys (ZoneCastleBase)
+    bool f_portcullis = false;                  //a gate's portcullis down (castle_plan.md)
+    int up = -1;                                //a stair's: the stair it climbs to (ZoneStairUp)
 };
 
 class Zones{
@@ -607,6 +616,9 @@ private:
     uint32_t NewBuilding(int kind);
     void SplitAfterRemoval(uint32_t id, int removed, bool f_field);
     void SettlePriorities();
+    //The stairs' forms (ZoneStairForm) worked out again on plot v and round it - every one, with v -1 - and the cells of
+    //any that changed touched.
+    void RefreshStairs(int v);
     /*
         ZoneState::arch and arch_owner worked out again over every road plot - after a command, a load, a new map -
         and arch_built kept to what may stand. `f_stand`: a debug placement's, where what it makes stands at once -
@@ -798,14 +810,19 @@ int BuildingFootHalves(const ChasmWorld& w, const ZoneState& z, int kind, int pl
     A STEP between neighbouring plots a and b, as far as terraces go (terraces_plan.md stage 2): open - no terrace, or one
     meeting the ground across at about its height (the hill above it); a WALL - a terrace standing more than
     ZONE_TERRACE_STEP over the ground across, its retaining wall, which no one walks; or a STAIR - such a wall, up to a
-    storey, between two roads that stand: a stepped street; or a DOOR - such a wall with a building against its foot
-    whose upper door opens onto the terrace (ZoneUpperDoor). The walkers' edges and their straight walks ask it alike.
+    storey, between two roads: a stepped street, BUILT FROM BELOW - it stands once the road at its foot is laid, the road
+    above it planned or laid, so its steps are how the road on the terrace is reached to be laid; or a DOOR - such a wall
+    with a building against its foot whose upper door opens onto the terrace (ZoneUpperDoor). The walkers' edges and their
+    straight walks ask it alike.
 */
 #define ZONE_STEP_OPEN          0
 #define ZONE_STEP_WALL          1
 #define ZONE_STEP_STAIR         2
 #define ZONE_STEP_DOOR          3
 int ZoneTerraceStep(const ChasmWorld& w, const ZoneState& z, int a, int b);
+//A terrace's wall between a and b too tall for a road's steps - more than a storey: a road is refused across it
+//(ZoneCanGround), since it would be laid and never walked there.
+bool ZoneTerraceTooTall(const ChasmWorld& w, const ZoneState& z, int a, int b);
 /*
     AN UPPER DOOR (terraces_plan.md stage 3, the user's 2026-10-23): a building on plot `b` standing against the wall of a
     terrace on plot `u` opens onto it on the storey whose floor meets the terrace's top - level with it, or half a storey
@@ -856,8 +873,8 @@ ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell);
     door a doorway at the foot of the side the ladder would stand on. Debug only for now (ZONE_OP_TOWER_STONE).
     In a CASTLE's geometry (castle_plan.md, the user's 2026-10-25): its plot's whole tile, on a castle LEVEL
     (ZoneTowerLevel), 2 to 4 storeys over it, a floor at every storey - a castle deck beside it meeting one goes in by a
-    doorway there (Walkers.h, WalkJoin) - and drawn with the castle (CastleMesh.h). On a plot of three cells its top is
-    crenellated, every other's the guard room under its roof.
+    doorway there (Walkers.h, WalkJoin) - and drawn with the castle (CastleMesh.h). On a plot of four cells its top is
+    the guard room under its roof, every other's crenellated.
 */
 #define ZONE_TOWER_INSET        0.6f    //its walls' corners, this much of the way to the cells' middles
 #define ZONE_TOWER_STAND        0.5f    //a guard's place, this much of the way from its middle to a corner
@@ -887,7 +904,8 @@ inline bool ZoneTowerStone(const ZoneState& z, int plot){
 //first piece painted on its plot would take (ZoneCastleLevelFor) - so beside a wall on the same ground its floors are
 //the wall-walk's, and on other ground a wall-walk still meets one of them, whole storeys apart.
 int ZoneTowerLevel(const ChasmWorld& w, const ZoneState& z, int plot);
-//Whether a stone tower's top is CRENELLATED (castle_plan.md): on a plot of three cells. Every other has a roof.
+//Whether a stone tower's top is CRENELLATED (castle_plan.md): on a plot of three, five or six cells - any but four,
+//which has a roof.
 bool ZoneTowerCrenellated(const ChasmWorld& w, int plot);
 //The most storeys the building on `plot` may have: its kind's, but a stone tower's ZONE_STONE_TOWER_MOST.
 int ZoneBuildingMaxStoreys(const ZoneState& z, int plot);
@@ -1017,9 +1035,17 @@ inline bool ZoneWallStands(const ZoneState& z, int v){
 inline bool ZoneWallPlanned(const ZoneState& z, int v){
     return z.ground[v] == ZONE_GROUND_WALL && !z.ground_built[v];
 }
-//A gate with its door SHUT (defence_plan.md).
+//A gate SHUT (defence_plan.md): its door - or a castle gate's portcullis down (castle_plan.md), either stops everyone.
 inline bool ZoneGateShut(const ZoneState& z, int v){
+    return z.gate[v] == ZONE_GATE_SHUT || (v >= 0 && v < (int)z.portcullis.size() && z.portcullis[v]);
+}
+//...its door alone, a castle gate's doors: what the gate's door chips and the save say.
+inline bool ZoneGateDoorShut(const ZoneState& z, int v){
     return z.gate[v] == ZONE_GATE_SHUT;
+}
+//...a castle gate's portcullis, down.
+inline bool ZonePortcullisDown(const ZoneState& z, int v){
+    return v >= 0 && v < (int)z.portcullis.size() && z.portcullis[v];
 }
 
 /*
@@ -1030,24 +1056,36 @@ inline bool ZoneGateShut(const ZoneState& z, int v){
       - BLOCK: solid stone, a deck on top. Its ground shut.
       - ARCH: a deck on pillars over an open passage - a road runs on under it. Two storeys at least, so it clears a
         gate's posts.
-      - STAIR: rises a storey to its height, from the one below - from the ground, for a first storey. Its ground
+      - STAIR (castle_plan.md "The stairs", the user's 2026-10-26): laid by a DRAG, which gives it its way - down from a
+        deck a storey a plot, or up from the ground - and painted as one piece that takes one of three FORMS from what is
+        round it (ZoneStairForm), kept as its shape: a FLIGHT (STAIR) rising one storey to its height, straight across
+        its plot; a LANDING, flat at its height, where the way turns; an open TURRET, a spiral round a core, where it
+        has to climb more than a storey from the ground. Each knows the stair it climbs to (`castle_up`). Its ground
         shut: the stair is the way.
+      - GATE (castle_plan.md, the user's 2026-10-26): where a road goes through a wall - a block dragged over a road,
+        or a road painted through a block, two storeys or more; one storey leaves the road open. Its passage is a
+        two-storey wall's whatever its height, open toward the road, and it is a gate (ZoneState::gate, its DOORS) with
+        a PORTCULLIS besides (ZoneState::portcullis), each shut on its own. Never over or under another piece.
     And a piece OVER the plot's piece (`castle_over`, the user's, 2026-10-10), painted on it:
       - an ARCH at least ZONE_CASTLE_HEADROOM storeys over the piece's top, its pillars standing on it - a second
         deck on the plot, so a wall-walk passes under another;
-      - a STAIR ON AN ARCH, a storey over it: it rises from the arch's top to its own, over the open passage, and
-        covers the arch's deck - so a stair climbs over a road that runs on under it.
-    A piece painted where one stands goes on it when it is one of those, and takes its place when not; a piece under
-    another is only ever swapped for one that still carries it. Taken off from the top down.
+      - a STAIR ON AN ARCH, a storey over it - a flight a stair's drag lays there: it rises from the arch's top to its
+        own, over the open passage, and covers the arch's deck - so a stair climbs over a road that runs on under it.
+    A piece painted where one stands goes on it when it is one of those, and takes its place when not - but a stair
+    never takes another piece's place; a piece under another is only ever swapped for one that still carries it.
+    Taken off from the top down - and a stair from its foot up.
     Their decks are walked by the posted only (Walkers.h, LAYERS).
 */
 #define ZONE_CASTLE_NONE        0
 #define ZONE_CASTLE_BLOCK       1
 #define ZONE_CASTLE_ARCH        2
-#define ZONE_CASTLE_STAIR       3
-#define ZONE_CASTLE_SHAPES      4
+#define ZONE_CASTLE_STAIR       3       //a stair's FLIGHT; painted, the stair whatever its form
+#define ZONE_CASTLE_GATE        4
+#define ZONE_CASTLE_LANDING     5       //a stair's form: flat at its top, where its way turns
+#define ZONE_CASTLE_TURRET      6       //...an open spiral, climbing from the ground more than a storey
+#define ZONE_CASTLE_SHAPES      7
 #define ZONE_CASTLE_MAX_STOREYS 4
-#define ZONE_CASTLE_ARCH_LOWEST 2
+#define ZONE_CASTLE_ARCH_LOWEST 2       //an arch's storeys at least, and a gate's: its passage clears a gate's posts
 #define ZONE_CASTLE_HEADROOM    2       //storeys from a piece's top to an arch over it: a walker under it clears its slab
 //How far a piece may stand INTO its ground (ZoneCastleLevelFor): the plateau lies a few centimetres either side of a
 //whole storey, and rounding those up lifted a one-storey wall on flat ground to two. Its walls go on down to the ground.
@@ -1076,10 +1114,27 @@ inline int ZoneCastleLayer(const ZoneState& z, int v){
     int storeys = ZoneCastleStoreys(z,v);
     return (shape == ZONE_CASTLE_NONE) ? 0 : (shape == ZONE_CASTLE_STAIR) ? 2 * storeys - 1 : 2 * storeys;
 }
+//Whether a shape is one of a stair's forms: a flight, a landing or a turret.
+inline bool ZoneCastleStairForm(int shape){
+    return shape == ZONE_CASTLE_STAIR || shape == ZONE_CASTLE_LANDING || shape == ZONE_CASTLE_TURRET;
+}
 //Whether its ground is shut to walkers: a block's or a stair's.
 inline bool ZoneCastleShuts(const ZoneState& z, int v){
     int shape = ZoneCastleShape(z,v);
-    return shape == ZONE_CASTLE_BLOCK || shape == ZONE_CASTLE_STAIR;
+    return shape == ZONE_CASTLE_BLOCK || ZoneCastleStairForm(shape);
+}
+//Whether it is a castle's GATE, its road through the wall.
+inline bool ZoneCastleGate(const ZoneState& z, int v){
+    return ZoneCastleShape(z,v) == ZONE_CASTLE_GATE;
+}
+//Whether the edge between neighbours a and b passes a castle gate's wall: into a gate and out of it only along its road -
+//from a road plot, or the next plot of a gate two plots wide - so nobody walks through the wall beside its passage. The
+//walkers' edges, the straight walks and the gate's arches (CastleMesh.cpp) ask it alike.
+inline bool ZoneCastleGateWay(const ZoneState& z, int a, int b){
+    auto way = [&](int u){
+        return z.ground[u] == ZONE_GROUND_ROAD || ZoneCastleGate(z,u);
+    };
+    return (!ZoneCastleGate(z,a) || way(b)) && (!ZoneCastleGate(z,b) || way(a));
 }
 //The piece over its piece (`castle_over`): its shape and storeys, NONE and 0 with none.
 inline int ZoneCastleOverShape(const ZoneState& z, int v){
@@ -1098,6 +1153,61 @@ inline int ZoneCastleOverLayer(const ZoneState& z, int v){
 inline bool ZoneCastleOverSits(const ZoneState& z, int v){
     return ZoneCastleOverShape(z,v) == ZONE_CASTLE_STAIR;
 }
+/*
+    THE STAIRS (castle_plan.md "The stairs"). A plot's stair is its piece in one of a stair's forms, or a flight over an
+    arch. Its TOP is in whole storeys from y = 0, its level's and its storeys; the stair it CLIMBS TO is `castle_up` - -1
+    for one climbing to the decks beside it, or to nothing - and the stairs BELOW it are those that climb to it.
+*/
+inline bool ZoneHasStair(const ZoneState& z, int v){
+    return ZoneCastleStairForm(ZoneCastleShape(z,v)) || ZoneCastleOverSits(z,v);
+}
+inline int ZoneStairTop(const ZoneState& z, int v){
+    return ZoneCastleBase(z,v) + (ZoneCastleOverSits(z,v) ? ZoneCastleOverStoreys(z,v) : ZoneCastleStoreys(z,v));
+}
+inline int ZoneStairUp(const ZoneState& z, int v){
+    return (v >= 0 && v < (int)z.castle_up.size()) ? z.castle_up[v] : -1;
+}
+//The stairs below plot v's - its neighbours that climb to it - into `out`, at most `max`. Returns how many.
+int ZoneStairDowns(const ChasmWorld& w, const ZoneState& z, int v, int* out, int max);
+//Whether a stair's way goes STRAIGHT ON from direction a to direction b, rather than turning: within this much (cosine).
+#define ZONE_STAIR_STRAIGHT     0.64f
+//A neighbour more than this much along a stair's way up (cosine) is up it, as much the other way down it; between, its
+//flank, which it never joins.
+#define ZONE_STAIR_SIDE         0.3f
+//The way up plot v's stair, in the plane: toward the stair it climbs to; else the decks its top meets beside it; else
+//on from the stairs below it. (0,0) for a stair alone in the open.
+vec2 ZoneStairUpDir(const ChasmWorld& w, const ZoneState& z, int v);
+//Whether a neighbour of plot v, on the side away from `up`, has a flat walkable node `halves` high (WalkNodeHalves) -
+//ground or a deck, for a stair's foot to come down onto.
+bool ZoneStairFootMeets(const ChasmWorld& w, const ZoneState& z, int v, const vec2& up, int halves);
+/*
+    The FORM plot v's stair takes (its piece's - a flight over an arch is always one): a LANDING where a stair below it
+    starts at its own top; a FLIGHT where one starts a storey under it, or with none below, where its far side has ground
+    or a deck a storey under its top; else, two storeys or more over its level with nothing to come down onto, an open
+    TURRET down to the ground.
+*/
+int ZoneStairForm(const ChasmWorld& w, const ZoneState& z, int v);
+/*
+    What painting a stair on `plot` as part of drag `stroke` does (castle_plan.md "The stairs"): the drag's first plot
+    pressed on a stair, a castle piece or a stone tower only STARTS it there, from its deck; on open ground, it comes
+    down from the highest flat deck beside it, or with none climbs a storey from the ground. Each plot after goes on
+    from the last - a storey down going straight on, or up for a drag climbing from the ground, the same height where
+    it turns, the plot it turns at a LANDING. Never in another piece's place - but over an arch a storey under it.
+*/
+struct ZoneStairStep{
+    const char* why = NULL;     //refused: why
+    bool f_quiet = false;       //nothing to do and nothing to say: still on the drag's last plot, or back over its stair
+    int start = -1;             //the drag starts from this plot's deck, nothing painted
+    int storeys = 0;            //the stair painted on `plot`: its storeys over...
+    int base = 0;               //...its level...
+    int up = -1;                //...the stair it climbs to...
+    bool f_over = false;        //...and whether it stands over an arch there
+    bool f_climb = false;       //the drag climbs from the ground
+    int relink = -1;            //climbing: the drag's last plot, which now climbs to this one...
+    int landing = -1;           //...made a landing: its storeys from now
+    int landing_storeys = 0;
+};
+bool ZonePlanStair(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t stroke, ZoneStairStep& out);
 const char* ZoneCastleShapeName(int shape);
 int ZoneCastleShapeByName(const std::string& name);    //-1 for none
 //Whether painting a piece on `plot` puts it OVER the one there - an arch with headroom over it, or a stair a storey

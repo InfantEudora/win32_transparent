@@ -1000,7 +1000,8 @@ void ApplicationChasm::RegisterTitleTools(){
                 {"z",{{"type","number"}}},
                 {"item",{{"type","integer"}}},
                 {"triggers",{{"type","object"},{"description","debug builds, with any op: what play mode tells and stops for, "
-                                                             "switched - winter and chasm (the goals' notices), death (its pop-up), "
+                                                             "switched - winter, chasm, archer, swamp and wave (the goals' rows and "
+                                                             "notices), death (its pop-up), "
                                                              "colony_lost and demo_complete (their pages), true on and false off. "
                                                              "The viewer's: never recorded or saved; the rules journal every goal "
                                                              "and end either way. `triggers` in the reply says how each stands"}}},
@@ -1019,7 +1020,8 @@ void ApplicationChasm::RegisterTitleTools(){
                         found = (it.key() == TriggerName(t)) ? t : found;
                     }
                     if (found < 0 || !it.value().is_boolean()){
-                        return json{{"error","triggers: winter, chasm, death, colony_lost or demo_complete, each true or false"}};
+                        return json{{"error","triggers: winter, chasm, archer, swamp, wave, death, colony_lost or demo_complete, "
+                                             "each true or false"}};
                     }
                     SetTrigger(found,it.value().get<bool>());
                 }
@@ -1140,7 +1142,7 @@ void ApplicationChasm::RegisterTitleTools(){
                     int st = ChasmGoalState(g,*ge,*gd);
                     goals.push_back(json{{"goal",ChasmGoalTitle(g)},{"state",states[st]},
                                          {"next",(st == CHASM_GOAL_GOING) ? ChasmGoalNext(g,*ge,*gd) : std::string()},
-                                         {"told",gd->goal_told[g] >= 0}});
+                                         {"told",gd->goal_told[g] >= 0},{"shown",ChasmGoalShown(g,*gd)}});
                 }
                 result["goals"] = goals;
                 result["demo_complete"] = gd->f_complete_told;

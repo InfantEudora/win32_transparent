@@ -145,6 +145,7 @@ int SurfaceLayer(const ChasmWorld& w, const ZoneState& z, int plot, const vec3& 
 #define OVERLAY_HIT_ZEPPELIN_OFF 35     //a zeppelin's card: everyone aboard ordered off onto its landing (flight_plan.md step 2)
 #define OVERLAY_HIT_ZEPPELIN_LOAD 36    //...its load list: good `value` / 1000 to have `value` % 1000 loaded (step 3)
 #define OVERLAY_HIT_ZEPPELIN_UNLOAD 37  //...its cargo unloaded (step 3)
+#define OVERLAY_HIT_PORTCULLIS  38      //a castle gate's card: its portcullis let down (1) or raised (0) (castle_plan.md)
 struct OverlayHit{
     vec2 a, b;
     int action = OVERLAY_HIT_BLOCK;
@@ -193,19 +194,22 @@ void ChasmIssues(const ZoneState& z, const EconomyState& e, std::vector<ChasmIss
 /*
     THE DEMO'S GOALS (demo_plan.md step 7; ApplicationChasmGoals.cpp), CHASM_GOAL_* in Economy.h: each in progress, met or
     failed. Told once each by the rules as an event, and read back from the journal with the discoveries, so a load
-    does not tell one again; and the END, the demo complete or the colony lost, the same way.
+    does not tell one again; and the END, the demo complete or the colony lost, the same way. The first two are there
+    from the landing; the others APPEAR (swamp_huts_plan.md step 2), each told as EVENT_GOAL_SET.
 */
 #define CHASM_GOAL_GOING        0
 #define CHASM_GOAL_MET          1
 #define CHASM_GOAL_FAILED       2
 #define CHASM_END_NONE          0
-#define CHASM_END_COMPLETE      1       //both goals decided: the end's page, Keep playing or Main menu
+#define CHASM_END_COMPLETE      1       //every goal in play decided: the end's page, Keep playing or Main menu
 #define CHASM_END_LOST          2       //nobody left: the end's page, Load, New game or Main menu
 struct ChasmDiscoveries{
     uint32_t mask = 0;                          //a bit per DISCOVERY_*
     int64_t tick[DISCOVERY_COUNT];              //when it was made - the history's start for the landing's - or -1
     uint32_t person[DISCOVERY_COUNT] = {};      //who made it, 0 nobody in particular
     int goal_told[CHASM_GOALS];                 //a goal as the journal has it told, CHASM_GOAL_MET or _FAILED - or -1
+    bool goal_set[CHASM_GOALS] = {};            //...and appeared: told as EVENT_GOAL_SET, or there from the landing
+    bool f_swamp_seen = false;                  //the swamp found (EVENT_DISCOVERED), or in sight at the landing
     bool f_complete_told = false;               //EVENT_DEMO_COMPLETE in the journal
     bool f_lost_told = false;                   //EVENT_COLONY_LOST
     ChasmDiscoveries(){
@@ -223,6 +227,10 @@ std::string ChasmDiscoveryTools(int discovery); //what it brings, as the build b
 //A goal's state (CHASM_GOAL_GOING ...), from the state and the discoveries; and what one in progress wants next.
 int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d);
 std::string ChasmGoalNext(int goal, const EconomyState& e, const ChasmDiscoveries& d);
+//Whether a goal has appeared: the first two from the landing, the rest once told (EVENT_GOAL_SET).
+inline bool ChasmGoalShown(int goal, const ChasmDiscoveries& d){
+    return goal == CHASM_GOAL_WINTER || goal == CHASM_GOAL_CHASM || (goal >= 0 && goal < CHASM_GOALS && d.goal_set[goal]);
+}
 //The middle of a building's plots, or of a field's cells - where the view goes to show it. False if it is gone.
 bool ChasmBuildingPoint(const ChasmWorld& w, const ZoneState& z, uint32_t id, vec2& out);
 /*
@@ -633,6 +641,9 @@ private:
         stroke after it is never mistaken for the one the save was in the middle of.
     */
     uint32_t paint_stroke = 0;
+    //...and while a castle drag is held, its stroke, for the view to show where a stair's drag goes next (castle_plan.md
+    //"The stairs"); 0 none. Any thread.
+    std::atomic<uint32_t> castle_drag_stroke{0};
     /*
         A building tool pressed on a building: its storey waits for the release, since only then is it known
         to be a click and not the start of a drag - which used to add a floor to the plot it started on. -1
@@ -1346,6 +1357,12 @@ private:
     static int MinePropsAt(const ChasmWorld& w, int plot, MineProp out[2]);
     //...their triangles into `out`, where they stand: the ghost and the selection's outline (a mine has no body). Render thread.
     void AppendMineProps(const ChasmWorld& w, int plot, std::vector<vertex>& out);
+    //...and the standing mine whose props a ray meets first, by each model's box where it stands: 0 for none, else how far
+    //along the ray and on which plot. What a pick over a portal finds (PlayPickUnder). With the simulation held still.
+    uint32_t MineAlongRay(const ChasmWorld& w, const ZoneState& z, const ray& r, float* along, int* plot_out) const;
+    vec3 mine_box_lo[MINE_PROPS];                       //each prop's model's box, taken as its set is made (UploadMines)
+    vec3 mine_box_hi[MINE_PROPS];
+    bool f_mine_box[MINE_PROPS] = {};
     /*
         The archery ranges (ApplicationChasmRange.cpp, range_plan.md): targets, hay bales and arrows, an instance
         set each - chasm_props.glb's prop by its name in range_asset_names, or a stand-in until it is modelled.
@@ -1946,6 +1963,8 @@ private:
     std::chrono::steady_clock::time_point menu_note_at;
     std::string colony_name;                    //the start's name, or "Seed N": what the colony's saves are titled by
     std::string colony_save;                    //the save it came from, loaded or saved by name: SAVE names it; "" none
+    std::string colony_version;                 //the game's version it was started in, which its saves keep (ChasmSave.h)
+    std::vector<std::string> screen_notes;      //by the list's item: an older save's line under LOAD, "" none (BuildScreen)
     std::atomic<bool> f_game_on{true};          //a colony in play: Continue goes back to it, and leaving it autosaves
     int autosave_season = -1;                   //physics thread: year * 4 + season of the last pass, so a dawn is seen
     void OpenPause();                           //physics thread
@@ -2075,7 +2094,7 @@ private:
         return t < 0 || t >= CHASM_TRIGGERS || !(triggers_off.load() & (1u << t));
     }
     void SetTrigger(int t, bool f_on);
-    static const char* TriggerName(int t);      //chasm_menu's: winter, chasm, death, colony_lost, demo_complete
+    static const char* TriggerName(int t);      //chasm_menu's: winter, chasm, archer, swamp, wave, death, colony_lost, demo_complete
     void RenderGoalsPanel();                    //debug builds: the goals and the ends, each with its switch
 #ifdef USE_MCP
     void RegisterStatsTools();
@@ -2221,24 +2240,26 @@ private:
     void SignalVoice();
     /*
         THE MUSIC (ApplicationChasmMusic.cpp; areas_plan.md, "The music"): the score apps/music designs and publishes
-        (assets/music/chasm.json), on three players - the LAND in the season's section, and the CLOUDS and the CHASM
-        sections as layers over it, each faded in by how much of the view is unexplored ground or seen chasm. Raw
-        pointers, as `soundsystem` is: they live as long as the app, and only a USE_SOUND build makes them.
+        (assets/music/chasm.json), on four players - the LAND in the season's section, and the CLOUDS, the CHASM and
+        the DESERT sections as layers over it, each faded in by how much of the view is unexplored ground, seen chasm
+        or seen desert. Raw pointers, as `soundsystem` is: they live as long as the app, and only a USE_SOUND build
+        makes them.
     */
 #define CHASM_MUSIC_LAND    0
 #define CHASM_MUSIC_CLOUDS  1
 #define CHASM_MUSIC_CHASM   2
-#define CHASM_MUSIC_PLAYERS 3
+#define CHASM_MUSIC_DESERT  3
+#define CHASM_MUSIC_PLAYERS 4
     std::shared_ptr<MusicScore> music_score;
     MusicPlayer* music[CHASM_MUSIC_PLAYERS] = {};
     int music_bus = -1;                         //under the master, beside the table's layer: the settings' music volume
-    int music_buses[CHASM_MUSIC_PLAYERS] = {-1,-1,-1};
+    int music_buses[CHASM_MUSIC_PLAYERS] = {-1,-1,-1,-1};
     std::string music_season;                   //the section the land was last sent to
-    float music_share[CHASM_MUSIC_PLAYERS] = {}; //the view's share of unexplored ground and of seen chasm, as measured...
+    float music_share[CHASM_MUSIC_PLAYERS] = {}; //the view's share of unexplored ground, seen chasm and seen desert...
     float music_layer[CHASM_MUSIC_PLAYERS] = {}; //...and each player's level, eased toward what the shares make it
     int music_quiet[CHASM_MUSIC_PLAYERS] = {};  //passes a layer has been silent, to pause its engine
     bool f_music_held[CHASM_MUSIC_PLAYERS] = {};
-    //Per exploration cell: 0 off the land, 1 ground, 2 the chasm - from the areas, once a map.
+    //Per exploration cell, MUSIC_CELL_* bits from the areas, once a map: 0 off the land.
     std::vector<uint8_t> music_cells;
     const ChasmWorld* music_cells_world = nullptr;
     /*

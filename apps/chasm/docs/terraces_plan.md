@@ -209,7 +209,8 @@ houses on two of them).
 
 Open, for the user:
 - **A road over a wall taller than a storey** is laid but not walked there: drawn up to the wall from both sides, which
-  reads as broken. Refusing the road plot, or a longer stair, are the two ways out.
+  reads as broken. Refusing the road plot, or a longer stair, are the two ways out. (Decided 2026-10-26: refused - see
+  "Steps built from below", below.)
 - **Whole storeys on flat ground**: ground just over a whole storey gets nearly a storey of fill (seen at the first
   colony: ground at 0.05 under a top of 1.3). On a hill it hardly shows; on flat ground nobody needs a terrace.
 - Not yet terrace-aware: a terrace site's card (it cannot be picked as a garden's can), a crate's pick height
@@ -274,6 +275,37 @@ of a hill town join through the buildings, not only by stairs.
 - Found on the way: the test save's three terraces are **walled all round** - rounded up, nowhere does the hill meet
   them at about their top - so nothing reaches them on foot without a stair (the stage 2 test drew a road for it,
   not saved). A house with an upper door gives its own people a way up; everyone else still needs a stair.
+
+## Steps built from below (2026-10-26)
+
+The user, with a terrace of houses and gardens a storey up (`saves/gardens.json`): there was no way onto a terrace in
+play without laying a road there in debug. The stair rule was a deadlock: a road across a terrace's wall became steps
+only once BOTH its plots were laid (`ZoneTerraceStep`), and a road plot is laid by someone walking onto it - so the one
+on the terrace could never be reached, and nothing walked onto a terrace without the steps. Debug paint lays both at
+once, which is why stage 2's test never met it. Seen in a copy of `gardens.json`: a road painted in play from the
+ground up onto the terrace's edge, the plot above still staked out 24,000 ticks later, its step still a wall, and the
+house on the terrace listed HOUSE SHUT IN.
+
+Agreed with the user the same day, and built:
+
+- **The steps are the lower road's.** They are already drawn on the lower plot's side (`RoadStairs`); now they stand with
+  it: a STAIR once the road at the wall's foot is laid and the plot above is a road, planned or laid. The road-layer
+  climbs them and lays the one on the terrace as any other; builders reach what is going up on it. The lower road draws
+  its way to the wall and up the steps before the one above is laid (`RoadNeighbours` joins a planned road its steps go
+  up to).
+- **A road across a wall taller than a storey is refused** (`ZoneCanGround`, `ZoneTerraceTooTall`): "steps climb a
+  storey at most - put a terrace a storey lower between". Either way round - the road below or the one above painted
+  second. A road along a tall wall's foot beside one along its top is refused alike: the road drawing joins any two road
+  plots side by side, so the two would read as broken just the same.
+- Nothing saved changes. A save that already holds a road over a tall wall loads as it is; the debug checks list it
+  (`RunZoneChecks`).
+- **Checked** (debug build, a test copy on 8771): in `gardens.json`, a garden plot on the terrace's edge erased and a
+  road painted in play from the plot below up onto it: the lower plot laid within 5,000 ticks, the step a stair at once,
+  the plot above laid by 6,000, and HOUSE SHUT IN gone - steps drawn up through a gap in the capstones. In
+  `terraces_test.json`, a road on a three-storey terrace's edge (plot 8439) and one painted on the plot 1.7 under it
+  (34442): refused with the message, in play and in debug.
+- **Left**: a longer stair for taller walls - a flight along the wall's face, a plot of run a storey - for later; the
+  castle's stairs (`castle_plan.md`, "The stairs") climb several storeys and may be the place to start.
 
 ## Open
 

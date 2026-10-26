@@ -42,6 +42,7 @@ const char* ZoneOpName(int op){
         case ZONE_OP_TERRACE_RAISE: return "terrace_raise";
         case ZONE_OP_DOCK_PAINT:    return "dock_paint";
         case ZONE_OP_TOWER_STONE:   return "tower_stone";
+        case ZONE_OP_PORTCULLIS:    return "portcullis";
         default:                   return "none";
     }
 }
@@ -871,7 +872,7 @@ int ZoneTowerLevel(const ChasmWorld& w, const ZoneState& z, int plot){
 }
 
 bool ZoneTowerCrenellated(const ChasmWorld& w, int plot){
-    return plot >= 0 && plot < (int)w.grid->fine.pos.size() && w.picker->PlotQuadCount(plot) == 3;
+    return plot >= 0 && plot < (int)w.grid->fine.pos.size() && w.picker->PlotQuadCount(plot) != 4;
 }
 
 int ZoneBuildingMaxStoreys(const ZoneState& z, int plot){
@@ -1670,9 +1671,28 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
         }
         return false;
     }
-    //The debug castle (ramparts_plan.md): a road runs on under an arch, nothing goes under anything else of it.
+    /*
+        Nor a road beside another across a terrace's wall taller than a storey (terraces_plan.md): a road's steps climb a
+        storey at most, so the two would be joined in the drawing and never walked - a road that read as broken.
+    */
+    if (kind == ZONE_GROUND_ROAD && !z.ground.empty() && !z.terrace.empty()){
+        int nb[8];
+        int n = ZonePlotNeighbours(w,plot,nb,8);
+        for (int i = 0; i < n; i++){
+            if (z.ground[nb[i]] == ZONE_GROUND_ROAD && ZoneTerraceTooTall(w,z,plot,nb[i])){
+                if (why){
+                    *why = "steps climb a storey at most - put a terrace a storey lower between";
+                }
+                return false;
+            }
+        }
+    }
+    //The debug castle (ramparts_plan.md): a road runs on under an arch, and through a gate - or through a wall, a block,
+    //which it makes a gate, or leaves a gap in (castle_plan.md); nothing goes under anything else of it.
     int castle = ZoneCastleShape(z,plot);
-    if (castle != ZONE_CASTLE_NONE && !(castle == ZONE_CASTLE_ARCH && kind == ZONE_GROUND_ROAD)){
+    bool f_through = castle == ZONE_CASTLE_ARCH || castle == ZONE_CASTLE_GATE
+                     || (castle == ZONE_CASTLE_BLOCK && ZoneCastleOverShape(z,plot) == ZONE_CASTLE_NONE);
+    if (castle != ZONE_CASTLE_NONE && !(f_through && kind == ZONE_GROUND_ROAD)){
         if (why){
             *why = "a castle piece stands there";
         }
@@ -1708,13 +1728,28 @@ int ZoneTerraceStep(const ChasmWorld& w, const ZoneState& z, int a, int b){
     if (!(f_a && ga - gb > ZONE_TERRACE_STEP) && !(f_b && gb - ga > ZONE_TERRACE_STEP)){
         return ZONE_STEP_OPEN;
     }
-    if (ZoneRoadStands(z,a) && ZoneRoadStands(z,b) && std::fabs(ga - gb) <= ZONE_STOREY_HEIGHT + 1e-3f){
+    /*
+        A STAIR, built from below (the user's, 2026-10-26): it stands with the road at the wall's foot, the road above it
+        only planned. Laid only once both roads stood, the one above could never be reached to be laid - its layer walks
+        onto the plot he lays, and nothing walked onto a terrace without a stair.
+    */
+    int low = (ga < gb) ? a : b;
+    int high = (low == a) ? b : a;
+    if (ZoneRoadStands(z,low) && z.ground[high] == ZONE_GROUND_ROAD && std::fabs(ga - gb) <= ZONE_STOREY_HEIGHT + 1e-3f){
         return ZONE_STEP_STAIR;
     }
     if (ZoneUpperDoor(w,z,a,b) >= 0 || ZoneUpperDoor(w,z,b,a) >= 0){
         return ZONE_STEP_DOOR;
     }
     return ZONE_STEP_WALL;
+}
+
+bool ZoneTerraceTooTall(const ChasmWorld& w, const ZoneState& z, int a, int b){
+    float ga = ZoneGroundAt(w,z,a);
+    float gb = ZoneGroundAt(w,z,b);
+    //A terrace's own wall: the higher of the two a terrace standing over the other - not the hill rising past one.
+    int high = (ga > gb) ? a : b;
+    return ZoneTerraceStands(z,high) && std::fabs(ga - gb) > ZONE_STOREY_HEIGHT + 1e-3f;
 }
 
 //ZoneUpperDoor's storey from building plot b, its floor `floor` half storeys up, onto plot u - before the one door a level.
@@ -1847,6 +1882,9 @@ const char* ZoneCastleShapeName(int shape){
         case ZONE_CASTLE_BLOCK: return "block";
         case ZONE_CASTLE_ARCH:  return "arch";
         case ZONE_CASTLE_STAIR: return "stair";
+        case ZONE_CASTLE_GATE:  return "gate";
+        case ZONE_CASTLE_LANDING:   return "landing";
+        case ZONE_CASTLE_TURRET:    return "turret";
         default:                return "none";
     }
 }
@@ -1862,6 +1900,9 @@ int ZoneCastleShapeByName(const std::string& name){
 
 bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys){
     int under = ZoneCastleShape(z,plot);
+    if (under == ZONE_CASTLE_GATE || shape == ZONE_CASTLE_GATE){
+        return false;       //a gate's passage is its own: nothing over it, and it over nothing
+    }
     if (shape == ZONE_CASTLE_ARCH){
         return under != ZONE_CASTLE_NONE && storeys >= ZoneCastleStoreys(z,plot) + ZONE_CASTLE_HEADROOM;
     }
@@ -1869,7 +1910,8 @@ bool ZoneCastleGoesOver(const ZoneState& z, int plot, int shape, int storeys){
 }
 
 int ZoneCastleLevelFor(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t stroke){
-    if (stroke != 0 && stroke == z.castle_stroke){
+    //(A stair's drag started on a piece has painted nothing yet, so has no level of its own.)
+    if (stroke != 0 && stroke == z.castle_stroke && z.castle_stroke_base != ZONE_CASTLE_NO_BASE){
         return z.castle_stroke_base;
     }
     if (ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE){
@@ -1914,12 +1956,16 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
     if (shape == ZONE_CASTLE_ARCH && storeys < ZONE_CASTLE_ARCH_LOWEST){
         return refuse("an arch is two storeys at least - its passage clears a gate");
     }
-    //LEVEL (ZoneCastleBase): a storey over all the ground under it - an arch two, its passage's - less what it may settle
-    //into it, or the hill has risen past the drag's level there.
+    if (shape == ZONE_CASTLE_GATE && storeys < ZONE_CASTLE_ARCH_LOWEST){
+        return refuse("a gate is two storeys at least - a one-storey wall leaves the road open");
+    }
+    //LEVEL (ZoneCastleBase): a storey over all the ground under it - an arch two, its passage's, and a gate's passage,
+    //always a two-storey wall's, its level itself - less what it may settle into it, or the hill has risen past the
+    //drag's level there.
     float lowest = 0.0f;
     float highest = 0.0f;
     ZonePlotGroundRange(w,plot,lowest,highest);
-    int least = (shape == ZONE_CASTLE_ARCH) ? ZONE_CASTLE_ARCH_LOWEST : 1;
+    int least = (shape == ZONE_CASTLE_ARCH) ? ZONE_CASTLE_ARCH_LOWEST : (shape == ZONE_CASTLE_GATE) ? storeys : 1;
     if (highest > (float)(base + storeys - least) * ZONE_STOREY_HEIGHT + ZONE_CASTLE_SETTLE + 1e-3f){
         return refuse("the ground rises past this level - start a new drag up there, or a stair");
     }
@@ -1934,9 +1980,263 @@ bool ZoneCanCastle(const ChasmWorld& w, const ZoneState& z, int plot, int shape,
         return refuse("a tower's ladder stands there");
     }
     int ground = z.ground[plot];
+    if (shape == ZONE_CASTLE_GATE){
+        return (ground == ZONE_GROUND_ROAD) ? true : refuse("a gate is where a road goes through a wall");
+    }
     if (ground != ZONE_GROUND_NONE && !(shape == ZONE_CASTLE_ARCH && ground == ZONE_GROUND_ROAD)){
         return refuse((shape == ZONE_CASTLE_ARCH) ? "an arch goes over open ground or a road"
                                                   : "a block or a stair goes on open ground");
+    }
+    return true;
+}
+
+namespace {
+
+vec2 StairUnit(const vec2& d){
+    float l = d.length();
+    return (l > 1e-6f) ? d * (1.0f / l) : vec2(0.0f,0.0f);
+}
+
+bool PlotsJoin(const ChasmWorld& w, int a, int b){
+    int nb[8];
+    int n = ZonePlotNeighbours(w,a,nb,8);
+    for (int i = 0; i < n; i++){
+        if (nb[i] == b){
+            return true;
+        }
+    }
+    return false;
+}
+
+//Whether plot u has a FLAT walkable node `halves` high (WalkNodeHalves): a deck - a piece's top, an arch over it, a
+//landing, a turret's top, a guard tower's platform - or a stone tower's floor; with `f_ground` its ground too, a
+//terrace's top or the hill, which rounds to the half storey under it.
+bool StairFlatAt(const ChasmWorld& w, const ZoneState& z, int u, int halves, bool f_ground){
+    int ls[WALK_MOST_DECKS];
+    int c = WalkDeckLayers(z,u,ls);
+    for (int j = 0; j < c; j++){
+        if (!WalkLayerStair(ls[j]) && WalkNodeHalves(w,z,u,ls[j]) == halves){
+            return true;
+        }
+    }
+    if (ZoneTowerStone(z,u) && z.standing[u] > 0){
+        int lowest = 0;
+        int highest = 0;
+        StoneTowerFloors(w,z,u,lowest,highest);
+        if (halves >= lowest && halves <= highest && ((halves - lowest) & 1) == 0){
+            return true;
+        }
+    }
+    if (f_ground && !ZoneCastleShuts(z,u) && z.storeys[u] == 0){
+        int g = WalkNodeHalves(w,z,u,WALK_GROUND);
+        return g == halves || g == halves - 1;
+    }
+    return false;
+}
+
+//The deck a stair's drag pressed on plot u starts from (ZonePlanStair), in whole storeys from y = 0: its stair's top, a
+//castle piece's - an arch over it its - or a stone tower's guard room.
+int StairStartTop(const ChasmWorld& w, const ZoneState& z, int u){
+    if (ZoneHasStair(z,u)){
+        return ZoneStairTop(z,u);
+    }
+    if (ZoneCastleShape(z,u) != ZONE_CASTLE_NONE){
+        return ZoneCastleBase(z,u) + std::max(ZoneCastleStoreys(z,u),ZoneCastleOverStoreys(z,u));
+    }
+    return ZoneTowerLevel(w,z,u) + z.standing[u];
+}
+
+}
+
+int ZoneStairDowns(const ChasmWorld& w, const ZoneState& z, int v, int* out, int max){
+    int nb[8];
+    int n = ZonePlotNeighbours(w,v,nb,8);
+    int c = 0;
+    for (int i = 0; i < n && c < max; i++){
+        if (ZoneHasStair(z,nb[i]) && ZoneStairUp(z,nb[i]) == v){
+            out[c++] = nb[i];
+        }
+    }
+    return c;
+}
+
+vec2 ZoneStairUpDir(const ChasmWorld& w, const ZoneState& z, int v){
+    const vec2 at = w.grid->fine.pos[v];
+    int up = ZoneStairUp(z,v);
+    if (up >= 0){
+        return StairUnit(w.grid->fine.pos[up] - at);
+    }
+    int top = 2 * ZoneStairTop(z,v);
+    vec2 decks(0.0f,0.0f);
+    vec2 below(0.0f,0.0f);
+    int nb[8];
+    int n = ZonePlotNeighbours(w,v,nb,8);
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        vec2 d = StairUnit(w.grid->fine.pos[u] - at);
+        if (ZoneHasStair(z,u) && ZoneStairUp(z,u) == v){
+            below = below - d;
+        }else if (w.terrain->SameGround(v,u) && StairFlatAt(w,z,u,top,true)){
+            decks = decks + d;
+        }
+    }
+    return StairUnit((decks.dot(decks) > 1e-6f) ? decks : below);
+}
+
+bool ZoneStairFootMeets(const ChasmWorld& w, const ZoneState& z, int v, const vec2& up, int halves){
+    const vec2 at = w.grid->fine.pos[v];
+    bool f_any_side = up.dot(up) < 1e-6f;
+    int nb[8];
+    int n = ZonePlotNeighbours(w,v,nb,8);
+    for (int i = 0; i < n; i++){
+        int u = nb[i];
+        if (!w.terrain->SameGround(v,u) || (ZoneHasStair(z,u) && ZoneStairUp(z,u) == v)){
+            continue;
+        }
+        if ((f_any_side || StairUnit(w.grid->fine.pos[u] - at).dot(up) < -ZONE_STAIR_SIDE) && StairFlatAt(w,z,u,halves,true)){
+            return true;
+        }
+    }
+    return false;
+}
+
+int ZoneStairForm(const ChasmWorld& w, const ZoneState& z, int v){
+    int shape = ZoneCastleShape(z,v);
+    if (!ZoneCastleStairForm(shape)){
+        return shape;
+    }
+    int top = ZoneStairTop(z,v);
+    int downs[8];
+    int n = ZoneStairDowns(w,z,v,downs,8);
+    for (int i = 0; i < n; i++){
+        if (ZoneStairTop(z,downs[i]) == top){
+            return ZONE_CASTLE_LANDING;
+        }
+    }
+    if (n > 0 || ZoneCastleStoreys(z,v) <= 1){
+        return ZONE_CASTLE_STAIR;
+    }
+    return ZoneStairFootMeets(w,z,v,ZoneStairUpDir(w,z,v),2 * (top - 1)) ? ZONE_CASTLE_STAIR : ZONE_CASTLE_TURRET;
+}
+
+bool ZonePlanStair(const ChasmWorld& w, const ZoneState& z, int plot, uint32_t stroke, ZoneStairStep& st){
+    st = ZoneStairStep();
+    auto refuse = [&](const char* why){
+        st.why = why;
+        return false;
+    };
+    if (plot < 0 || plot >= (int)z.castle.size()){
+        return refuse("no such plot");
+    }
+    bool f_first = stroke == 0 || stroke != z.castle_stroke || z.castle_stroke_last < 0;
+    int last = f_first ? -1 : z.castle_stroke_last;
+    if (plot == last){
+        st.f_quiet = true;
+        return false;
+    }
+    const std::vector<vec2>& pos = w.grid->fine.pos;
+    int top = 0;        //whole storeys from y = 0
+    if (f_first){
+        //Pressed on a stair, a castle piece or a stone tower, the drag starts from its deck.
+        if (ZoneHasStair(z,plot) || ZoneCastleShape(z,plot) != ZONE_CASTLE_NONE || ZoneTowerStone(z,plot)){
+            st.start = plot;
+            return true;
+        }
+        //On open ground, down from the highest flat deck beside it it can reach - or up from the ground, with none.
+        st.base = ZoneCastleLevelFor(w,z,plot,0);
+        int best = INT_MIN;
+        int nb[8];
+        int n = ZonePlotNeighbours(w,plot,nb,8);
+        for (int i = 0; i < n; i++){
+            if (!w.terrain->SameGround(plot,nb[i])){
+                continue;
+            }
+            for (int t = st.base + ZONE_CASTLE_MAX_STOREYS; t > std::max(best,st.base); t--){
+                if (StairFlatAt(w,z,nb[i],2 * t,false)){
+                    best = t;
+                    break;
+                }
+            }
+        }
+        st.f_climb = best == INT_MIN;
+        top = st.f_climb ? st.base + 1 : best;
+    }else{
+        if (!PlotsJoin(w,last,plot)){
+            return refuse("a stair goes on from the plot before it - drag it plot by plot");
+        }
+        if (ZoneHasStair(z,plot)){
+            st.f_quiet = true;      //back over its own stair
+            return false;
+        }
+        st.f_climb = z.f_castle_stroke_climb;
+        st.base = (z.castle_stroke_base != ZONE_CASTLE_NO_BASE) ? z.castle_stroke_base : ZoneCastleLevelFor(w,z,plot,0);
+        vec2 on = StairUnit(pos[plot] - pos[last]);     //the way the drag goes
+        bool f_over_last = ZoneCastleOverSits(z,last);
+        int downs[8];
+        int n = ZoneHasStair(z,last) ? ZoneStairDowns(w,z,last,downs,8) : 0;
+        if (!st.f_climb && !ZoneHasStair(z,last)){
+            top = StairStartTop(w,z,last);      //the first stair down from the piece it started from
+        }else if (!st.f_climb){
+            //On down from `last`: a storey lower going straight on; turning, the same height - `last` the landing it
+            //turns on, which a flight that already goes on down from it cannot be. From a landing, at its height.
+            int lt = ZoneStairTop(z,last);
+            bool f_straight = (ZoneStairUpDir(w,z,last) * -1.0f).dot(on) > ZONE_STAIR_STRAIGHT;
+            bool f_landing = false;
+            for (int i = 0; i < n; i++){
+                f_landing = f_landing || ZoneStairTop(z,downs[i]) == lt;
+            }
+            if (f_landing){
+                top = lt;
+            }else if (!f_straight && (n > 0 || f_over_last)){
+                return refuse(f_over_last ? "a stair over an arch goes straight on"
+                                          : "this flight goes on down already - a stair turns on a landing");
+            }else{
+                top = f_straight ? lt - 1 : lt;
+            }
+            st.up = last;
+        }else{
+            //Up from the ground: `last` the top so far, which climbs to this one now - a landing at the height of the
+            //stair below it, if the way turns there. Come to a deck at the height it has climbed to, it goes on onto it
+            //level: a landing beside it, rather than a storey past it.
+            int lt = ZoneStairTop(z,last);
+            if (n > 0 && StairUnit(pos[last] - pos[downs[0]]).dot(on) <= ZONE_STAIR_STRAIGHT){
+                if (f_over_last){
+                    return refuse("a stair over an arch goes straight on");
+                }
+                lt = ZoneStairTop(z,downs[0]);
+                st.landing = last;
+                st.landing_storeys = lt - ZoneCastleBase(z,last);
+            }
+            bool f_deck = false;
+            int nb[8];
+            int c = ZonePlotNeighbours(w,plot,nb,8);
+            for (int i = 0; i < c && !f_deck; i++){
+                f_deck = nb[i] != last && w.terrain->SameGround(plot,nb[i]) && !ZoneHasStair(z,nb[i])
+                         && StairFlatAt(w,z,nb[i],2 * lt,false);
+            }
+            top = f_deck ? lt : lt + 1;
+            st.relink = last;
+        }
+        if (!st.f_climb && top <= st.base){
+            return refuse("the stair is down at the ground - it ends at the plot before");
+        }
+    }
+    //Over an arch a storey under it, as before; never in another piece's place.
+    int shape = ZoneCastleShape(z,plot);
+    if (shape == ZONE_CASTLE_ARCH && ZoneCastleOverShape(z,plot) == ZONE_CASTLE_NONE
+        && top - ZoneCastleBase(z,plot) == ZoneCastleStoreys(z,plot) + 1){
+        st.f_over = true;
+        st.base = ZoneCastleBase(z,plot);
+    }else if (shape != ZONE_CASTLE_NONE || ZoneTowerStone(z,plot)){
+        return refuse("a stair goes on open ground, or over an arch a storey under it");
+    }
+    st.storeys = top - st.base;
+    if (st.storeys < 1 || st.storeys > ZONE_CASTLE_MAX_STOREYS){
+        return refuse("a stair is one to four storeys over its level");
+    }
+    const char* why = NULL;
+    if (!st.f_over && !ZoneCanCastle(w,z,plot,ZONE_CASTLE_STAIR,st.storeys,st.base,&why)){
+        return refuse(why);
     }
     return true;
 }
@@ -2672,12 +2972,16 @@ void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state.ground_built.assign(g.fine.pos.size(),0);
     state.line.assign(g.fine.pos.size(),0);
     state.gate.assign(g.fine.pos.size(),0);
+    state.portcullis.assign(g.fine.pos.size(),0);
     state.ground_owner.assign(g.fine.pos.size(),0);
     state.castle.assign(g.fine.pos.size(),0);
     state.castle_over.assign(g.fine.pos.size(),0);
     state.castle_base.assign(g.fine.pos.size(),0);
+    state.castle_up.assign(g.fine.pos.size(),-1);
     state.castle_stroke = 0;
     state.castle_stroke_base = 0;
+    state.castle_stroke_last = -1;
+    state.f_castle_stroke_climb = false;
     state.terrace.assign(g.fine.pos.size(),ZONE_NO_TERRACE);
     state.terrace_built.assign(g.fine.pos.size(),0);
     state.field.assign(g.coarse.quads.size(),0);
@@ -2733,6 +3037,57 @@ bool Zones::PitchTent(int plot, uint32_t camp){
 void Zones::Touch(int fine_quad){
     int c = TerrainChunkOfQuad(*state.world->grid,*state.world->mesh,fine_quad);
     state.chunk_version[c]++;
+}
+
+void Zones::RefreshStairs(int v){
+    const ChasmWorld& w = *state.world;
+    const GridPicker& p = *w.picker;
+    //One form leans on its neighbours' - a landing's deck is a deck to come down onto - so round again until none
+    //changes; a few rounds at most, as a stair is a few plots.
+    for (int round = 0; round < 4; round++){
+        bool f_changed = false;
+        auto refresh = [&](int u){
+            int shape = ZoneCastleShape(state,u);
+            if (!ZoneCastleStairForm(shape)){
+                return;
+            }
+            int form = ZoneStairForm(w,state,u);
+            if (form == shape){
+                return;
+            }
+            state.castle[u] = ZoneCastlePiece(form,ZoneCastleStoreys(state,u));
+            f_changed = true;
+            //Its cells and the ones round them: its neighbours' sides meet it.
+            for (int i = 0; i < p.PlotQuadCount(u); i++){
+                const GridQuad& q = w.grid->fine.quads[p.PlotQuadCorner(u,i) / 4];
+                for (int k = 0; k < 4; k++){
+                    for (int j = 0; j < p.PlotQuadCount(q.v[k]); j++){
+                        Touch(p.PlotQuadCorner(q.v[k],j) / 4);
+                    }
+                }
+            }
+        };
+        if (v < 0){
+            for (int u = 0; u < (int)state.castle.size(); u++){
+                refresh(u);
+            }
+        }else{
+            refresh(v);
+            int nb[8];
+            int n = ZonePlotNeighbours(w,v,nb,8);
+            for (int i = 0; i < n; i++){
+                refresh(nb[i]);
+                int nb2[8];
+                int n2 = ZonePlotNeighbours(w,nb[i],nb2,8);
+                for (int j = 0; j < n2; j++){
+                    refresh(nb2[j]);
+                }
+            }
+        }
+        if (!f_changed){
+            break;
+        }
+    }
 }
 
 uint32_t Zones::NewBuilding(int kind){
@@ -3489,6 +3844,24 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             //...and a road drawn over a wall takes the plot, and is its gate.
             state.gate[plot] = (kind == ZONE_GROUND_ROAD && state.ground[plot] == ZONE_GROUND_WALL) ? 1 : 0;
+            //...and through a castle's wall (castle_plan.md): a block two storeys or more becomes its GATE, its doors and
+            //portcullis open; a one-storey one is taken, a gap in the wall - as is one the ground rises into past its
+            //level, which leaves no passage (ZoneCanCastle's gate).
+            if (kind == ZONE_GROUND_ROAD && ZoneCastleShape(state,plot) == ZONE_CASTLE_BLOCK){
+                int storeys = ZoneCastleStoreys(state,plot);
+                float lowest = 0.0f;
+                float highest = 0.0f;
+                ZonePlotGroundRange(w,plot,lowest,highest);
+                bool f_room = highest <= ZoneCastleBase(state,plot) * ZONE_STOREY_HEIGHT + ZONE_CASTLE_SETTLE + 1e-3f;
+                if (storeys >= ZONE_CASTLE_ARCH_LOWEST && f_room){
+                    state.castle[plot] = ZoneCastlePiece(ZONE_CASTLE_GATE,storeys);
+                    state.gate[plot] = ZONE_GATE_OPEN;
+                }else{
+                    state.castle[plot] = 0;
+                }
+                state.portcullis[plot] = 0;
+                touch_ring(plot);
+            }
             state.ground[plot] = (uint8_t)kind;
             //A player's garden or lot is a site until its wood is brought, a road until it is cleared and
             //laid, a wall until both (line_works_plan.md); a debug paint is there.
@@ -3517,9 +3890,19 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                     last_refusal = "no wall there";
                     return false;
                 }
+                if (ZoneCastleGate(state,plot)){
+                    last_refusal = "a castle's gate - the castle's tool takes it";
+                    return false;
+                }
                 state.gate[plot] = 0;
                 touch_road(plot);
                 break;
+            }
+            //A castle gate's road taken up (castle_plan.md): the wall closes over it again, a block.
+            if (ZoneCastleGate(state,plot)){
+                state.castle[plot] = ZoneCastlePiece(ZONE_CASTLE_BLOCK,ZoneCastleStoreys(state,plot));
+                state.portcullis[plot] = 0;
+                touch_ring(plot);
             }
             state.ground[plot] = ZONE_GROUND_NONE;
             state.ground_built[plot] = 0;
@@ -3637,6 +4020,38 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }
             break;
         }
+        case ZONE_OP_PORTCULLIS:{
+            /*
+                A castle gate's PORTCULLIS let down, or raised (castle_plan.md) - the player's, from the gate's card, apart
+                from its doors (ZONE_OP_GATE_SHUT). A castle gate joined to this one goes with it, as a gate's door does.
+            */
+            if (plot < 0 || plot >= (int)state.portcullis.size() || !ZoneCastleGate(state,plot) || !state.gate[plot]){
+                last_refusal = "no castle gate there";
+                return false;
+            }
+            uint8_t want = kind ? 1 : 0;
+            if (state.portcullis[plot] == want){
+                return false;
+            }
+            std::vector<int> todo(1,plot);
+            while (!todo.empty()){
+                int v = todo.back();
+                todo.pop_back();
+                if (state.portcullis[v] == want){
+                    continue;
+                }
+                state.portcullis[v] = want;
+                touch_road(v);      //its portcullis drawn again
+                int nb[8];
+                int n = ZonePlotNeighbours(w,v,nb,8);
+                for (int i = 0; i < n; i++){
+                    if (ZoneCastleGate(state,nb[i]) && state.gate[nb[i]] && state.portcullis[nb[i]] != want){
+                        todo.push_back(nb[i]);
+                    }
+                }
+            }
+            break;
+        }
         case ZONE_OP_TOWER_LADDER:{
             /*
                 A guard tower's LADDER moved (defence_plan.md) - the player's, from its card: toward the neighbour
@@ -3694,12 +4109,79 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 return false;
             }
             int piece = std::max(0,kind) & 0xFF;
+            int was = ZoneCastleShape(state,plot);
+            /*
+                A STAIR (castle_plan.md "The stairs"): its drag says where it goes and how high (ZonePlanStair) - the
+                storeys asked for are not used - and its form comes of what is round it once it is down (RefreshStairs).
+            */
+            if (piece != 0 && ZoneCastleStairForm(piece >> 4)){
+                ZoneStairStep st;
+                if (!ZonePlanStair(w,state,plot,stroke,st)){
+                    if (!st.f_quiet){
+                        last_refusal = st.why ? st.why : "";
+                    }
+                    return false;
+                }
+                if (st.start >= 0){
+                    //Started from a deck: nothing on the map yet, and no level until its first stair.
+                    state.castle_stroke = stroke;
+                    state.castle_stroke_base = ZONE_CASTLE_NO_BASE;
+                    state.castle_stroke_last = st.start;
+                    state.f_castle_stroke_climb = false;
+                    return false;
+                }
+                int last = (stroke != 0 && stroke == state.castle_stroke) ? state.castle_stroke_last : -1;
+                if (st.landing >= 0){
+                    state.castle[st.landing] = ZoneCastlePiece(ZoneCastleShape(state,st.landing),st.landing_storeys);
+                    touch_ring(st.landing);
+                }
+                if (st.relink >= 0){
+                    state.castle_up[st.relink] = plot;
+                    touch_ring(st.relink);
+                }
+                uint8_t stair = ZoneCastlePiece(ZONE_CASTLE_STAIR,st.storeys);
+                if (st.f_over){
+                    state.castle_over[plot] = stair;
+                }else{
+                    state.castle[plot] = stair;
+                    state.castle_base[plot] = (int8_t)st.base;
+                }
+                state.castle_up[plot] = st.up;
+                //The drag's level is its first stair's - one over an arch keeps the drag's, standing on the arch's.
+                bool f_level = last >= 0 && state.castle_stroke_base != ZONE_CASTLE_NO_BASE;
+                state.castle_stroke_base = (st.f_over && f_level) ? state.castle_stroke_base : st.base;
+                state.castle_stroke = stroke;
+                state.castle_stroke_last = plot;
+                state.f_castle_stroke_climb = st.f_climb;
+                touch_ring(plot);
+                if (last >= 0){
+                    touch_ring(last);
+                    RefreshStairs(last);
+                }
+                RefreshStairs(plot);
+                break;
+            }
+            //A stair is taken off from its foot up: the flights below it first.
+            bool f_stair_off = state.castle_over[plot] ? ZoneCastleOverSits(state,plot) : ZoneHasStair(state,plot);
+            int stair_up = f_stair_off ? ZoneStairUp(state,plot) : -1;
+            if (piece == 0 && f_stair_off){
+                int downs[8];
+                if (ZoneStairDowns(w,state,plot,downs,8) > 0){
+                    last_refusal = "the stair below it comes off first - a stair is taken off from its foot up";
+                    return false;
+                }
+            }
             if (piece == 0){
                 //From the top down: a piece over a piece first.
                 if (state.castle_over[plot]){
                     state.castle_over[plot] = 0;
                 }else if (state.castle[plot]){
                     state.castle[plot] = 0;
+                    //A gate taken off its road: no gate there any more, its doors and portcullis with it.
+                    if (was == ZONE_CASTLE_GATE){
+                        state.gate[plot] = 0;
+                        state.portcullis[plot] = 0;
+                    }
                 }else{
                     last_refusal = "no castle piece there";
                     return false;
@@ -3707,6 +4189,17 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
             }else{
                 int shape = piece >> 4;
                 int storeys = piece & 15;
+                //A wall dragged across a road (castle_plan.md): its GATE there, two storeys or more - one storey leaves
+                //the road open, a gap in the wall.
+                if (shape == ZONE_CASTLE_BLOCK && state.ground[plot] == ZONE_GROUND_ROAD
+                    && !ZoneCastleGoesOver(state,plot,shape,storeys)){
+                    if (storeys < ZONE_CASTLE_ARCH_LOWEST){
+                        last_refusal = "a one-storey wall leaves the road open - a gate takes two storeys";
+                        return false;
+                    }
+                    shape = ZONE_CASTLE_GATE;
+                    piece = ZoneCastlePiece(shape,storeys);
+                }
                 bool f_over = ZoneCastleGoesOver(state,plot,shape,storeys);
                 //Its LEVEL (ZoneCastleLevelFor): the drag's, so a wall over a hill is level - one over a piece its.
                 int base = f_over ? state.castle_base[plot] : ZoneCastleLevelFor(w,state,plot,stroke);
@@ -3717,9 +4210,15 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                     last_refusal = "a piece stands over it, at its own level";
                     return false;
                 }
-                //Over the piece there, or in its place - swapped for it as the piece over it allows.
+                //Over the piece there, or in its place - swapped for it as the piece over it allows; a stair's only with
+                //no stair below it, as it would be taken off.
                 if (!ZoneCanCastle(w,state,plot,shape,storeys,base,&why)){
                     last_refusal = why;
+                    return false;
+                }
+                int downs[8];
+                if (!f_over && f_stair_off && ZoneStairDowns(w,state,plot,downs,8) > 0){
+                    last_refusal = "the stair below it comes off first - a stair is taken off from its foot up";
                     return false;
                 }
                 if (f_over){
@@ -3727,13 +4226,33 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 }else{
                     state.castle[plot] = (uint8_t)piece;
                     state.castle_base[plot] = (int8_t)base;
+                    state.castle_up[plot] = -1;
+                    //A gate is a gate on its road (ZoneState::gate, its doors), open as it is made; any other piece in
+                    //its place takes it away, and its portcullis.
+                    if (shape == ZONE_CASTLE_GATE){
+                        if (!state.gate[plot]){
+                            state.gate[plot] = ZONE_GATE_OPEN;
+                        }
+                    }else if (was == ZONE_CASTLE_GATE){
+                        state.gate[plot] = 0;
+                        state.portcullis[plot] = 0;
+                    }
                 }
                 if (stroke != 0){
                     state.castle_stroke = stroke;
                     state.castle_stroke_base = base;
+                    state.castle_stroke_last = -1;
+                }
+            }
+            if (piece == 0 && f_stair_off){
+                state.castle_up[plot] = -1;
+                if (stair_up >= 0){
+                    touch_ring(stair_up);
+                    RefreshStairs(stair_up);
                 }
             }
             touch_ring(plot);       //a stair's slope meets its neighbours, so they are drawn again too
+            RefreshStairs(plot);    //...and the stairs round it may take another form: a deck to come down onto, or not
             break;
         }
         /*
@@ -3876,6 +4395,32 @@ int Zones::RestoreCastle(const std::vector<ZoneSavedCastle>& pieces){
     const uint32_t RESTORE_STROKE = 0xFFFFFFFFu;
     int refused = 0;
     for (const ZoneSavedCastle& pc : pieces){
+        /*
+            A STAIR (castle_plan.md "The stairs") as it was left, its height and the stair it climbs to: a drag laid
+            it, which a save has not got - on open ground, or a flight over an arch a storey under it. Its form is
+            worked out again once all are back.
+        */
+        if (ZoneCastleStairForm(pc.piece >> 4)){
+            int plot = pc.plot;
+            int storeys = pc.piece & 15;
+            bool f_ok = plot >= 0 && plot < (int)state.castle.size() && storeys >= 1 && storeys <= ZONE_CASTLE_MAX_STOREYS
+                        && !ZoneTerraced(state,plot) && state.storeys[plot] == 0;
+            bool f_over = f_ok && ZoneCastleShape(state,plot) == ZONE_CASTLE_ARCH && !state.castle_over[plot]
+                          && storeys == ZoneCastleStoreys(state,plot) + 1;
+            if (!f_ok || (!f_over && ZoneCastleShape(state,plot) != ZONE_CASTLE_NONE)){
+                refused++;
+                continue;
+            }
+            if (f_over){
+                state.castle_over[plot] = (uint8_t)ZoneCastlePiece(ZONE_CASTLE_STAIR,storeys);
+            }else{
+                state.castle[plot] = (uint8_t)ZoneCastlePiece(ZONE_CASTLE_STAIR,storeys);
+                state.castle_base[plot] = (int8_t)((pc.base != ZONE_CASTLE_NO_BASE) ? pc.base
+                                                                                    : ZoneCastleLevelFor(*state.world,state,plot,0));
+            }
+            state.castle_up[plot] = (pc.up >= 0 && pc.up < (int)state.castle.size()) ? pc.up : -1;
+            continue;
+        }
         uint32_t stroke = 0;
         if (pc.base != ZONE_CASTLE_NO_BASE){
             state.castle_stroke = RESTORE_STROKE;
@@ -3884,9 +4429,13 @@ int Zones::RestoreCastle(const std::vector<ZoneSavedCastle>& pieces){
         }
         if (!Apply(ZONE_OP_CASTLE,(uint32_t)pc.plot,pc.piece,stroke,false)){
             refused++;
+        }else if (pc.f_portcullis && ZoneCastleGate(state,pc.plot)){
+            state.portcullis[pc.plot] = 1;      //a gate's portcullis as it was left (castle_plan.md)
         }
     }
     state.castle_stroke = 0;
+    state.castle_stroke_last = -1;
+    RefreshStairs(-1);
     return refused;
 }
 

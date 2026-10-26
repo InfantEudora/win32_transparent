@@ -47,19 +47,22 @@
     WHO walks decides what is open: a tower's deck is anyone's (a dead end - its guards, and the caretakers
     who stock it), a castle's only the POSTED's - guards and anyone under an order (the user's, 2026-10-10:
     a wall any villager may walk is a way over a shut gate). A ZOMBIE (zombies_plan.md) walks the villagers'
-    ground and no deck at all; the walls that break under it are its step 4.
+    ground and no deck at all; the walls that break under it are its step 4. It WADES through water too, at
+    WALKER_SPEED_WADE (swamp_huts_plan.md step 2).
 */
 
 #define WALKER_SPEED_ROAD       3.2f    //world units a second, both ends of the edge road
 #define WALKER_SPEED_GROUND     1.6f    //everywhere else
 #define WALKER_SPEED_FIELD      0.9f    //both ends in a field
 #define WALKER_SPEED_SWAMP      1.0f    //both ends in the swamp, off a road
+#define WALKER_SPEED_WADE       0.4f    //a zombie through the water (swamp_huts_plan.md step 2): a river buys time, not safety
 #define WALKER_SLOPE_COST       3.0f    //speed divided by 1 + this x the grade (rise over run)
 #define WALKER_STEEPEST         0.75f   //rise over run past which an edge cannot be walked at all
 #define WINCH_RIDE_SECONDS      5.0f    //from the rim down to the balcony, or up
 #define WALKER_OPEN_GROUND      24      //plots of open ground, joined, that make OUTSIDE; fewer, closed in by buildings, are a yard
 #define WALKER_SPEED_DECK       WALKER_SPEED_ROAD   //along a deck: paved, as a road - never faster, or A*'s estimate breaks
 #define WALKER_SPEED_STAIR      1.2f    //up or down a stair
+#define WALK_TURRET_ROUND       1.8f    //an open turret's walk round its steps, per height climbed (castle_plan.md)
 
 #define WALK_GROUND             0       //a node's layer: its plot's ground
 #define WALK_WHO_VILLAGER       0       //who walks: anyone...
@@ -114,10 +117,10 @@ void StoneTowerFloors(const ChasmWorld& w, const ZoneState& z, int plot, int& lo
 #define WALK_NO_JOIN            INT_MIN     //WalkJoin's: the two do not join
 /*
     Whether node (a, la) and node (b, lb) on neighbouring plots join - the height they meet at, in half storeys
-    (WalkNodeHalves), or WALK_NO_JOIN. On one ground, where their spans meet - a stair's foot reaching down to ground
-    as much as a storey under it - and never to the ground under a block or a stair; and a STAIR comes down to the
-    GROUND one way - on the side across from its higher neighbours, never off its flanks - while to other pieces it
-    joins wherever they are, so a flight may turn. The walkers' joins and the castle's drawing (CastleMesh.h) both ask
+    (WalkNodeHalves), or WALK_NO_JOIN. On one ground, where their spans meet - a level's first flight's foot reaching
+    down to ground as much as a storey under it - and never to the ground under a block or a stair; and a stair's
+    FLIGHT only up its way and down it, never off its flanks; an open TURRET's top up its way, and its foot to its
+    level's ground (castle_plan.md "The stairs"). The walkers' joins and the castle's drawing (CastleMesh.h) both ask
     here.
 */
 int WalkJoin(const ChasmWorld& w, const ZoneState& z, int a, int la, int b, int lb);
@@ -237,7 +240,7 @@ private:
     bool EdgeOpen(const ZoneState& z, int a, int b, int from, int to, int who = WALK_WHO_VILLAGER,
                   const WalkBreaks* breaks = NULL, float* extra = NULL) const;
     bool GroundEnterable(const ZoneState& z, int v, int from, int to, int who = WALK_WHO_VILLAGER) const;
-    float EdgeSpeed(const ZoneState& z, int a, int b) const;
+    float EdgeSpeed(const ZoneState& z, int a, int b, int who = WALK_WHO_VILLAGER) const;
     float EdgeLength(int a, int b) const;
 };
 

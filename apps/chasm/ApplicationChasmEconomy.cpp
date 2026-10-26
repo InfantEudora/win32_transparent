@@ -123,6 +123,10 @@ void ApplicationChasm::TickEconomy(){
     }
     for (int plot : economy.GateBreaks()){
         f_raised = zones.Apply(ZONE_OP_GATE_SHUT,(uint32_t)plot,0) || f_raised;
+        //...a castle gate's portcullis with its doors (castle_plan.md): broken, both stand open.
+        if (ZonePortcullisDown(zones.State(),plot)){
+            f_raised = zones.Apply(ZONE_OP_PORTCULLIS,(uint32_t)plot,0) || f_raised;
+        }
     }
     if (f_raised){
         PublishZones();
@@ -355,6 +359,20 @@ void ApplicationChasm::HashEconomy(StateHash& h){
                 h.Add(((uint64_t)id << 32) | e.colony[id]);
             }
         }
+    }
+    //THE FIRST WAVE (swamp_huts_plan.md step 2): when it is due, its huts and its zombies - only once it is called, so a
+    //colony before it hashes as before.
+    if (e.wave.due){
+        h.Add(((uint64_t)e.wave.huts.size() << 32) | 0x3A7Eu);
+        uint64_t head[3] = {e.wave.due,(uint64_t)e.wave.f_open,(uint64_t)e.wave.f_seen};
+        h.Bytes(head,sizeof(head));
+        for (const EconomyWaveHut& hut : e.wave.huts){
+            uint64_t row[4] = {hut.hut,(uint64_t)(int64_t)hut.door,(uint64_t)(int64_t)hut.left,hut.next};
+            h.Bytes(row,sizeof(row));
+        }
+        n = (uint32_t)e.wave.zombies.size();
+        h.Bytes(&n,sizeof(n));
+        h.Bytes(e.wave.zombies.data(),e.wave.zombies.size() * sizeof(uint32_t));
     }
     //The zombies (zombies_plan.md), each whole on its route as a person is - only once there have been any, so a colony
     //that never had one hashes as before.

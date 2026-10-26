@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: f48f1106-0612-4b9f-b48d-224679e62ba1
-  modified: 2026-10-16T13:07:06.490Z
+  modified: 2026-10-26T21:51:51.363Z
 ---
 
 2026-09-26: user wants dynamic background music for the games (archer's jungle vibe first) - ambient layers plus generated notes driven by parameters (key, instruments, tempo, suspense), with key changes on game events that can go EITHER way (brighter or darker, the game asks). Deliberately vague: "as we zone in we'll figure out what works" - propose small steps, don't over-design.
@@ -36,5 +36,7 @@ SCORE=chasm` -> apps/chasm/assets/music (46 ogg, 2.2 MB). apps/chasm/Application
 share, land ducked MUSIC_LAND_DUCK; silent layer paused), buses music_land/_clouds/_chasm under `music`; `music` cue
 action; chasm_reveal row on the chasm area's first sight. Plays on in a pause (agent's choice, archer pauses).
 Re-publish after tuning. See [[chasm-areas-plan]].
+
+2026-10-26 DESERT section drafted (user asked for a desert-biome score in chasm.json; NOT in the game yet, NOT published): `rotation: false`, new core mode `phrygian_dominant` (alias `hijaz`, appended last). Oud walk + `taqsim` motif, theme on sitar, `caravan` maqsum on the frame drum, tambourines as riq, snake hiss/rattle with suspense. Mandolin left out (E3 -24 cents, no cents field). Publishing it needs chasm REBUILT first, or the old exe refuses the whole score on the unknown mode. Same day the user liked it, reverbed the sitar (re-exported), and asked for it in the game: PUBLISHED, and BUILT as a 4th player CHASM_MUSIC_DESERT faded by the view's seen-desert share; the land ducks FULLY under it (MUSIC_DESERT_DUCK 1.0, agent's choice - desert has no seasons). Publish re-encodes every ogg with new serials: restore same-size ones from git to keep the diff to real changes.
 
 **How to apply:** tune samplescan's GuessCategory thresholds on the real library once it lands, not on synthetic tones; ask the user to listen - Claude cannot judge whether it sounds right.

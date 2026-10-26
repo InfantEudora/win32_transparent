@@ -12,9 +12,9 @@
 #include <stdio.h>
 
 /*
-    THE DEMO'S GOALS AND ITS END (docs/demo_plan.md step 7; the user's, 2026-10-15): two goals, the first winter
-    through with nobody dead and the chasm reached - a winch built, someone lowered by it - each in progress, met or
-    failed; a death stops the game behind a pop-up; and the end, the demo complete or the colony lost, is the
+    THE DEMO'S GOALS AND ITS END (docs/demo_plan.md step 7; the user's, 2026-10-15): the goals - first two, the first
+    winter through with nobody dead and the chasm reached - a winch built, someone lowered by it; three more on the way
+    to the first wave (below) - each in progress, met or failed; a death stops the game behind a pop-up; and the end, the demo complete or the colony lost, is the
     statistics page with its own heading and buttons (ApplicationChasmStats.cpp).
     A death of OLD AGE is no villager lost (the user's, 2026-10-24): it fails no goal and stops nothing. The death line
     over the build bar, the journal and the statistics still tell it, as they tell every death.
@@ -25,6 +25,12 @@
     read those events as they come, as the notice line does, and pause the game the way the pause menu does - which
     changes nothing in the colony.
 
+    THE WAY TO THE FIRST WAVE (swamp_huts_plan.md step 2; the user's, 2026-10-26): three goals more, which APPEAR as
+    the colony gets there, each told once as EVENT_GOAL_SET - an archer trained, from the first dawn of the second
+    spring; the swamp kept out of without one, once it is found; the first wave survived, once its doors open. Training
+    the archer is what calls the wave (Economy::CallWave), so it never comes before the colony has someone to meet it
+    with. A goal that has not appeared has no row and is told nothing.
+
     THE SWITCHES (debug builds; the user's, 2026-10-18): each of what the viewer tells or stops for can be turned off -
     from the Goals panel, or chasm_menu's `triggers` - for testing, where a death or a lost colony is what is being looked
     at rather than the end of the game: a goal's row on the GOALS panel and its notice (and the winter's line in a
@@ -33,6 +39,7 @@
     journal, so the statistics, the end's page and a replay are as they were.
 */
 #define GOALS_MET_COLOUR    UIColor(140,200,110)    //a goal met, on the panel and the end's page
+#define GOAL_SWAMP_LOOK_TICKS   25      //the swamp's goal and the wave's first sight looked at twice a second
 
 namespace {
 
@@ -43,13 +50,61 @@ std::string GoalCaps(int goal){
     return t;
 }
 
+//The most archery anyone alive has (TRAINING, Economy.h), and whether anyone is training at a range now.
+int BestArchery(const EconomyState& e, bool* f_training = NULL){
+    int best = 0;
+    bool f_any = false;
+    for (const EconomyWorker& k : e.workers){
+        best = std::max(best,k.archery);
+        f_any = f_any || k.job == WORKER_JOB_ARCHER;
+    }
+    if (f_training){
+        *f_training = f_any;
+    }
+    return best;
+}
+
+/*
+    THE SWAMP'S GOAL: the first grown-up out in the swamp - out of doors, on a swamp plot, ordered there or at work - with
+    no trained archer (ARCHER_TRAINED) out of doors within ESCORT_REACH of him; an archer escorts himself. 0, nobody.
+*/
+uint32_t SwampUnescorted(const ChasmWorld& w, const EconomyState& e){
+    std::vector<vec2> archers;
+    for (const EconomyWorker& k : e.workers){
+        if (k.archery >= ARCHER_TRAINED && !EconomyIndoors(k) && k.state != WORKER_ABOARD){
+            archers.push_back(k.pos);
+        }
+    }
+    for (const EconomyWorker& k : e.workers){
+        if (!EconomyReachable(k,e.tick) || EconomyStageAt(k.born,e.tick) < LIFE_YOUNG){
+            continue;
+        }
+        GridPick p = w.picker->Pick(k.pos);
+        if (!p.f_hit || p.plot < 0 || p.plot >= (int)w.terrain->biome.size() || w.terrain->biome[(size_t)p.plot] != TERRAIN_BIOME_SWAMP){
+            continue;
+        }
+        bool f_escorted = false;
+        for (const vec2& a : archers){
+            f_escorted = f_escorted || (a - k.pos).length() <= ESCORT_REACH;
+        }
+        if (!f_escorted){
+            return k.id;
+        }
+    }
+    return 0;
+}
+
 }
 
 /*
     Whether a goal is met (CHASM_GOAL_*): as the journal has it once it was told, else as the state stands -
       - THROUGH THE WINTER: failed by any death before the first dawn of the second spring - but of old age - met at
         that dawn;
-      - THE CHASM: met with a winch finished and someone lowered by one to a balcony. It is never failed.
+      - THE CHASM: met with a winch finished and someone lowered by one to a balcony. It is never failed;
+      - AN ARCHER: met by anyone alive with ARCHER_TRAINED archery. Never failed;
+      - THE SWAMP: met once the first wave is beaten - failed, the journal says, by someone in it unescorted (TickGoals);
+      - THE FIRST WAVE: met once it is beaten. Never failed: the colony lost is an end of its own.
+    One that has not appeared (ChasmGoalShown) reads as it would, but nothing tells it.
 */
 int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d){
     if (goal >= 0 && goal < CHASM_GOALS && d.goal_told[goal] >= 0){
@@ -63,17 +118,45 @@ int ChasmGoalState(int goal, const EconomyState& e, const ChasmDiscoveries& d){
         }
         return (e.tick >= (uint64_t)CALENDAR_YEAR_TICKS) ? CHASM_GOAL_MET : CHASM_GOAL_GOING;
     }
+    if (goal == CHASM_GOAL_ARCHER){
+        return (BestArchery(e) >= ARCHER_TRAINED) ? CHASM_GOAL_MET : CHASM_GOAL_GOING;
+    }
+    if (goal == CHASM_GOAL_SWAMP || goal == CHASM_GOAL_WAVE){
+        return EconomyWaveBeaten(e.wave) ? CHASM_GOAL_MET : CHASM_GOAL_GOING;
+    }
     bool f_met = (d.mask & (1u << DISCOVERY_WINCH)) && (d.mask & (1u << DISCOVERY_BALCONY));
     return f_met ? CHASM_GOAL_MET : CHASM_GOAL_GOING;
 }
 
 //What a goal in progress wants next, as the panel says it: "23 DAYS TO GO", "BUILD A WINCH".
 std::string ChasmGoalNext(int goal, const EconomyState& e, const ChasmDiscoveries& d){
+    char buf[48];
     if (goal == CHASM_GOAL_WINTER){
         uint64_t left = (e.tick < (uint64_t)CALENDAR_YEAR_TICKS) ? (uint64_t)CALENDAR_YEAR_TICKS - e.tick : 0;
         int days = (int)((left + CALENDAR_DAY_TICKS - 1) / CALENDAR_DAY_TICKS);
-        char buf[32];
         snprintf(buf,sizeof(buf),"%i DAY%s TO GO",days,days == 1 ? "" : "S");
+        return buf;
+    }
+    //The way to an archer: the builders' hut brings the range, the range trains him - and then how far the best has come.
+    if (goal == CHASM_GOAL_ARCHER){
+        bool f_training = false;
+        int best = BestArchery(e,&f_training);
+        if (!(d.mask & (1u << DISCOVERY_BUILDERS))){
+            return "BUILD A BUILDERS' HUT";
+        }
+        if (best <= 0 && !f_training){
+            return "BUILD A RANGE";
+        }
+        snprintf(buf,sizeof(buf),"TRAINING %i%% OF %i%%",(int)(best * 100LL / ARCHERY_FULL),
+                 (int)(ARCHER_TRAINED * 100LL / ARCHERY_FULL));
+        return buf;
+    }
+    if (goal == CHASM_GOAL_SWAMP){
+        return (BestArchery(e) >= ARCHER_TRAINED) ? "ONLY WITH AN ARCHER" : "KEEP OUT";
+    }
+    if (goal == CHASM_GOAL_WAVE){
+        int left = EconomyWaveLeft(e.wave);
+        snprintf(buf,sizeof(buf),"%i ZOMBIE%s LEFT",left,left == 1 ? "" : "S");
         return buf;
     }
     if (!(d.mask & (1u << DISCOVERY_CHASM))){
@@ -89,6 +172,9 @@ const char* ApplicationChasm::TriggerName(int t){
     switch (t){
         case CHASM_GOAL_WINTER:         return "winter";
         case CHASM_GOAL_CHASM:          return "chasm";
+        case CHASM_GOAL_ARCHER:         return "archer";
+        case CHASM_GOAL_SWAMP:          return "swamp";
+        case CHASM_GOAL_WAVE:           return "wave";
         case CHASM_TRIGGER_DEATH:       return "death";
         case CHASM_TRIGGER_LOST:        return "colony_lost";
         case CHASM_TRIGGER_COMPLETE:    return "demo_complete";
@@ -116,8 +202,12 @@ bool ApplicationChasm::ColonyLost(){
 /*
     PHYSICS THREAD, from RunSimulationTick after the exploration (so the discoveries are this tick's): the goals and the
     end as rules. Each is told once - the journal says whether it has been (UpdateDiscoveries reads it) - on the tick it
-    comes true: the colony lost, with nothing after it; a goal met or failed; and the demo complete once both are one or
-    the other. Met or not, the demo then has its end, so a colony that lost someone in its first winter still gets one.
+    comes true: the colony lost, with nothing after it; a goal appearing (THE WAY TO THE FIRST WAVE, above); a goal met
+    or failed; and the demo complete once every goal in play is one or the other. Met or not, the demo then has its end,
+    so a colony that lost someone in its first winter still gets one.
+    IN PLAY: the first three always, the archer's coming with the second spring; the first wave's on a map with swamp
+    huts, as it will come; the swamp's only once it has appeared, since it may never - a swamp never found, or found
+    after the wave is beaten. A map without huts - a save from before them - has no wave, and so neither.
 */
 void ApplicationChasm::TickGoals(){
     std::shared_ptr<const ChasmWorld> w = zones.GetWorld();
@@ -130,21 +220,66 @@ void ApplicationChasm::TickGoals(){
     if (d.f_lost_told){
         return;
     }
-    auto told = [&](int kind, uint32_t person, int amount){
+    auto told = [&](int kind, uint32_t person, int amount, GoodsMask what = 0){
         EconomyEvent ev;
         ev.kind = kind;
         ev.person = person;
         ev.amount = amount;
+        ev.what = what;
         economy.Event(ev,calendar_tick);
     };
     if (e.workers.empty() && !e.dead.empty()){
         told(EVENT_COLONY_LOST,e.dead.back().id,0);
         return;
     }
+    const ZoneState& z = zones.State();
+    bool f_huts = false;
+    for (size_t id = 1; id < z.buildings.size() && !f_huts; id++){
+        f_huts = z.buildings[id].kind == ZONE_KIND_HUT && z.buildings[id].size > 0;
+    }
+    //APPEARING: each told once, and shown from this tick on - before it can be met on the same one.
+    bool shown[CHASM_GOALS];
+    for (int g = 0; g < CHASM_GOALS; g++){
+        shown[g] = ChasmGoalShown(g,d);
+    }
+    auto appear = [&](int g, bool f_now){
+        if (!shown[g] && f_now){
+            told(EVENT_GOAL_SET,0,g);
+            shown[g] = true;
+        }
+    };
+    appear(CHASM_GOAL_ARCHER,e.tick >= (uint64_t)CALENDAR_YEAR_TICKS);
+    appear(CHASM_GOAL_SWAMP,f_huts && d.f_swamp_seen && !EconomyWaveBeaten(e.wave));
+    appear(CHASM_GOAL_WAVE,e.wave.f_open);
+    bool f_look = e.tick % (uint64_t)GOAL_SWAMP_LOOK_TICKS == 0;
+    //THE SWAMP, while it holds: the first in it unescorted fails it.
+    if (f_look && shown[CHASM_GOAL_SWAMP] && d.goal_told[CHASM_GOAL_SWAMP] < 0 && !EconomyWaveBeaten(e.wave)){
+        if (uint32_t who = SwampUnescorted(*w,e)){
+            told(EVENT_GOAL_FAILED,who,CHASM_GOAL_SWAMP);
+        }
+    }
+    //THE WAVE'S FIRST SIGHT: one of its zombies out from under the clouds - what the view draws it by.
+    if (f_look && e.wave.f_open && !e.wave.f_seen){
+        for (const EconomyZombie& m : e.zombies){
+            if (std::binary_search(e.wave.zombies.begin(),e.wave.zombies.end(),m.id) && exploration.Explored(m.pos)){
+                economy.WaveSeen(m.pos);
+                break;
+            }
+        }
+    }
+    int in_play = 0;
     int decided = 0;
     int met = 0;
     for (int g = 0; g < CHASM_GOALS; g++){
-        int state = ChasmGoalState(g,e,d);
+        if (!(shown[g] || g == CHASM_GOAL_ARCHER || (g == CHASM_GOAL_WAVE && f_huts))){
+            continue;
+        }
+        in_play++;
+        int state = shown[g] ? ChasmGoalState(g,e,d) : CHASM_GOAL_GOING;
+        //An archer trained calls the wave, on a map with huts to let it out - once (Economy::CallWave).
+        if (g == CHASM_GOAL_ARCHER && state == CHASM_GOAL_MET && f_huts && !e.wave.due){
+            economy.CallWave(e.tick);
+        }
         if (d.goal_told[g] < 0 && state == CHASM_GOAL_MET){
             told(EVENT_GOAL_MET,(g == CHASM_GOAL_CHASM) ? d.person[DISCOVERY_BALCONY] : 0,g);
         }else if (d.goal_told[g] < 0 && state == CHASM_GOAL_FAILED){
@@ -162,8 +297,8 @@ void ApplicationChasm::TickGoals(){
         decided += (state != CHASM_GOAL_GOING) ? 1 : 0;
         met += (state == CHASM_GOAL_MET) ? 1 : 0;
     }
-    if (decided == CHASM_GOALS && !d.f_complete_told){
-        told(EVENT_DEMO_COMPLETE,0,met);
+    if (decided == in_play && !d.f_complete_told){
+        told(EVENT_DEMO_COMPLETE,0,met,(GoodsMask)in_play);
     }
 }
 
@@ -248,8 +383,8 @@ void ApplicationChasm::UpdateEnd(){
 /*
     RENDER THREAD, from DrawOverlay in play mode: the GOALS panel at the top left, under `top` - each goal with its mark
     in its state's colour (dim in progress, green met, red failed) and at its right what it wants next, or MET or
-    FAILED. Its look is NEEDS ATTENTION's. A goal switched off (THE SWITCHES) has no row, and with none left there is
-    no panel. Returns its foot, or `top` with nothing drawn.
+    FAILED. Its look is NEEDS ATTENTION's. A goal not yet appeared, or switched off (THE SWITCHES), has no row, and with
+    none left there is no panel. Returns its foot, or `top` with nothing drawn.
 */
 float ApplicationChasm::DrawGoals(float s, float top){
     std::shared_ptr<const EconomyState> e = GetEconomy();
@@ -272,7 +407,7 @@ float ApplicationChasm::DrawGoals(float s, float top){
     int rows = 0;
     float w = 0.0f;
     for (int g = 0; g < CHASM_GOALS; g++){
-        if (!TriggerOn(g)){
+        if (!TriggerOn(g) || !ChasmGoalShown(g,*d)){
             continue;
         }
         shown[rows++] = g;
@@ -332,6 +467,7 @@ void ApplicationChasm::RenderGoalsPanel(){
             int st = ChasmGoalState(g,*e,*d);
             stands = (st == CHASM_GOAL_MET) ? "met" : (st == CHASM_GOAL_FAILED) ? "failed" : ChasmGoalNext(g,*e,*d);
             std::transform(stands.begin(),stands.end(),stands.begin(),::tolower);
+            stands = ChasmGoalShown(g,*d) ? stands : "not yet appeared";
         }
         row(g,std::string("goal: ") + ChasmGoalTitle(g),stands);
     }

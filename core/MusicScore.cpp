@@ -35,6 +35,9 @@ const ModeInfo kModes[MUSIC_MODE_COUNT] = {
     {"ionian",           {0, 2, 4, 5, 7, 9, 11}},
     {"lydian",           {0, 2, 4, 6, 7, 9, 11}},
     {"mixolydian",       {0, 2, 4, 5, 7, 9, 10}},
+    //The step from the flat 2nd up to the major 3rd is an augmented 2nd, which is the whole sound
+    //of it; a random walk finds it on its own, since it is one scale step.
+    {"phrygian_dominant", {0, 1, 4, 5, 7, 8, 10}},
 };
 
 const char* kPitchNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -49,6 +52,7 @@ int MusicModeFromName(const std::string& name){
     for (int m = 0; m < MUSIC_MODE_COUNT; m++) if (name == kModes[m].name) return m;
     if (name == "minor") return MUSIC_MODE_AEOLIAN;
     if (name == "major") return MUSIC_MODE_IONIAN;
+    if (name == "hijaz") return MUSIC_MODE_PHRYGIAN_DOMINANT;
     return -1;
 }
 

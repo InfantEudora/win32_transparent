@@ -123,4 +123,43 @@ inline uint32_t MeshHash(uint32_t a, uint32_t b = 0, uint32_t c = 0){
     return h;
 }
 
+/*
+    A CYPRESS (gardens_plan.md): a tall faceted spindle on a short trunk, `tall` from its foot to its tip. Built here
+    rather than squeezed from the forest's pines, whose tiers still read as a pine however narrow. Its rings are turned
+    a little against each other, and by `seed`, so no two stand alike.
+*/
+#define MESH_CYPRESS_SIDES  6
+inline void MeshCypress(std::vector<vertex>& out, const vec3& foot, float tall, uint32_t seed, int row = PAL_TEMPERATE){
+    //Up the crown, as shares of `tall`: where each ring is and how far out - widest low down, drawn in to a point.
+    static const float ring_h[4] = {0.10f,0.32f,0.64f,0.87f};
+    static const float ring_r[4] = {0.075f,0.115f,0.085f,0.045f};
+    const float turn = (float)(seed % 1000u) * 0.00628f;
+    vec3 ring[4][MESH_CYPRESS_SIDES];
+    for (int r = 0; r < 4; r++){
+        for (int i = 0; i < MESH_CYPRESS_SIDES; i++){
+            float a = turn + ((float)i + 0.5f * (float)r) * 6.2831853f / MESH_CYPRESS_SIDES;
+            ring[r][i] = foot + vec3(std::cos(a) * ring_r[r] * tall,ring_h[r] * tall,std::sin(a) * ring_r[r] * tall);
+        }
+    }
+    MeshPost(out,vec2(foot.x,foot.z),0.035f * tall,foot.y - 0.05f,foot.y + ring_h[0] * tall,PAL_BARK);
+    const vec3 tip = foot + vec3(0.0f,tall,0.0f);
+    const vec3 under = foot + vec3(0.0f,ring_h[0] * tall * 0.55f,0.0f);
+    const vec3 axis_mid = foot + vec3(0.0f,tall * 0.5f,0.0f);
+    for (int i = 0; i < MESH_CYPRESS_SIDES; i++){
+        int j = (i + 1) % MESH_CYPRESS_SIDES;
+        //Light and dark by turns round it, and from one band to the next: the faceted look of the rest of the props.
+        auto shade = [&](int band){
+            return ((i + band + (int)(seed >> 10)) % 2) ? PAL_PINE : PAL_PINE_DARK;
+        };
+        MeshTri(out,ring[0][i],ring[0][j],under,(ring[0][i] + ring[0][j]) * 0.5f - axis_mid,PAL_PINE_DARK,row);
+        for (int r = 0; r < 3; r++){
+            vec3 mid = (ring[r][i] + ring[r][j] + ring[r + 1][i] + ring[r + 1][j]) * 0.25f;
+            vec3 want = mid - (foot + vec3(0.0f,mid.y - foot.y,0.0f));
+            MeshQuad(out,ring[r][i],ring[r][j],ring[r + 1][j],ring[r + 1][i],want,shade(r),row);
+        }
+        MeshTri(out,ring[3][i],ring[3][j],tip,(ring[3][i] + ring[3][j]) * 0.5f - (foot + vec3(0.0f,ring_h[3] * tall,0.0f)),
+                shade(3),row);
+    }
+}
+
 #endif

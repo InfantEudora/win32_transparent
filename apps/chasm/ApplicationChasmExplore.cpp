@@ -343,6 +343,9 @@ void ApplicationChasm::UpdateDiscoveries(const ChasmWorld& w){
             }else if (kind == AREA_CHASM){
                 made(DISCOVERY_CHASM,tick,ev.person);
             }
+            d.f_swamp_seen = d.f_swamp_seen || kind == AREA_SWAMP;     //for its goal (swamp_huts_plan.md step 2)
+        }else if (ev.kind == EVENT_GOAL_SET && ev.amount >= 0 && ev.amount < CHASM_GOALS){
+            d.goal_set[ev.amount] = true;
         }else if (ev.kind == EVENT_SEAM_SEEN){
             made(DISCOVERY_FLOATSTONE,tick,ev.person);
         }else if (ev.kind == EVENT_BOULDER_FOUND){
@@ -370,6 +373,7 @@ void ApplicationChasm::UpdateDiscoveries(const ChasmWorld& w){
         }else if (kind == AREA_CHASM){
             made(DISCOVERY_CHASM,landing,0);
         }
+        d.f_swamp_seen = d.f_swamp_seen || kind == AREA_SWAMP;
     }
     for (size_t i = 0; !f_seams_stale && i < seam_seen.size(); i++){
         if (seam_seen[i]){

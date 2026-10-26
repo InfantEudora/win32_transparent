@@ -4,9 +4,9 @@ aliases: forest, log, logs, stump
 kind: world
 status: built
 summary: The forest is the colony's only source of new wood. A felled tree leaves a log, then a stump, and nothing grows back yet.
-plans: economy_plan.md > Production; seasons_plan.md; woodcutting_plan.md > Decided (the user, 2026-10-11)
-code: Economy.h: PROP_STATE_STANDING PROP_STATE_LOG PROP_STATE_STUMP; Economy.cpp: WoodNear RoadTrees EconomyPropCovered EconomyTreeSite; Forest.cpp
-verified: 2026-10-12
+plans: economy_plan.md > Production; seasons_plan.md; woodcutting_plan.md > Decided (the user, 2026-10-11); gardens_plan.md > Decided (the user, 2026-10-26)
+code: Economy.h: PROP_STATE_STANDING PROP_STATE_LOG PROP_STATE_STUMP; Economy.cpp: WoodNear RoadTrees EconomyPropCovered EconomyTreeSite EconomyGardenKeeps EconomyPropSite; Forest.cpp; Forest.h: ForestGardenKeeps
+verified: 2026-10-26
 ---
 
 The forest grows from the world's seed along with the rest of the map. Every tree in it has a state of
@@ -29,6 +29,10 @@ A **fruit tree** - an oak that bears [[Fruit|fruit]] - is felled only when it st
 A tree under something the player has **built** (a building's standing storey, a garden or lot, a field)
 is as good as gone: nobody fells it or waits for it. Under a [[Construction|site]] it stands until it is
 felled, and the site waits for it.
+
+A [[Garden|garden]] **keeps** its broadleaf trees - oaks, willows, palms - from the moment it is painted: its site
+does not wait for them, nobody fells them, and they stay in sight inside its wall. Its pines are felled first,
+as for any site.
 
 ## Through the year
 

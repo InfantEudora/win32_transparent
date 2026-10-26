@@ -46,6 +46,7 @@ APP_SRCS += TitleTown.cpp
 APP_SRCS += ZoneMesh.cpp
 APP_SRCS += ChasmSave.cpp
 APP_SRCS += Forest.cpp
+APP_SRCS += Gardens.cpp
 APP_SRCS += Deposits.cpp
 APP_SRCS += CropMesh.cpp
 APP_SRCS += BuildingMesh.cpp

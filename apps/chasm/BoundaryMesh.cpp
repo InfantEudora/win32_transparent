@@ -130,6 +130,20 @@ void BuildBoundaryCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, s
         vec2 mid = (p[k] + p[(k + 1) % 4]) * 0.5f;
         int va = quad.v[k];
         int vb = quad.v[(k + 1) % 4];
+        /*
+            A garden and a terrace (gardens_plan.md, the hanging garden): where a retaining wall stands between the two
+            plots, that is the garden's wall - from above, where its hedge rides behind the capstones (TerraceMesh.cpp), or
+            from below - and a second wall on its coping would stand half over the edge. Elsewhere on a terrace the wall
+            goes where the terrace's top and the garden's lawn meet their neighbours: the house n-gon's crossing.
+        */
+        if (kind == ZONE_BOUNDARY_GARDEN_WALL){
+            if (ZoneTerraceStep(w,z,va,vb) != ZONE_STEP_OPEN){
+                continue;
+            }
+            if (ZoneTerraceStands(z,va) || ZoneTerraceStands(z,vb)){
+                mid = BuildingWallCrossing(w,va,vb);
+            }
+        }
         float yc = GroundAt(w,z,va,vb,centre) - FOOTING;
         //The midpoint is shared with the cell across edge k: of the two, the lower index builds the post.
         int across = QuadAcross(w,fine_quad,k);

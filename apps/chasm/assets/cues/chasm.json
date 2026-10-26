@@ -173,6 +173,17 @@
     "colony_lost": {
       "signal": "colony_lost", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
     },
+    "goal_set": {
+      "comment": "A goal appearing (swamp_huts_plan.md step 2): train an archer, the swamp, the first wave - the chime, as a goal met has.",
+      "signal": "goal_set", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "wave": {
+      "comment": "THE FIRST WAVE (swamp_huts_plan.md step 2): the swamp huts' doors open, 'something stirs in the swamp', and then the first of them out from under the clouds. The chime for now; a sound of their own wanted.",
+      "signal": "wave", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
+    "wave_seen": {
+      "signal": "wave_seen", "sounds": "notification", "bus": "ui", "gain": 0.7, "group": "notice", "busy": "queue", "max_wait": 150
+    },
     "discovered_first": {
       "comment": "AN AREA FOUND (areas_plan.md): the first of its kind - the first waterfall, the swamp - is told on the notice line, so it chimes with it, heard anywhere. area is its kind (Areas.h AREA_*: 0 river, 1 waterfall, 2 plateau, 3 forest, 4 mountain, 5 meadow, 6 swamp, 7 desert, 8 chasm), for a row of its own one day. Not the chasm, whose first sight is the music's (chasm_reveal).",
       "signal": "discovered", "when": [ ["first", "==", 1], ["area", "!=", 8] ],

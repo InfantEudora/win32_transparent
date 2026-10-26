@@ -1,5 +1,6 @@
 #include "ApplicationChasm.h"
 #include "BuildingMesh.h"
+#include "CastleMesh.h"
 #include "MeshBuild.h"
 #include "Palette.h"
 #include "AssetManager.h"
@@ -392,6 +393,93 @@ static vec2 RouteDoorDetour(const ChasmWorld& w, const ZoneState* z, const Econo
 }
 
 /*
+    Round an open TURRET (castle_plan.md "The stairs"), whose one node is its top: the leg between the ground beside it
+    and that node goes straight to its foot and round its steps' middle up to its last; the leg between its top and the
+    deck it climbs to goes out across its landing - either way round. Where he is drawn `f` down leg `seg`, how high, and
+    with `facing` which way he looks; false off a turret's legs.
+*/
+static bool RouteTurretAt(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, int seg, float f, vec2& at,
+                          float& y, vec2* facing){
+    if (!z || z->world.get() != &w || seg < 0 || seg + 1 >= (int)k.route.size() || k.route_layer.empty()){
+        return false;
+    }
+    GridPick pa = w.picker->Pick(k.route[seg]);
+    GridPick pb = w.picker->Pick(k.route[seg + 1]);
+    if (!pa.f_hit || !pb.f_hit){
+        return false;
+    }
+    int la = EconomyRouteLayer(k,seg);
+    int lb = EconomyRouteLayer(k,seg + 1);
+    auto turret = [&](int v, int layer){
+        return layer != WALK_GROUND && ZoneCastleShape(*z,v) == ZONE_CASTLE_TURRET && layer == ZoneCastleLayer(*z,v);
+    };
+    bool f_a = turret(pa.plot,la);
+    if (f_a == turret(pb.plot,lb)){
+        return false;
+    }
+    CastleTurret tu;
+    if (!CastleTurretOf(w,*z,f_a ? pa.plot : pb.plot,tu)){
+        return false;
+    }
+    vec2 other = f_a ? k.route[seg + 1] : k.route[seg];
+    float g = f_a ? f : 1.0f - f;           //0 on its top, 1 at the other end
+    float r = (tu.core + tu.outer) * 0.5f;
+    float turn = tu.sweep / tu.steps;
+    vec2 landing = tu.Round(tu.start + tu.sweep - 0.5f * turn,r);
+    if ((f_a ? lb : la) != WALK_GROUND){
+        at = landing + (other - landing) * g;
+        y = tu.top_y;
+        if (facing){
+            *facing = (other - landing) * (f_a ? 1.0f : -1.0f);
+        }
+        return true;
+    }
+    //From the ground: straight to its foot, then round - climbing anticlockwise.
+    vec2 foot = tu.Round(tu.start + 0.5f * turn,r);
+    float straight = (other - foot).length();
+    float round = r * (tu.sweep - turn);
+    float d = (1.0f - g) * (straight + round);      //from the ground
+    if (d < straight){
+        at = other + (foot - other) * (d / std::max(1e-4f,straight));
+        GridPick here = w.picker->Pick(at);
+        y = here.f_hit ? ZoneGroundHeight(w,*z,here.plot,at) : tu.base_y;
+        if (facing){
+            *facing = (foot - other) * (f_a ? -1.0f : 1.0f);
+        }
+        return true;
+    }
+    float s = std::min(1.0f,(d - straight) / std::max(1e-4f,round));
+    float angle = tu.start + 0.5f * turn + s * (tu.sweep - turn);
+    float step = (tu.top_y - tu.base_y) / tu.steps;
+    at = tu.Round(angle,r);
+    y = tu.base_y + step + s * (tu.top_y - tu.base_y - step);
+    if (facing){
+        *facing = vec2(-std::sin(angle),std::cos(angle)) * (f_a ? -1.0f : 1.0f);
+    }
+    return true;
+}
+
+//How far off his route he is drawn round an open turret (RouteTurretAt), and which way he looks there.
+static vec2 RouteTurretDetour(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& k, vec2& facing){
+    if (k.seg < 0 || k.seg + 1 >= (int)k.route.size()){
+        return vec2(0.0f,0.0f);
+    }
+    vec2 d = k.route[k.seg + 1] - k.route[k.seg];
+    float len = d.length();
+    float f = (len > 1e-4f) ? std::max(0.0f,std::min(1.0f,k.along / len)) : 0.0f;
+    vec2 at;
+    float y;
+    vec2 looks;
+    if (!RouteTurretAt(w,z,k,k.seg,f,at,y,&looks)){
+        return vec2(0.0f,0.0f);
+    }
+    if (looks.dot(looks) > 1e-8f){
+        facing = looks;
+    }
+    return at - (k.route[k.seg] + d * f);
+}
+
+/*
     How high his route is (ramparts_plan.md) at `along` down leg `seg`: each of its points says which layer it is on.
     On the ground, the ground's relief there; on a deck, its height. Between two plots, from the one's height straight
     to where their layers meet - at the edge between them - and on to the other's, so a stair is walked as a ramp and a
@@ -422,6 +510,14 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         float len = d.length();
         f = (len > 1e-4f) ? std::max(0.0f,std::min(1.0f,along / len)) : 1.0f;
         pos = k.route[s] + d * f;
+    }
+    //Round an open turret, on its steps.
+    {
+        vec2 at;
+        float y;
+        if (RouteTurretAt(w,z,k,s,f,at,y,NULL)){
+            return y;
+        }
     }
     //How far along leg s the walls between its two plots cross it (BuildingWallCrossing): its midpoint, or off it round
     //a point of five or six cells - where a terrace's wall stands and a castle's tops meet.
@@ -461,6 +557,10 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         return ground_at(pos);
     }
     auto at_point = [&](const vec2& at, int v, int layer){
+        CastleFlight on;
+        if (WalkLayerStair(layer) && CastleFlightOf(w,*z,v,on)){
+            return on.HeightAt(at);
+        }
         return (layer == WALK_GROUND) ? ground_at(at) : BuildingLayerHeight(w,*z,v,layer);
     };
     int la = EconomyRouteLayer(k,s);
@@ -493,8 +593,16 @@ float RouteHeight(const ChasmWorld& w, const ZoneState* z, const EconomyWorker& 
         }
         return f_on_b ? at_point(pos,pb,lb) : at_point(pos,pa,la);
     }
-    //Level, or up and down a stair, to where the two meet - at the wall between them, as the castle draws its tops.
+    //Level, or up and down a stair, to where the two meet - at the wall between them, as the castle draws its tops. On a
+    //stair's FLIGHT, its plane, which its steps are cut from (castle_plan.md "The stairs").
     float wall = wall_along(pa,pb);
+    CastleFlight fl;
+    if (f < wall && WalkLayerStair(la) && CastleFlightOf(w,*z,pa,fl)){
+        return fl.HeightAt(pos);
+    }
+    if (f >= wall && WalkLayerStair(lb) && CastleFlightOf(w,*z,pb,fl)){
+        return fl.HeightAt(pos);
+    }
     float hm = BuildingMeetHeight(w,*z,pa,la,pb,lb,meet,a + (b - a) * wall);
     if (f < wall){
         float ha = at_point(a,pa,la);
@@ -1005,6 +1113,7 @@ void ApplicationChasm::UploadWorkers(){
         vec2 facing = EconomyWorkerLooks(*e,k);
         vec2 body = EconomyBody(k) + RouteDoorDetour(*w,z.get(),k);     //SPACING: where he stands, off his route - and
                                                                          //through an upper door, not the wall beside it
+        body = body + RouteTurretDetour(*w,z.get(),k,facing);            //...and round an open turret's steps
         shown->SetPosition(vec3(body.x,y,body.y),false);
         shown->SetRotation(quat(vec3(0.0f,1.0f,0.0f),atan2f(facing.x,facing.y)),false);
         shown->SetVisibility(true);

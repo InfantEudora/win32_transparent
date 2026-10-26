@@ -5,8 +5,8 @@ kind: world
 status: built
 summary: The parts of the map there are to find - each river, each waterfall, each biome, the open plateau, the forest and the chasm - found when someone first sees them.
 plans: areas_plan.md > Areas; areas_plan.md > The discovered event; areas_plan.md > The water heard; areas_plan.md > The music
-code: Areas.h: AREA_RIVER AREA_WATERFALL AREA_PLATEAU AREA_FOREST AREA_CHASM AREA_FALL_REACH BuildAreas; ApplicationChasmMusic.cpp: SetupMusic MeasureMusicShares; ApplicationChasmExplore.cpp: LookForAreas TickExploration; Economy.h: EVENT_DISCOVERED; ApplicationChasmSound.cpp: SignalWater; Forest.h: ForestData
-verified: 2026-10-16
+code: Areas.h: AREA_RIVER AREA_WATERFALL AREA_PLATEAU AREA_FOREST AREA_CHASM AREA_DESERT AREA_FALL_REACH BuildAreas; ApplicationChasmMusic.cpp: SetupMusic MeasureMusicShares MUSIC_DESERT_DUCK; ApplicationChasmExplore.cpp: LookForAreas TickExploration; Economy.h: EVENT_DISCOVERED; ApplicationChasmSound.cpp: SignalWater; Forest.h: ForestData
+verified: 2026-10-26
 ---
 
 An **area** is a part of the map there is to discover. They come with the map, so every map of a seed has
@@ -44,7 +44,8 @@ explored. The water plays on in a pause.
 
 The season's music plays everywhere. Over **unexplored ground** the clouds' music rises over it, and over
 **chasm that has been seen** the chasm's, the season's turned down under either - by how much of the
-view is clouds or chasm, so it moves with the camera.
+view is clouds or chasm, so it moves with the camera. Over **desert that has been seen** the desert's
+music (oud, sitar, tambourines, in hijaz) takes the season's place altogether: the desert has no seasons.
 
 ## Seeing them
 

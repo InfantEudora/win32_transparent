@@ -4,9 +4,9 @@ aliases: terraces, retaining wall, retaining walls, stair, stairs, stepped stree
 kind: buildings
 status: built
 summary: A flat stone platform levelled on a hillside, to build, farm and walk on as on flat ground, with stairs where a road climbs its wall.
-plans: terraces_plan.md > Stage 2: terraces as ground; terraces_plan.md > Stage 3: buildings that join the levels
-code: Zones.h: ZoneTerraceStands ZoneGroundAt ZoneTerraceStep ZoneCanTerrace ZoneUpperDoor; Zones.cpp: ZONE_TERRACE_MOST_FILL ZONE_TERRACE_STEP; Economy.h: ECONOMY_TERRACE_STONE EconomyTerraceStone; TerraceMesh.cpp: BuildTerraceCell BuildTerraceFace TERRACE_PIER_FROM; RoadMesh.cpp: RoadStairs; BuildingMesh.cpp: WallDoor BuildingUpperDoorAt; ApplicationChasmWorkersView.cpp: RouteDoorLeg
-verified: 2026-10-25
+plans: terraces_plan.md > Stage 2: terraces as ground; terraces_plan.md > Stage 3: buildings that join the levels; gardens_plan.md > 3. The hanging garden (the view only)
+code: Zones.h: ZoneTerraceStands ZoneGroundAt ZoneTerraceStep ZoneTerraceTooTall ZoneCanTerrace ZoneUpperDoor; Zones.cpp: ZONE_TERRACE_MOST_FILL ZONE_TERRACE_STEP; Economy.h: ECONOMY_TERRACE_STONE EconomyTerraceStone; TerraceMesh.cpp: BuildTerraceCell BuildTerraceFace TERRACE_PIER_FROM TERRACE_GARDEN_DRAPE; RoadMesh.cpp: RoadStairs; BuildingMesh.cpp: WallDoor BuildingUpperDoorAt; ApplicationChasmWorkersView.cpp: RouteDoorLeg
+verified: 2026-10-26
 ---
 
 A terrace levels a hillside: one flat platform over the large squares it is dragged across, with a stone retaining
@@ -26,7 +26,9 @@ wall round it. Its tool comes with the [[Stonecutter|stonecutter's hut]], when a
 - **Walking**: where a terrace stands more than {ZONE_TERRACE_STEP} over the ground across, its edge is a retaining
   wall no one walks; on its uphill side, where the hill meets it at about its height, people walk on. A
   [[Roads and walls|road]] that runs across a wall of up to a storey becomes a **stair** - a stepped street, walked
-  slowly. [[Zombie|Zombies]] never step onto a terrace.
+  slowly - built from below: its steps stand once the road at the wall's foot is laid, with the road above only
+  painted, and are how that road is reached to be laid. A road across a taller wall is refused: put a terrace a storey
+  lower between. [[Zombie|Zombies]] never step onto a terrace.
 - **Beside a building**: no door opens into a retaining wall or off a terrace's edge - its doors are on its open sides
   ([[House|doors]]) - and no window is drawn under the terrace's top.
 - **Upper doors**: a building against a terrace's wall opens onto the terrace on the storey whose floor meets its top
@@ -39,6 +41,8 @@ wall round it. Its tool comes with the [[Stonecutter|stonecutter's hut]], when a
   overhanging capstones along the head (none over a stair, or along a building that stands higher), lighter quoins
   up the outer corners, a buttress about every cell along walls of at least {TERRACE_PIER_FROM}, creepers down some
   walls and tufts of grass at the foot of others.
+- **A garden on it** is a [[Garden|hanging garden]]: the retaining wall is its wall, a clipped hedge behind the
+  capstones, creepers with flowers down every face under it, and a cypress at about every other outer corner.
 - It is erased only with nothing on it.
 
 ## Planned

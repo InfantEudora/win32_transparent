@@ -8,6 +8,7 @@
 #include "TerraceMesh.h"
 #include "TerrainMesh.h"
 #include "Economy.h"
+#include "Gardens.h"
 
 #include <algorithm>
 
@@ -16,11 +17,19 @@
 namespace {
 
 //A garden or lot plot's quarter in this cell, laid on its ground - the relief, or a terrace's top: corner, midpoint,
-//centre, midpoint.
-void GroundQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneState& z, int plot, const vec2* p, int k,
-                   int column){
+//centre, midpoint. On a standing terrace its edges' points are where the terrace's own top turns (TerraceMesh.cpp),
+//the house n-gon's crossings, so it ends at the capstones rather than reaching out over them (gardens_plan.md).
+void GroundQuarter(std::vector<vertex>& out, const ChasmWorld& w, const ZoneState& z, const GridQuad& quad, const vec2* p,
+                   int k, int column){
+    int plot = quad.v[k];
+    int next = (k + 1) % 4;
+    int prev = (k + 3) % 4;
     vec2 centre = (p[0] + p[1] + p[2] + p[3]) * 0.25f;
-    vec2 q[4] = {p[k],(p[k] + p[(k + 1) % 4]) * 0.5f,centre,(p[k] + p[(k + 3) % 4]) * 0.5f};
+    vec2 q[4] = {p[k],(p[k] + p[next]) * 0.5f,centre,(p[k] + p[prev]) * 0.5f};
+    if (ZoneTerraceStands(z,plot)){
+        q[1] = BuildingWallCrossing(w,quad.v[k],quad.v[next]);
+        q[3] = BuildingWallCrossing(w,quad.v[prev],quad.v[k]);
+    }
     vec3 c[4];
     for (int i = 0; i < 4; i++){
         c[i] = vec3(q[i].x,ZoneGroundHeight(w,z,plot,q[i]) + GROUND_LIFT,q[i].y);
@@ -222,9 +231,18 @@ void BuildZoneChunk(const ChasmWorld& w, const ZoneState& z, int chunk, std::vec
                 if (!ZoneEnclosesGround(gk) || z.storeys[quad.v[k]] > 0 || !z.ground_built[quad.v[k]]){
                     continue;
                 }
-                GroundQuarter(out,w,z,quad.v[k],p,k,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
+                GroundQuarter(out,w,z,quad,p,k,(gk == ZONE_GROUND_GARDEN) ? PAL_BUSH : PAL_PATH);
             }
             GroundSiteCell(w,z,q,out);
+            //A cell the garden fills: a cypress in its middle (Gardens.h). Its flowers and bushes are the forest's sets'.
+            vec3 foot;
+            float tall = 0.0f;
+            uint32_t seed = 0;
+            if (GardenQuadCypress(w,z,q,&foot,&tall,&seed)){
+                int biome = w.terrain->biome[quad.v[0]];
+                MeshCypress(out,foot,tall,seed,(biome == TERRAIN_BIOME_SWAMP) ? PAL_SWAMP
+                                              : (biome == TERRAIN_BIOME_DESERT) ? PAL_DESERT : PAL_TEMPERATE);
+            }
         }
         if (f_road || f_ground){    //f_ground: the path just inside a gate
             BuildRoadCell(w,z,q,out,harm);

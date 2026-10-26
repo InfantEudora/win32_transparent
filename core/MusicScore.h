@@ -193,6 +193,7 @@ enum MusicMode{
     MUSIC_MODE_IONIAN,
     MUSIC_MODE_LYDIAN,              //major with a raised 4th - wonder, open space
     MUSIC_MODE_MIXOLYDIAN,          //major with a flat 7th - between ionian and dorian
+    MUSIC_MODE_PHRYGIAN_DOMINANT,   //phrygian with a major 3rd: maqam hijaz - heat, the desert
     MUSIC_MODE_COUNT
 };
 const char* MusicModeName(int mode);

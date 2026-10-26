@@ -16,9 +16,11 @@
 #include "Texture.h"
 #include "Palette.h"
 #include "ChasmHud.h"
+#include "ChasmVersion.h"
 #include "RoadMesh.h"
 #include "CropMesh.h"
 #include "BuildingMesh.h"
+#include "Gardens.h"
 
 #include <math.h>
 #include <cmath>
@@ -812,6 +814,11 @@ void ApplicationChasm::EnsureZonesWorld(){
             zones.PlaceTitleTown();
             PublishZones();
         }
+        //...begun in this version, which its saves keep (ChasmSave.h). A load sets its own after this (LoadSave).
+        {
+            std::lock_guard<std::mutex> lock(menu_text_mutex);
+            colony_version = ChasmVersion();
+        }
         SetCalendar(0);
         //Nothing explored yet: the camp clears its own ground on the first tick (play_mode_plan.md).
         ResetExploration();
@@ -921,9 +928,9 @@ bool ApplicationChasm::ApplyZoneCommand(Zones& zones, const Exploration& ex, con
         (EconomyColonyCamp; THE CAMP, Zones.h).
     */
     const ZoneState& z = zones.State();
-    //A gate's door the zombies broke (zombies_plan.md step 4) hangs open until it is repaired: it shuts on nothing. A
-    //gate two plots wide is one door, so either plot's break counts.
-    if (op == ZONE_OP_GATE_SHUT && value1 && e && zw && index < z.gate.size()){
+    //A gate's door the zombies broke (zombies_plan.md step 4) hangs open until it is repaired: it shuts on nothing - nor
+    //does a castle gate's portcullis (castle_plan.md). A gate two plots wide is one door, so either plot's break counts.
+    if ((op == ZONE_OP_GATE_SHUT || op == ZONE_OP_PORTCULLIS) && value1 && e && zw && index < z.gate.size()){
         bool f_broken = EconomyGateBroken(*e,(int)index);
         int nb[8];
         int n = ZonePlotNeighbours(*zw,(int)index,nb,8);
@@ -1012,6 +1019,10 @@ void ApplicationChasm::RunSimulationTick(void){
 //From the published copies, so any thread may make one.
 ChasmSave ApplicationChasm::MakeSave(){
     ChasmSave s;
+    {
+        std::lock_guard<std::mutex> lock(menu_text_mutex);
+        s.game_version = colony_version.empty() ? std::string(ChasmVersion()) : colony_version;
+    }
     std::shared_ptr<const ChasmWorld> w = GetWorld();
     std::shared_ptr<const ZoneState> z = GetZones();
     if (!w){
@@ -1033,7 +1044,7 @@ ChasmSave ApplicationChasm::MakeSave(){
                 ZoneSavedGround g;
                 g.plot = (int)v;
                 g.kind = (int)z->ground[v] | (!z->ground_built[v] ? ZONE_GROUND_SAVED_SITE : 0)
-                         | (z->gate[v] ? ZONE_GROUND_SAVED_GATE : 0) | (ZoneGateShut(*z,(int)v) ? ZONE_GROUND_SAVED_SHUT : 0);
+                         | (z->gate[v] ? ZONE_GROUND_SAVED_GATE : 0) | (ZoneGateDoorShut(*z,(int)v) ? ZONE_GROUND_SAVED_SHUT : 0);
                 g.line = z->line[v];
                 g.owner = ZoneGroundOwner(*z,(int)v);      //whose yard (yards_plan.md), 0 nobody's
                 g.arch = z->ArchBuiltOf((int)v);            //an arch's floors built over it (arches_plan.md)
@@ -1046,12 +1057,18 @@ ChasmSave ApplicationChasm::MakeSave(){
             ZoneSavedCastle c;
             c.plot = (int)v;
             c.base = ZoneCastleBase(*z,(int)v);
+            //A stair's, the stair it climbs to (castle_plan.md "The stairs") - its own or the one over an arch.
+            int up = ZoneHasStair(*z,(int)v) ? ZoneStairUp(*z,(int)v) : -1;
             if (z->castle[v]){
                 c.piece = z->castle[v];
+                c.f_portcullis = ZonePortcullisDown(*z,(int)v);     //a gate's (castle_plan.md)
+                c.up = ZoneCastleOverSits(*z,(int)v) ? -1 : up;
                 s.castle.push_back(c);
             }
             if (z->castle_over[v]){
                 c.piece = z->castle_over[v];
+                c.f_portcullis = false;
+                c.up = ZoneCastleOverSits(*z,(int)v) ? up : -1;
                 s.castle.push_back(c);
             }
         }
@@ -1118,6 +1135,12 @@ bool ApplicationChasm::LoadSave(const ChasmSave& save, std::string& error){
     UpdateDiscoveries(*w);
     PublishEconomy();
     SetCalendar(save.calendar_tick);
+    //The version its colony was begun in, kept by every save of it from here: "unknown" for one from before saves said,
+    //which is older than any - left empty, a save would take its meta's build, this one.
+    {
+        std::lock_guard<std::mutex> lock(menu_text_mutex);
+        colony_version = save.game_version.empty() ? std::string("unknown") : save.game_version;
+    }
     if (refused){
         error = std::to_string(refused) + " plots, cells or ground refused by the rules";
         debug->Warn("LoadSave: %s\n",error.c_str());
@@ -1211,6 +1234,12 @@ void ApplicationChasm::HashSimState(StateHash& h){
         }
         if (z.castle_over[v]){
             h.Add(((uint64_t)v << 32) | 0x0E000u | z.castle_over[v]);
+        }
+        if (ZonePortcullisDown(z,(int)v)){
+            h.Add(((uint64_t)v << 32) | 0x9077u);      //a gate's portcullis down (castle_plan.md)
+        }
+        if (ZoneHasStair(z,(int)v) && ZoneStairUp(z,(int)v) >= 0){
+            h.Add(((uint64_t)v << 32) ^ (0x5CA1E000000ull | (uint32_t)ZoneStairUp(z,(int)v)));    //the stair it climbs to
         }
     }
     //Terraces (terraces_plan.md stage 2) - likewise only where there are some, so a colony without any hashes as before.
@@ -1315,6 +1344,7 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
     if (!f_held){
         paint_last_index = -1;
     }
+    castle_drag_stroke = (f_held && paint_tool == CHASM_TOOL_CASTLE) ? paint_stroke : 0u;
     if (!f_over_scene || !hover.f_hit || !(f_clicked || f_held)){
         return;
     }
@@ -1332,6 +1362,7 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
     if (f_clicked){
         paint_stroke = (paint_stroke + 1) & 0x3FFFFF;
     }
+    int last_index = f_clicked ? -1 : paint_last_index;
     paint_last_index = index;
 
     int op = ZONE_OP_NONE;
@@ -1375,9 +1406,25 @@ void ApplicationChasm::UpdatePaint(const GridPick& hover, bool f_over_scene, boo
         SubmitZone(ZONE_OP_TOWER_STONE,index,storeys,paint_stroke,0);
         return;
     }else if (tool == CHASM_TOOL_CASTLE){
-        //The debug castle (ramparts_plan.md): the panel's piece on every plot the drag reaches; shift takes one off.
+        //The debug castle (ramparts_plan.md): the panel's piece on every plot the drag reaches; shift takes one off. The
+        //plots a quick drag jumped over first, in order along it - a stair's goes plot by plot (castle_plan.md "The
+        //stairs"), and a wall has no gaps.
         op = ZONE_OP_CASTLE;
         ground = f_shift ? 0 : ZoneCastlePiece(castle_shape,castle_storeys);
+        std::shared_ptr<const ChasmWorld> w = GetWorld();
+        if (last_index >= 0 && w && last_index < (int)w->grid->fine.pos.size()){
+            vec2 from = w->grid->fine.pos[last_index];
+            vec2 to = w->grid->fine.pos[index];
+            int steps = (int)((to - from).length() / 0.25f);
+            int was = last_index;
+            for (int i = 1; i < steps; i++){
+                GridPick pick = w->picker->Pick(from + (to - from) * ((float)i / (float)steps));
+                if (pick.f_hit && pick.plot != was && pick.plot != index){
+                    SubmitZone(ZONE_OP_CASTLE,pick.plot,ground,paint_stroke,0);
+                    was = pick.plot;
+                }
+            }
+        }
     }else if (tool == CHASM_TOOL_ERASE){
         std::shared_ptr<const ZoneState> z = GetZones();
         if (z && ZoneCastleShape(*z,hover.plot) != ZONE_CASTLE_NONE){
@@ -1625,6 +1672,10 @@ bool ApplicationChasm::PropHidden(const PropInstance& p, const ZoneState* z, boo
     if (p.kind == PROP_OUTCROP && p.plot >= 0 && z->KindOf(p.plot) == ZONE_KIND_MINE){
         return false;
     }
+    //What a garden keeps (gardens_plan.md) stays in sight: inside its wall, whatever road runs past outside it.
+    if (EconomyGardenKeeps(*z,p)){
+        return false;
+    }
     if (EconomyPropCovered(*z,p.plot,p.coarse)){
         return true;
     }
@@ -1677,6 +1728,10 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
         bool f_by_road = false;
         bool f_hidden = PropHidden(p,z,&f_by_road);
         uint8_t state = PropStateOf(e,(size_t)i);
+        //A garden keeps what grows (gardens_plan.md), not a stump or log of what was felled before it: those it covers.
+        if (!f_hidden && state != PROP_STATE_STANDING && z && EconomyGardenKeeps(*z,p) && EconomyPropCovered(*z,p.plot,p.coarse)){
+            f_hidden = true;
+        }
         if (f_hidden && !(f_by_road && state == PROP_STATE_LOG)){
             continue;
         }
@@ -1734,6 +1789,28 @@ void ApplicationChasm::RebuildPropChunk(const ChasmWorld& w, const ZoneState* z,
             float y = (p.plot >= 0) ? w.terrain->GroundHeight(at,w.terrain->Height(p.plot)) : p.pos.y;
             sets[PROP_LOG].push_back(Object::ComposeTransformScale(vec3(at.x,y,at.y),quat(vec3(0.0f,1.0f,0.0f),yaw),
                                                                    vec3(s,s,s)));
+        }
+    }
+    /*
+        A GARDEN'S PLANTING (gardens_plan.md, Gardens.h): its flowers, bushes and shrubs, decided quad by quad for the quads
+        of this chunk - the zones' own chunks - and drawn as the forest's own are, a plant's stage of the season from its
+        seed in place of an index, flowers in spring and summer only. Its cypresses are the zones' meshes' (ZoneMesh.cpp).
+    */
+    if (z){
+        std::vector<GardenPlant> plants;
+        for (int q : w.mesh->chunks[chunk].quads){
+            GardenQuadPlants(w,*z,q,plants);
+        }
+        for (const GardenPlant& g : plants){
+            if (!f_forest_flowers && (g.kind == PROP_FLOWERS_A || g.kind == PROP_FLOWERS_B)){
+                continue;
+            }
+            int set = g.kind;
+            if (ForestSeasonal(g.kind) != FOREST_SEASONAL_NONE){
+                set = season_look_set[g.kind][ForestStage(g.kind,(size_t)g.seed,tick)];
+            }
+            sets[set].push_back(Object::ComposeTransformScale(g.pos,quat(vec3(0.0f,1.0f,0.0f),g.yaw),
+                                                              vec3(g.scale,g.scale,g.scale)));
         }
     }
     bool f_show = f_view_forest;
@@ -2381,9 +2458,17 @@ void ApplicationChasm::UpdatePickView(){
         }else if (tool == CHASM_TOOL_CASTLE && castle_shape == CHASM_CASTLE_TOWER){
             bool f_ok = ZoneTowerStone(z,hover.plot) || ZoneCanBuild(*w,z,hover.plot,ZONE_KIND_TOWER,0,NULL);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
+        }else if (tool == CHASM_TOOL_CASTLE && castle_shape == ZONE_CASTLE_STAIR && !z.castle.empty()){
+            //A stair as the drag in progress would lay it here, or one started here (castle_plan.md "The stairs"); a
+            //stair of its own, or the drag's last plot, is fine.
+            ZoneStairStep st;
+            bool f_ok = ZonePlanStair(*w,z,hover.plot,castle_drag_stroke,st) || st.f_quiet;
+            plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }else if (tool == CHASM_TOOL_CASTLE && !z.castle.empty()){
-            //At the level a drag started here would take (ZoneCastleLevelFor).
-            bool f_ok = ZoneCanCastle(*w,z,hover.plot,castle_shape,castle_storeys,ZoneCastleLevelFor(*w,z,hover.plot,0),NULL);
+            //At the level a drag started here would take (ZoneCastleLevelFor) - a block on a road its gate (castle_plan.md).
+            int shape = (castle_shape == ZONE_CASTLE_BLOCK && z.ground[hover.plot] == ZONE_GROUND_ROAD) ? ZONE_CASTLE_GATE
+                                                                                                         : castle_shape.load();
+            bool f_ok = ZoneCanCastle(*w,z,hover.plot,shape,castle_storeys,ZoneCastleLevelFor(*w,z,hover.plot,0),NULL);
             plot_colour = f_ok ? PICK_PAINT_OK : PICK_PAINT_REFUSED;
         }else if (tool == CHASM_TOOL_TERRACE && !z.terrace.empty()){
             //By the square (terraces_plan.md stage 2): green if any of its plots would take the terrace a click there makes,
@@ -3975,8 +4060,15 @@ void ApplicationChasm::RenderChasmPanel(){
                 ImGui::SliderInt("storeys##castle",&storeys,ZONE_STONE_TOWER_LEAST,ZONE_STONE_TOWER_MOST);
                 ImGui::PushStyleColor(ImGuiCol_Text,ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                 ImGui::TextWrapped("a stone guard tower on the castle's level, a doorway wherever a wall-walk meets one of its "
-                                   "floors; crenellated on a plot of three cells, a roofed guard room on any other. Its door "
+                                   "floors; a roofed guard room on a plot of four cells, crenellated on any other. Its door "
                                    "is the ladder's side. A click places one, shift takes it off");
+            }else if (shape == ZONE_CASTLE_STAIR){
+                //Its heights come of the drag (castle_plan.md "The stairs"): no storeys to choose.
+                ImGui::PushStyleColor(ImGuiCol_Text,ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("drag a stair out from a wall-walk - a storey down each plot to the ground - or up from the "
+                                   "ground, a storey up each. Where the drag turns, a landing; a stair left climbing more than "
+                                   "a storey from the ground, an open spiral. Start on a stair to branch off it; shift takes a "
+                                   "stair off, from its foot up");
             }else{
                 ImGui::SetNextItemWidth(160.0f);
                 ImGui::SliderInt("storeys##castle",&storeys,1,ZONE_CASTLE_MAX_STOREYS);
@@ -4420,6 +4512,9 @@ void ApplicationChasm::RegisterMCPTools(){
                                                                ? BuildingLayerHeight(*z->world,*z,pick.plot,ZoneCastleLayer(*z,pick.plot))
                                                                : 0.0f},
                                                      {"over",CastleOverJson(*z,pick.plot)}};
+                        if (ZoneHasStair(*z,pick.plot)){
+                            result["zone_castle"]["up"] = ZoneStairUp(*z,pick.plot);    //the stair it climbs to (castle_plan.md)
+                        }
                     }
                     //Its ground (terraces_plan.md stage 2): a terrace's top, or the terrain's - and the step to each
                     //neighbour, open, a wall, a stair or a building's upper door, with its storey (ZoneTerraceStep, stage 3).
@@ -4557,14 +4652,22 @@ void ApplicationChasm::RegisterMCPTools(){
         "door - toward the neighbour at to_x/to_z or `toward` (a plot), or with neither to its next open side; tower_stone makes "
         "the guard tower at the place a STONE one (`on`, default true; false wood again) - the castle's, debug only: its plot's "
         "whole tile on a castle level, `storeys` 2 to 4 high (else as it is), a doorway wherever a castle deck meets one of its "
-        "floors, its top crenellated on a plot of three cells and a roofed guard room on any other (castle_plan.md). "
+        "floors, its top a roofed guard room on a plot of four cells and crenellated on any other (castle_plan.md). "
         "THE DEBUG CASTLE (docs/ramparts_plan.md): castle puts a grey stone piece on the plot - `shape` block (solid, a "
-        "deck on top), arch (a deck over an open passage, a road may run under it) or stair (rises its last storey), "
-        "`storeys` high - or with shape none takes it off, the top one first. Painted where a piece stands, an arch "
-        "two storeys or more over the piece's top goes OVER it, its pillars on it, and a stair one storey over an arch "
-        "goes ON it, climbing over the passage (`over`); anything else takes the piece's place. Debug only (refused "
+        "deck on top) or arch (a deck over an open passage, a road may run under it), `storeys` high - or a STAIR "
+        "(castle_plan.md \"The stairs\"), whose `storeys` are not used: laid plot by plot by a drag (`stroke`), which "
+        "started on a piece, a stair or open ground beside a deck comes down from that deck a storey a plot, and started "
+        "with no deck beside climbs from the ground a storey a plot; the plot a drag turns at is a LANDING, and a stair "
+        "left climbing more than a storey from the ground an open TURRET (`castle_here` shape, `up` the stair it climbs "
+        "to). With shape none it takes the top piece off - a stair from its foot up. Painted where a piece stands, an arch "
+        "two storeys or more over the piece's top goes OVER it, its pillars on it, and a stair's drag reaching an arch a "
+        "storey under it goes ON it, climbing over the passage (`over`); anything else takes the piece's place, and a "
+        "stair never does. Debug only (refused "
         "with play). Its decks are walked only by the posted: an order onto a piece stands him on its top deck. "
-        "`castle_here` reports the plot's piece. STOPPING WORK (docs/stopping_work_plan.md): work_stop stops the "
+        "`castle_here` reports the plot's piece. A CASTLE GATE (castle_plan.md): a block painted on a road, or a road "
+        "painted through a block, is a gate - two storeys or more; one storey leaves the road open. Its doors are "
+        "gate_shut's, its portcullis `portcullis` (`on`, default true: down; false up), each on its own; `doors_here` and "
+        "`portcullis_here` report them. STOPPING WORK (docs/stopping_work_plan.md): work_stop stops the "
         "workplace at the place - a water or steam collector, condenser, woodcutter's hut, ropewalk or builders' hut (`on`, default true; "
         "false sets it working again) - so it takes nobody and its people go free; range_stop the same for an archery "
         "range, by a cell of it. CANCEL (docs/construction_plan.md): site_cancel takes the building at the plot off whole "
@@ -4667,7 +4770,8 @@ void ApplicationChasm::RegisterMCPTools(){
                 int storeys = args.value("storeys",1);
                 cmd.value[1] = !args.value("on",true) ? 0.0f
                              : (float)((storeys >= ZONE_STONE_TOWER_LEAST) ? std::min(storeys,ZONE_STONE_TOWER_MOST) : 1);
-            }else if (op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_GATE_SHUT || op == ZONE_OP_WORK_STOP || op == ZONE_OP_RANGE_STOP){
+            }else if (op == ZONE_OP_FIELD_PRIORITY || op == ZONE_OP_GATE_SHUT || op == ZONE_OP_WORK_STOP || op == ZONE_OP_RANGE_STOP
+                      || op == ZONE_OP_PORTCULLIS){
                 cmd.value[1] = args.value("on",true) ? 1.0f : 0.0f;
             }else if (op == ZONE_OP_TOWER_LADDER){
                 //Toward the neighbour at to_x/to_z, or `toward` (a plot) - without either, the next open side.
@@ -4682,7 +4786,7 @@ void ApplicationChasm::RegisterMCPTools(){
                 std::string shape_name = args.value("shape",std::string("block"));
                 int shape = (shape_name == "none") ? ZONE_CASTLE_NONE : ZoneCastleShapeByName(shape_name);
                 if (shape < 0){
-                    return json{{"error","no such castle shape - block, arch, stair or none"}};
+                    return json{{"error","no such castle shape - block, arch, stair, gate or none"}};
                 }
                 cmd.value[1] = (shape == ZONE_CASTLE_NONE) ? 0.0f
                                                            : (float)ZoneCastlePiece(shape,args.value("storeys",2));
@@ -4761,9 +4865,17 @@ void ApplicationChasm::RegisterMCPTools(){
                     result["ground_owner_here"] = ZoneGroundOwner(*z,index);    //whose yard, 0 nobody's (yards_plan.md)
                     result["line_here"] = z->line[index];
                     result["gate_here"] = !z->gate[index] ? "none" : ZoneGateShut(*z,index) ? "shut" : "open";
+                    if (ZoneCastleGate(*z,index)){
+                        //A castle gate's two, each shut on its own (castle_plan.md).
+                        result["doors_here"] = ZoneGateDoorShut(*z,index) ? "shut" : "open";
+                        result["portcullis_here"] = ZonePortcullisDown(*z,index) ? "down" : "up";
+                    }
                     result["castle_here"] = json{{"shape",ZoneCastleShapeName(ZoneCastleShape(*z,index))},
                                                  {"storeys",ZoneCastleStoreys(*z,index)},{"layer",ZoneCastleLayer(*z,index)},
                                                  {"over",CastleOverJson(*z,index)}};
+                    if (ZoneHasStair(*z,index)){
+                        result["castle_here"]["up"] = ZoneStairUp(*z,index);    //the stair it climbs to (castle_plan.md)
+                    }
                     result["building_here"] = BuildingJson(*w,*z,z->building[index]);
                 }else{
                     result["field_here"] = (bool)z->field[index];
@@ -4799,7 +4911,8 @@ void ApplicationChasm::RegisterMCPTools(){
         "Load saves/<name>.json: generate its map again if the current one has other settings, then "
         "paint its zones back through the rules (so nothing invalid can come of a stale save). "
         "Returns what was loaded, and a warning if the settings now generate a different map than "
-        "the one saved. With no name, lists the saves.",
+        "the one saved; `game_version`, the version its colony was started in (ChasmSave.h), and `older` when that is "
+        "before this build's - what the load screen marks \"(older version)\". With no name, lists the saves.",
         json{
             {"type","object"},
             {"properties",{{"name",{{"type","string"}}}}}
@@ -4823,7 +4936,8 @@ void ApplicationChasm::RegisterMCPTools(){
             std::shared_ptr<const ChasmWorld> w = GetWorld();
             char hash[32];
             snprintf(hash,sizeof(hash),"%016llx",(unsigned long long)w->grid->Hash());
-            json result{{"loaded",name},{"ok",f_ok},{"buildings",save.buildings.size()},{"world_hash",hash}};
+            json result{{"loaded",name},{"ok",f_ok},{"buildings",save.buildings.size()},{"world_hash",hash},
+                        {"game_version",save.game_version},{"older",ChasmVersionOlder(save.game_version)}};
             if (!error.empty()){
                 result["error"] = error;
             }

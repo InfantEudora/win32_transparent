@@ -320,7 +320,7 @@ hover, the zones hash - only where stone - `chasm_paint` op `tower_stone` with `
   towers `"stone": true`) and loaded again: still stone. `tower_stone` with play refused; with `on` false, wood again.
   Not checked by a run: the cost (no play placement yet), and a replay of the two commands.
 - **Since 2026-10-25 part of the castle** (`castle_plan.md`): its plot's whole tile on a castle level, 2 to 4 storeys, a
-  doorway wherever a deck meets one of its floors, crenellated on a plot of three cells; drawn with the castle
+  doorway wherever a deck meets one of its floors, crenellated on any plot but a four-cell one; drawn with the castle
   (`BuildStoneTowerQuarter`, in place of `BuildStoneTower`). What is above about its junction's polygon and its one
   doorway at the guard room no longer holds.
 

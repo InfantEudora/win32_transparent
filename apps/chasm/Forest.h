@@ -54,6 +54,15 @@ inline bool ForestIsTree(int kind){ return kind <= PROP_SNOW_PINE; }
 inline bool ForestIsRock(int kind){
     return (kind >= PROP_ROCK_A && kind <= PROP_ROCK_CLUSTER) || kind == PROP_BOULDER;
 }
+/*
+    What a GARDEN keeps of what grows on it (gardens_plan.md, the user's 2026-10-26): its broadleaf trees - the oaks, the
+    willow, the palm - and the plants a garden would have. Not the pines, which are felled for it as for anything else,
+    nor grass, twigs, mushrooms, reeds or stone.
+*/
+inline bool ForestGardenKeeps(int kind){
+    return (kind >= PROP_OAK_A && kind <= PROP_PALM) || kind == PROP_BUSH_A || kind == PROP_BUSH_B
+           || kind == PROP_FLOWERS_A || kind == PROP_FLOWERS_B || kind == PROP_FERN || kind == PROP_SHRUB;
+}
 //What breaking a rock gives, by its size (stone_plan.md, current tuning).
 inline int ForestRockStone(int kind){
     return (kind == PROP_BOULDER) ? 12 : (kind == PROP_ROCK_CLUSTER) ? 6 : (kind == PROP_ROCK_C) ? 4 : ForestIsRock(kind) ? 2 : 0;
@@ -91,6 +100,9 @@ struct ForestData{
         The starting land's forest as an area (Areas.h) is these.
     */
     std::vector<uint8_t> core;
+    //Per fine vertex: the tree, bush or rock standing in that plot (pr.plot), -1 none - a garden's planting keeps clear of
+    //it (Gardens.h). One at most: the forest grows one a plot, and the odd one strayed in from beside it comes second.
+    std::vector<int> plot_prop;
     float build_ms = 0.0f;
 };
 

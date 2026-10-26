@@ -1,6 +1,8 @@
 #ifndef _CHASM_CASTLE_MESH_H_
 #define _CHASM_CASTLE_MESH_H_
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 #include "type_vertex.h"
 #include "ChasmWorld.h"
@@ -27,7 +29,9 @@
         on a pier at each corner; under its deck a groin vault, each arch's barrel running in to the plot's point. A
         neighbour's own wall closes a side where one stands; an opening onto ground no piece stands on has a ring of
         voussoirs and a keystone (the user's, 2026-10-24: "it should look like a real arch").
-      - STAIR: solid, its top the ramp.
+      - A STAIR (castle_plan.md "The stairs"): a FLIGHT's steps cut from one plane over its plot (CastleFlight),
+        square to its way up, its open sides a string wall over the treads with a BALUSTRADE on it; a LANDING a deck
+        with a balustrade along its open edges; an open TURRET a spiral of steps round a round core.
     A piece over a piece stands on its top: an arch's piers on it, a stair's sides on the arch it climbs from - an
     arch a stair sits on draws neither its top nor its battlements.
 
@@ -37,5 +41,51 @@
     doorway and has no battlements across it.
 */
 void BuildCastleCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out);
+
+/*
+    A stair's FLIGHT as drawn and walked (castle_plan.md "The stairs"): ONE PLANE over its plot, square to its way up,
+    down at its foot by the nearest crossing on its way down and up at its top by the nearest on its way up, level past
+    either. Its steps are cut from it, so they run straight across the flight and line up from cell to cell, and a
+    walker on it walks the plane (RouteHeight).
+*/
+struct CastleFlight{
+    vec2 at;                    //its plot's point
+    vec2 up;                    //its way up, unit
+    float s_foot = 0.0f;        //along `up` from `at`: where it is down at its foot...
+    float s_top = 0.0f;         //...and up at its top
+    float foot_y = 0.0f;
+    float top_y = 0.0f;
+    float Along(const vec2& p) const{
+        return (p - at).dot(up);
+    }
+    float HeightAt(const vec2& p) const{
+        float t = (Along(p) - s_foot) / (s_top - s_foot);
+        return foot_y + (top_y - foot_y) * std::max(0.0f,std::min(1.0f,t));
+    }
+};
+//Plot `plot`'s flight - its piece, or a flight over an arch; false with none.
+bool CastleFlightOf(const ChasmWorld& w, const ZoneState& z, int plot, CastleFlight& out);
+
+/*
+    An open TURRET as drawn and walked (castle_plan.md "The stairs"): its steps round a round core, from its level's
+    ground to its top - half a turn a storey, an odd number of half turns in all, so its foot faces away from its way
+    up - its last step coming out at its EXIT, the crossing on its way up. Angles are in the ground's plane, x and z,
+    and climb anticlockwise; a walker goes round the steps' middle (RouteHeight).
+*/
+struct CastleTurret{
+    vec2 at;                    //its plot's point, the core's middle
+    float core = 0.0f;          //the core's radius...
+    float outer = 0.0f;         //...and its steps' outer edge's
+    float base_y = 0.0f;        //its level...
+    float top_y = 0.0f;         //...and its top
+    int steps = 0;
+    float start = 0.0f;         //the first step's angle...
+    float sweep = 0.0f;         //...and how far round to the last one's end, toward its exit
+    vec2 exit;
+    vec2 Round(float angle, float r) const{
+        return at + vec2(std::cos(angle),std::sin(angle)) * r;
+    }
+};
+bool CastleTurretOf(const ChasmWorld& w, const ZoneState& z, int plot, CastleTurret& out);
 
 #endif

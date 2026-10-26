@@ -3,15 +3,15 @@ title: Zombie
 aliases: zombies, enemy, enemies, the threat
 kind: systems
 status: partial
-summary: The colony's enemy. For now dropped by debug tools only, a zombie walks after the nearest person it can get to and bites him; a grown-up fights back, and archers and guards shoot it.
-plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 1c: a crowd keeps its room; zombies_plan.md > As built: step 1c, a crowd keeps its room; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4b; zombies_plan.md > As built: step 4d, the look
-code: Spacing.cpp: SpaceOut; Zombies.cpp: ZombiePlaces; Economy.h: EconomyZombieHitting; Economy.h: EconomyZombie EconomyFightPace EconomyCarriesBow ARROW_SHOT_MASTER ARROW_SHOT_JITTER ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget EconomyShotTicks ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies SignalZombieVoices; Zones.h: ZoneKindHasDoor
-verified: 2026-10-25
+summary: The colony's enemy. The first wave out of the swamp huts once an archer is trained, else dropped by debug tools, a zombie walks after the nearest person it can get to and bites him; a grown-up fights back, and archers and guards shoot it.
+plans: zombies_plan.md > Decided; zombies_plan.md > Why it is won by placement; zombies_plan.md > The first slice; zombies_plan.md > Step 1: a zombie, dropped by debug; zombies_plan.md > Step 1b: spacing out; zombies_plan.md > Step 1c: a crowd keeps its room; zombies_plan.md > As built: step 1c, a crowd keeps its room; zombies_plan.md > Step 2: meals, and a fight; zombies_plan.md > Step 3: guards shoot; zombies_plan.md > Step 3b: guards hold their posts; zombies_plan.md > Step 4: walls break; zombies_plan.md > As built: step 4b; zombies_plan.md > As built: step 4d, the look; swamp_huts_plan.md > Step 2: the way to the first wave (as built, 2026-10-26)
+code: Spacing.cpp: SpaceOut; Zombies.cpp: ZombiePlaces; Economy.h: EconomyZombieHitting; Economy.h: EconomyZombie EconomyFightPace EconomyCarriesBow ARROW_SHOT_MASTER ARROW_SHOT_JITTER ZOMBIE_LOOK_TICKS ZOMBIE_PACE ZOMBIE_REACH ZOMBIE_REPLAN ZOMBIE_TRIES ZOMBIE_LOST_LOOKS ZOMBIE_SPAWN_MOST ZOMBIE_HEALTH ZOMBIE_BITE FIGHT_REACH FIGHT_HIT; Zombies.cpp: SpawnZombies TickZombies ZombieLook ZombieRouteTo Fights ZombiesHit ForgetHarm CanGetAt; Economy.h: ZOMBIE_BREAK_WALL ZOMBIE_BREAK_GATE ZOMBIE_BREACH_DOOR ZOMBIE_CLIMB_SECONDS ZOMBIE_HITTERS EconomyHarm; Walkers.h: WalkBreaks; Shooting.cpp: Shoot ShotTarget EconomyShotTicks ZombiesInRange DrinkBetweenShots; Economy.h: EconomyArrow ARROW_SHOT_SECONDS ARROW_HIT; Walkers.h: WALK_WHO_ZOMBIE WALKER_SPEED_WADE WALKER_SPEED_GROUND; Zombies.cpp: CallWave TickWave; Economy.h: EconomyWave WAVE_FIRST_PER_HUT HUT_TRICKLE_SECONDS; ApplicationChasmZombies.cpp: UploadZombies RenderZombiePanel; ApplicationChasmSound.cpp: SignalZombies SignalZombieVoices; Zones.h: ZoneKindHasDoor
+verified: 2026-10-26
 ---
 
-A zombie goes for **people only**: walls, gates and houses are only what stands in its way. No waves yet - zombies
-come by the debug tools, in debug builds: **Z** drops one under the cursor, the panel's **Zombies** section a number on
-the selected plot (or clears them all), `chasm_zombie` too; recorded, at most {ZOMBIE_SPAWN_MOST} at once, never on a wall.
+A zombie goes for **people only**: walls, gates and houses are only what stands in its way. The **first wave** comes out
+of the [[Swamp hut|swamp huts]] once the colony has trained an archer ([[The demo's goals|goals]]); else zombies come by the
+debug tools: **Z** under the cursor, the panel's **Zombies** on the selected plot, `chasm_zombie` - at most {ZOMBIE_SPAWN_MOST} at once.
 
 ## Whom it goes for
 
@@ -27,7 +27,8 @@ never up onto a deck - and what stands in its way it **breaks**, where that is q
 [[Roads and walls|palisade]] plot in {ZOMBIE_BREAK_WALL:#seconds} of hitting, a shut gate's door in
 {ZOMBIE_BREAK_GATE:#seconds} (the weak point), any building's door in {ZOMBIE_BREACH_DOOR:#seconds}, then walked
 through; at most {ZOMBIE_HITTERS} hit one thing at once. A garden's wall or a lot's fence it climbs, in
-{ZOMBIE_CLIMB_SECONDS:#seconds}. At {ZOMBIE_PACE} of a person's speed, so anyone outwalks one. Round whom it is after
+{ZOMBIE_CLIMB_SECONDS:#seconds}. Water it **wades**, at {WALKER_SPEED_WADE} units a second against the ground's
+{WALKER_SPEED_GROUND}: a river buys time, not safety. At {ZOMBIE_PACE} of a person's speed, so anyone outwalks one. Round whom it is after
 each has a **place of its own** - the first ring {ZOMBIE_REACH} out, where it bites from, the rest waiting beyond - and
 at what it breaks only the front row hits ([[Crowds]]); it goes after him again once he is {ZOMBIE_REPLAN} further off.
 
@@ -63,6 +64,5 @@ punch as each bite and blow lands, and the one bitten crying out; in sight, a mu
 ## Planned
 
 - [planned] Repairs by the builders with no zombies about; whom to go for by the way there (steps 4c, 4e).
-- [proposed] **Waves from the [[Swamp hut|swamp huts]]**, the first a year in, none while it is frozen; people fleeing
-  and the alarm; the swamp's haze before a wave; fields trampled; winter raids on the frozen swamp.
+- [proposed] **Later waves** from the [[Swamp hut|swamp huts]], none while it is frozen; people fleeing and the alarm; the swamp's haze before a wave; fields trampled; winter raids on the frozen swamp.
 - [proposed] Arrows as a tower's stock, kept full by the builders; the ballista; a shamble of its own.

@@ -132,7 +132,8 @@ measures.
 - **Published** with `make publish GAME=chasm SCORE=chasm` from apps/music: `assets/music/chasm.json` and its
   46 samples as `.ogg`, 77 MB of wav to 2.2 MB. Publish again after tuning; the game plays what it was last
   given.
-- **Three players on the one score** (`ApplicationChasmMusic.cpp`), each on a bus of its own under `music`:
+- **Three players on the one score** (`ApplicationChasmMusic.cpp`), each on a bus of its own under `music`
+  (four since the desert, below):
   - **the land**, in the season's section, sent the next at the season's turn - taken at its next bar line,
     with the score's crossfade. It plays under the title too, in spring before there is a colony;
   - **the clouds** and **the chasm**, layers faded in by their SHARE of the view: round the view's centre,
@@ -162,3 +163,15 @@ Checked in a muted instance: the whole map in view (all cloud) brought the cloud
 down to 0.62; the camp's explored ground let it fade back over a few seconds; `set_day 10` moved the land
 to summer at its next bar line; the chasm found from the rim fired `chasm_reveal`; a view over the chasm
 seen brought the chasm layer to full with the land at 0.3.
+
+**The desert (2026-10-26).** The user asked for a desert score (the music app's readme, "desert") and for
+it to come in with how much desert is in view. A fourth player, **the desert**, a layer like the other two,
+faded in by the share of the view that is desert someone has seen (`AREA_DESERT`'s cells, explored). The
+land goes down by `MUSIC_DESERT_DUCK`, 1.0, under it rather than `MUSIC_LAND_DUCK`: the desert has no
+seasons, and its hijaz clashes with every season's scale, so it takes the land's place instead of lying
+over it (the agent's choice; 0.7 would make it a layer like the others). The cells the shares are counted
+on became bits (`MUSIC_CELL_*`), since a cell on an area's edge can be chasm and desert both; the clouds'
+and the chasm's shares count exactly as before. `chasm_sound`'s `music` and the panel hold `desert` as they
+do the others. Checked in a test copy: three people put down in the middle of the desert, 300 ticks, the
+camera there - desert share 0.67, its layer 0.90 and rising, the land 0.10, clouds 0.33 from the
+unexplored rest; the camera sent home, the desert 0.95 to 0.09 in 7 s with the land back to 0.91.

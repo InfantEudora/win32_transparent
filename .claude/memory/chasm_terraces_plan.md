@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 69bfd5e2-d3af-47c9-869a-da8e0eaa395a
-  modified: 2026-10-25T20:12:38.278Z
+  modified: 2026-10-26T22:03:12.424Z
 ---
 
 Terraced hill towns for Chasm, `apps/chasm/docs/terraces_plan.md`.
@@ -51,9 +51,15 @@ Look reworked 2026-10-25 (user asked: n-gon not star, more retaining-wall feel, 
 - `ZoneTerraceStep`: open / wall / stair / door, asked by the walkers' edges and by straight walks.
 - `WallDoor` (BuildingMesh.cpp): whether a wall has a drawn door and on which storey. Never across a WALL, into a building, or off a terrace's edge. `BuildingSureDoor` gives every building that isn't shut in at the ground a ground-floor door (2026-10-23, after the user saw a door inside a terrace).
 
+**Road stairs built from below** (BUILT 2026-10-26, agreed with the user):
+- A road stair is now a STAIR once the LOWER road is laid and the upper plot is a road, planned or laid. Before, both had to stand, and the upper plot could never be reached in play: a deadlock that debug paint hid. Test save: `saves/gardens.json`.
+- A road across a terrace wall taller than a storey is refused (`ZoneTerraceTooTall` in `ZoneCanGround`).
+- A longer stair along the wall's face is left for later.
+- See terraces_plan.md "Steps built from below".
+
 **Why:** the user wants Greek-style terraced cities on the hilly chasm side.
 
 **How to apply:**
-- Open items for the user: a road over a wall taller than a storey reads as broken; whole storeys mean almost a storey of fill on flat ground.
+- Open item for the user: whole storeys mean almost a storey of fill on flat ground. (A road over a too-tall wall is now refused.)
 - Not yet terrace-aware: picking a terrace site's card, `CrateMiddle`, sight lines.
 - Left for later: flat roofs as the terrace above, appeal for a view.

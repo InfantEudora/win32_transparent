@@ -495,6 +495,9 @@ const char* ChasmGoalTitle(int goal){
     switch (goal){
         case CHASM_GOAL_WINTER:     return "through the winter, nobody lost";
         case CHASM_GOAL_CHASM:      return "reach the chasm";
+        case CHASM_GOAL_ARCHER:     return "train an archer";
+        case CHASM_GOAL_SWAMP:      return "don't venture into the swamp unescorted";
+        case CHASM_GOAL_WAVE:       return "survive the first wave";
         default:                    return "a goal";
     }
 }
@@ -572,9 +575,21 @@ std::string ChasmJournalText(const EconomyState& e, const EconomyEvent& ev){
         case EVENT_GOAL_MET:
             return std::string("Goal met: ") + (ev.amount == CHASM_GOAL_WINTER ? "through the winter" : ChasmGoalTitle(ev.amount));
         case EVENT_GOAL_FAILED:
+            //The swamp's (swamp_huts_plan.md step 2) by whoever went in.
+            if (ev.amount == CHASM_GOAL_SWAMP){
+                return who + " went into the swamp unescorted";
+            }
             return std::string("Goal failed: ") + (ev.amount == CHASM_GOAL_WINTER ? "through the winter" : ChasmGoalTitle(ev.amount));
+        case EVENT_GOAL_SET:
+            return std::string("New goal: ") + ChasmGoalTitle(ev.amount);
+        //THE FIRST WAVE (swamp_huts_plan.md step 2).
+        case EVENT_WAVE:
+            return "Something stirred in the swamp";
+        case EVENT_WAVE_SEEN:
+            return "Zombies came out of the swamp";
         case EVENT_DEMO_COMPLETE:
-            snprintf(buf,sizeof(buf),"Demo complete, %i of %i goals",ev.amount,CHASM_GOALS);
+            //Of the goals in play then - two, before there were more.
+            snprintf(buf,sizeof(buf),"Demo complete, %i of %i goals",ev.amount,ev.what ? (int)ev.what : 2);
             return buf;
         case EVENT_COLONY_LOST:
             return "The colony was lost";
