@@ -63,6 +63,6 @@ punch as each bite and blow lands, and the one bitten crying out; in sight, a mu
 ## Planned
 
 - [planned] Repairs by the builders with no zombies about; whom to go for by the way there (steps 4c, 4e).
-- [proposed] **Waves from the swamp**, none while it is frozen; people fleeing and the alarm; the swamp's haze
-  thickening before a wave; fields trampled; winter raids on the frozen swamp.
+- [proposed] **Waves from the [[Swamp hut|swamp huts]]**, the first a year in, none while it is frozen; people fleeing
+  and the alarm; the swamp's haze before a wave; fields trampled; winter raids on the frozen swamp.
 - [proposed] Arrows as a tower's stock, kept full by the builders; the ballista; a shamble of its own.

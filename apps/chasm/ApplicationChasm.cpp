@@ -24,6 +24,7 @@
 #include <cmath>
 #include <stdio.h>
 #include <algorithm>
+#include <map>
 #include <unordered_set>
 
 static Debugger* debug = new Debugger("ApplicationChasm",DEBUG_ALL);
@@ -800,9 +801,12 @@ void ApplicationChasm::EnsureZonesWorld(){
         const bool f_chasm = w && GridKindHasChasm(w->grid->settings.kind);
         zones.Reset(w);
         PublishZones();
-        //A new map is a new colony: its first day of spring, and its settlers' camp, a tent each - or the title's town.
+        //A new map is a new colony: its first day of spring, and its settlers' camp, a tent each - and out in the swamp
+        //its huts (swamp_huts_plan.md) - or the title's town.
         if (f_chasm){
             zones.PlaceStartCamp(EconomySettlerCount());
+            int huts = zones.PlaceSwampHuts();
+            debug->Info("Swamp huts: %i\n",huts);
             PublishZones();
         }else if (w->grid->settings.kind == GRID_KIND_TITLE){
             zones.PlaceTitleTown();
@@ -5062,6 +5066,89 @@ void ApplicationChasm::RegisterMCPTools(){
                 result["camp"] = json{{"plot",camp},{"x",round2(w->grid->fine.pos[camp].x)},{"z",round2(w->grid->fine.pos[camp].y)}};
             }
             return result;
+        });
+    MCPServer::Get()->RegisterTool("chasm_huts",
+        "The swamp huts (swamp_huts_plan.md): those standing on the map - each its plot, place, ground, the plot before its "
+        "door - and where a new colony's would go on this map and why (Zones.cpp, WHERE THE SWAMP HUTS STAND): the best "
+        "spots first, each its score and parts - deep (in from the swamp's edge), water (the share of the ground round it "
+        "wet), camp (from the start camp), walk (a walk from its door reaches the camp, no bridge) - or why it was refused.",
+        json{
+            {"type","object"},
+            {"properties",{
+                {"limit",{{"type","integer"},{"description","spots to list (default 10)"}}}
+            }}
+        },
+        [this](const json& args) -> json {
+            std::shared_ptr<const ChasmWorld> w = GetWorld();
+            std::shared_ptr<const ZoneState> z = GetZones();
+            if (!w || !z){
+                return json{{"error","no world"}};
+            }
+            auto round2 = [](float f){ return std::round((double)f * 100.0) / 100.0; };
+            const Grid& g = *w->grid;
+            json standing = json::array();
+            int camp = -1;
+            for (size_t v = 0; v < z->building.size(); v++){
+                uint32_t id = z->building[v];
+                if (!id || id >= z->buildings.size()){
+                    continue;
+                }
+                if (camp < 0 && z->buildings[id].kind == ZONE_KIND_CAMP){
+                    camp = (int)v;
+                }
+                if (z->buildings[id].kind == ZONE_KIND_HUT){
+                    int door = ZoneHutDoor(*w,(int)v);
+                    json j{{"id",id},{"plot",(int)v},{"x",round2(g.fine.pos[v].x)},{"z",round2(g.fine.pos[v].y)},
+                           {"ground",round2(w->terrain->ground[v])},{"door",door}};
+                    standing.push_back(j);
+                }
+            }
+            auto t0 = std::chrono::steady_clock::now();
+            std::vector<ZoneHutSpot> spots;
+            ZoneSwampHutSpots(*w,camp,spots);
+            std::vector<int> chosen;
+            ZoneSwampHutPlots(*w,camp,chosen);
+            float ms = std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::stable_sort(spots.begin(),spots.end(),[](const ZoneHutSpot& a, const ZoneHutSpot& b){
+                if ((a.refused == NULL) != (b.refused == NULL)){
+                    return a.refused == NULL;
+                }
+                if (a.f_walk != b.f_walk){
+                    return a.f_walk;
+                }
+                return a.score > b.score;
+            });
+            int passed = 0, walk = 0;
+            std::map<std::string,int> refusals;
+            for (const ZoneHutSpot& s : spots){
+                passed += s.refused ? 0 : 1;
+                walk += (!s.refused && s.f_walk) ? 1 : 0;
+                if (s.refused){
+                    refusals[s.refused]++;
+                }
+            }
+            json list = json::array();
+            int limit = args.value("limit",10);
+            for (int i = 0; i < (int)spots.size() && i < limit; i++){
+                const ZoneHutSpot& s = spots[i];
+                json j{{"plot",s.plot},{"x",round2(g.fine.pos[s.plot].x)},{"z",round2(g.fine.pos[s.plot].y)}};
+                if (s.refused){
+                    j["refused"] = s.refused;
+                }else{
+                    j["score"] = round2(s.score);
+                    j["deep"] = round2(s.deep);
+                    j["water"] = round2(s.water);
+                    j["walk"] = s.f_walk;
+                }
+                j["camp"] = round2(s.camp);
+                list.push_back(j);
+            }
+            json refused = json::object();
+            for (const auto& r : refusals){
+                refused[r.first] = r.second;
+            }
+            return json{{"standing",standing},{"chosen",chosen},{"swamp_plots",(int)spots.size()},{"passed",passed},
+                        {"passed_walk",walk},{"refused",refused},{"ms",round2(ms)},{"spots",list}};
         });
     RegisterRoadTools();
     RegisterTimeTools();

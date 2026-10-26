@@ -3645,7 +3645,8 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
     //How far a building grows its settlement's land: one standing on plots, a guard tower furthest; 0 for none.
     auto grows = [&](size_t id){
         const ZoneBuilding& b = z.buildings[id];
-        if (b.size <= 0 || !stands[id] || ZoneKindOnCells(b.kind) || plots_of[id].empty()){
+        //A swamp hut is nobody's (ZoneKindWild): a settlement reaching it does not take it in.
+        if (b.size <= 0 || !stands[id] || ZoneKindOnCells(b.kind) || ZoneKindWild(b.kind) || plots_of[id].empty()){
             return 0.0f;
         }
         return (b.kind == ZONE_KIND_TOWER) ? ECONOMY_SETTLEMENT_TOWER : ECONOMY_SETTLEMENT_BUILDING;
@@ -3793,7 +3794,8 @@ void Economy::Settle(const ZoneState& z, Walkers& walkers){
     state.settlement_of.assign(z.buildings.size(),0);
     for (size_t id = 1; id < z.buildings.size() && id < home_plot.size(); id++){
         int v = home_plot[id];
-        state.settlement_of[id] = (z.buildings[id].size > 0 && v >= 0 && v < (int)plots) ? state.settlement[v] : 0;
+        state.settlement_of[id] = (z.buildings[id].size > 0 && !ZoneKindWild(z.buildings[id].kind) && v >= 0 && v < (int)plots)
+                                  ? state.settlement[v] : 0;
         /*
             A BRIDGE's door is the lower of its two ends, often the far one - on land no settlement holds, and then
             nobody built it, though its near end was placed inside one (the user's camp_3, 2026-10-12). It is the

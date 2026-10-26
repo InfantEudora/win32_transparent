@@ -159,7 +159,8 @@
 #define ZONE_KIND_SAIL_LOFT     18      //a long loft: sailmakers sew hemp into canvas for a zeppelin (steam_plan.md step 4)
 #define ZONE_KIND_DOCK          19      //a zeppelin dock, on coarse cells at the chasm's edge: a zeppelin is built on it (step 5)
 #define ZONE_KIND_MAST          20      //a mooring mast: at a drop into the chasm, a zeppelin's nose in its cup (flight_plan.md step 3)
-#define ZONE_KIND_COUNT         21
+#define ZONE_KIND_HUT           21      //a swamp hut: never the player's, placed by the seed; the zombies' (swamp_huts_plan.md)
+#define ZONE_KIND_COUNT         22
 const char* ZoneKindName(int kind);
 int ZoneKindByName(const std::string& name);    //-1 if none
 //The most plots a building of `kind` may have - a field's or range's cells - 0 for no limit: a camp, a bridge.
@@ -176,16 +177,26 @@ inline int ZoneKindMaxPlots(int kind){
         case ZONE_KIND_TOWER:
         case ZONE_KIND_MINE:
         case ZONE_KIND_WELL:
-        case ZONE_KIND_MAST:        return 1;
+        case ZONE_KIND_MAST:
+        case ZONE_KIND_HUT:         return 1;
         case ZONE_KIND_CAMP:
         case ZONE_KIND_BRIDGE:      return 0;
         default:                    return ZONE_BUILDING_MAX_PLOTS;
     }
 }
-//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine, a well, a mast.
+//A kind that is only ever ONE plot, placed by a click and never dragged: a winch, a guard tower, a mine, a well, a mast -
+//and a swamp hut, which the seed places.
 inline bool ZoneKindOnePlot(int kind){
     return kind == ZONE_KIND_WINCH || kind == ZONE_KIND_TOWER || kind == ZONE_KIND_MINE || kind == ZONE_KIND_WELL
-           || kind == ZONE_KIND_MAST;
+           || kind == ZONE_KIND_MAST || kind == ZONE_KIND_HUT;
+}
+/*
+    A kind that is NOBODY'S IN THE COLONY (swamp_huts_plan.md): a swamp hut. It is placed by the world's seed when a new
+    colony starts, as the camp is, and from then on it is the swamp's - no tool paints one, no erase takes one down, it
+    holds nothing, employs nobody, houses nobody and grows no settlement's land, however near a settlement comes.
+*/
+inline bool ZoneKindWild(int kind){
+    return kind == ZONE_KIND_HUT;
 }
 //A kind that stands on coarse cells (ZoneState::field) rather than plots: a field, or a range or a dock painted like one.
 inline bool ZoneKindOnCells(int kind){
@@ -580,6 +591,9 @@ public:
         player's camp. Physics thread, on empty zones - a new map, not a load.
     */
     void PlaceStartCamp(int tents);
+    //A new colony's SWAMP HUTS (swamp_huts_plan.md): a hut on each of ZoneSwampHutPlots, standing. After PlaceStartCamp,
+    //whose camp they keep their distance from. Returns how many stand.
+    int PlaceSwampHuts();
     //The title's town (TitleTown.h): its roads, houses, palisade, fields and range, standing. As PlaceStartCamp.
     void PlaceTitleTown();
 
@@ -931,6 +945,38 @@ struct ZoneCampSpot{
 void ZoneCampSpots(const ChasmWorld& w, int tents, std::vector<ZoneCampSpot>& out);
 //Where a new colony of `tents` camps: the best of ZoneCampSpots. -1 if nowhere.
 int ZoneStartCampPlot(const ChasmWorld& w, int tents);
+
+/*
+    THE SWAMP HUTS (swamp_huts_plan.md): a few solitary, shabby huts out in the swamp, where the zombies come from. Each
+    is one plot ON STILTS - so it may stand at a pool's edge, its corners in the wet, so long as its own point is dry -
+    with its DOOR toward the dry plot beside it that is most open (ZoneHutDoor): where whatever comes out of it steps
+    down. Where they go is the seed's (ZoneSwampHutPlots, below), and a new colony has them standing from its first
+    tick (Zones::PlaceSwampHuts).
+*/
+#define ZONE_SWAMP_HUTS             3       //the most a map has: fewer where its swamp has no room for them apart
+#define ZONE_HUT_APART              30.0f   //from one another, so each stands alone
+#define ZONE_HUT_CAMP_LEAST         70.0f   //from the start camp, by the straight line
+#define ZONE_HUT_EDGE_LEAST         12.0f   //from the map's edge, so none stands against the end of the world
+#define ZONE_HUT_DEEP               0.45f   //how far into the swamp counts as deep enough: of its radius, in from its edge
+#define ZONE_HUT_WATER_NEAR         5.0f    //the ground a spot's pools are counted over
+#define ZONE_HUT_WATER_BEST         0.35f   //...the share of it wet that suits a hut best: by the water, not in it
+//The plot before a hut's door - dry, on its ground, a walker's step from it - the most open of them, by the ground
+//alone so it never moves; -1 for none.
+int ZoneHutDoor(const ChasmWorld& w, int plot);
+//A spot a hut might stand on, scored - every swamp plot looked at, so the debug view and the tool can show the choice.
+struct ZoneHutSpot{
+    int plot = -1;
+    const char* refused = NULL;     //why no hut may stand there; NULL if one may
+    float score = 0.0f;
+    float deep = 0.0f;              //0-1: in from the swamp's edge, 1 at ZONE_HUT_DEEP of its radius or further
+    float water = 0.0f;             //the share of the ground within ZONE_HUT_WATER_NEAR that is wet
+    float camp = -1.0f;             //from the start camp, by the straight line; -1 with no camp
+    bool f_walk = false;            //a walk from it reaches the camp - over the ground as it is, no bridge (Walkers.h)
+};
+//Every swamp plot scored; `camp` the start camp's plot, or -1.
+void ZoneSwampHutSpots(const ChasmWorld& w, int camp, std::vector<ZoneHutSpot>& out);
+//Where a new colony's huts stand: the best of ZoneSwampHutSpots, best first, each ZONE_HUT_APART from those before it.
+void ZoneSwampHutPlots(const ChasmWorld& w, int camp, std::vector<int>& out);
 
 /*
     BRIDGES (docs/bridge_plan.md). The plots a bridge from `from` to `to` would take - a chain along fine
