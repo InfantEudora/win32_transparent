@@ -85,6 +85,7 @@ const KindLook kind_looks[ZONE_KIND_COUNT] = {
     {PAL_STONE_LIGHT,{PAL_TIMBER,PAL_TIMBER},2,DOOR_W,2,100},            //condenser: a water collector's stone, a brass tank on every plot
     {PAL_BARK_DARK,{PAL_STONE_DARK,PAL_STONE_DARK},2,DOOR_W * 1.6f,1,0}, //sail loft: tarred planks under slate, so its pale canvas shows;
                                                                           //wide doors, and a window every wall for the sewing
+    {PAL_BARK,{PAL_FIELD,PAL_FIELD},2,DOOR_W,2,0},                        //swamp hut: drawn by BuildSwampHut instead
 };
 static_assert(sizeof(kind_looks) / sizeof(kind_looks[0]) == ZONE_KIND_COUNT,"a look for every kind");
 
@@ -1276,6 +1277,400 @@ void BuildArchSite(const ChasmWorld& w, const ZoneState& z, int plot, std::vecto
     }
 }
 
+void Rod(std::vector<vertex>& out, const vec3& a, const vec3& b, float thick, int column, int row);
+
+#define HUT_HALF_LONG       0.70f   //along its ridge, either side of its middle
+#define HUT_HALF_DEEP       0.52f   //front to back, either side
+#define HUT_BACK            0.15f   //its middle back from the plot's point, away from its door, so the porch is over it
+#define HUT_STILTS          0.45f   //its floor over the highest ground under it
+#define HUT_STILT_SINK      0.30f   //the stilts' feet down into the mud
+#define HUT_STILT_W         0.09f
+#define HUT_STILT_SKEW      0.16f   //how far a stilt's foot strays from under its top
+#define HUT_WALL            0.92f   //floor to eaves: a villager (0.86) stoops in its doorway
+#define HUT_RISE            0.78f   //eaves to ridge at the gable ends...
+#define HUT_SAG             0.14f   //...and the ridge's middle down by up to this
+#define HUT_EAVE_OUT        0.20f   //the thatch out past the walls at the eaves...
+#define HUT_GABLE_OUT       0.14f   //...and past the gable ends
+#define HUT_FRINGE          0.14f   //the most the thatch's ragged edge hangs under the eaves
+#define HUT_PORCH           0.42f   //the porch's deck out in front of the door
+#define HUT_PLANK           0.15f   //a wall plank's width, about
+#define HUT_PLANK_THICK     0.045f
+#define HUT_GAP_SHARE       0.12f   //of a wall's planks (not its end ones), the share gone - the dark showing through
+#define HUT_DOOR_HALF       0.17f
+#define HUT_DOOR_H          0.70f
+#define HUT_LEAN            0.075f  //radians: the most it leans, sunk on one side into the mud
+
+/*
+    A SWAMP HUT (swamp_huts_plan.md): one room on stilts at a pool's edge, knocked together from whatever came to hand and
+    left to rot. Everything about it is a little wrong, each hut its own way by its plot's hash: its planks of three woods
+    and ragged lengths, a few gone, so the dark inside shows through; its reed thatch sagging along the ridge, hanging
+    ragged at the eaves, patched with boards and grown with moss; one window boarded across; its door hanging open on the
+    dark; and the whole of it leaning, sunk on one side into the mud. Its door looks out over the plot before it
+    (ZoneHutDoor) - where whatever comes out of it steps down, by a plank from the porch. All in the swamp's palette row,
+    whose colours are the murky ones, so it reads as the swamp's and not the colony's.
+*/
+void BuildSwampHut(const ChasmWorld& w, const ZoneState& z, int plot, std::vector<vertex>& out){
+    const Grid& g = *w.grid;
+    const vec2 p = g.fine.pos[plot];
+    const uint32_t h = MeshHash((uint32_t)plot,0x5A4B17u);
+    const int row = PAL_SWAMP;
+    //A number 0-1 of this hut's own, for the choice named by (a, b).
+    auto rnd = [&](uint32_t a, uint32_t b){
+        return (float)(MeshHash((uint32_t)plot,a * 0x100u + 0x5A4Bu,b) % 1000u) * 0.001f;
+    };
+    //Its frame: `front` out through its door, `along` its ridge. A point is (u along, d front, y up) from its middle.
+    int door = ZoneHutDoor(w,plot);
+    vec2 front = (door >= 0) ? g.fine.pos[door] - p : vec2(0.0f,1.0f);
+    float fl = front.length();
+    front = (fl > 1e-4f) ? front * (1.0f / fl) : vec2(0.0f,1.0f);
+    const vec2 along(-front.y,front.x);
+    const vec2 c = p - front * HUT_BACK;
+    auto at = [&](float u, float d){
+        return c + along * u + front * d;
+    };
+    auto P = [&](float u, float d, float y){
+        vec2 q = at(u,d);
+        return vec3(q.x,y,q.y);
+    };
+    auto ground = [&](float u, float d){
+        return ZoneGroundHeight(w,z,plot,at(u,d));
+    };
+    const vec3 up(0.0f,1.0f,0.0f);
+    const vec3 front3(front.x,0.0f,front.y);
+    const vec3 along3(along.x,0.0f,along.y);
+    const float L = HUT_HALF_LONG;
+    const float D = HUT_HALF_DEEP;
+    const float porch = D + HUT_PORCH;
+    float high = ground(0.0f,0.0f);
+    for (int i = 0; i < 4; i++){
+        high = std::max(high,ground((i & 1) ? L : -L,(i & 2) ? porch : -D));
+    }
+    const float floor_y = high + HUT_STILTS;
+    const float eave_y = floor_y + HUT_WALL;
+    const size_t first = out.size();
+
+    //--- The stilts: under its corners, the back's middle and the porch's front, each a little askew, sunk in the mud ---
+    const vec2 stilts[7] = {vec2(-L + 0.06f,-D + 0.06f),vec2(L - 0.06f,-D + 0.06f),vec2(-L + 0.06f,D - 0.06f),
+                            vec2(L - 0.06f,D - 0.06f),vec2(0.0f,-D + 0.06f),vec2(-L + 0.10f,porch - 0.05f),
+                            vec2(L - 0.10f,porch - 0.05f)};
+    for (int i = 0; i < 7; i++){
+        vec2 s = stilts[i];
+        vec2 f = s + vec2(rnd(1,i) - 0.5f,rnd(2,i) - 0.5f) * HUT_STILT_SKEW;
+        Rod(out,P(f.x,f.y,ground(f.x,f.y) - HUT_STILT_SINK),P(s.x,s.y,floor_y - 0.04f),HUT_STILT_W,PAL_BARK_DARK,row);
+    }
+    //A brace across the back, from a corner stilt's foot up to the middle one's top.
+    float side = (h & 1) ? 1.0f : -1.0f;
+    Rod(out,P(side * (L - 0.06f),-D + 0.03f,ground(side * (L - 0.06f),-D) + 0.05f),P(0.0f,-D + 0.03f,floor_y - 0.12f),0.05f,
+        PAL_BARK,row);
+
+    //--- The floor under the room, and the porch's planks in front of it: one gone, so the mud shows -----------------
+    Beam(out,at(-L - 0.04f,-0.02f),at(L + 0.04f,-0.02f),floor_y - 0.08f,0.08f,2.0f * D + 0.04f,PAL_TIMBER,row);
+    const int porch_planks = 5;
+    int gone = (int)((h >> 3) % (uint32_t)porch_planks);
+    for (int i = 0; i < porch_planks; i++){
+        if (i == gone && i > 0){
+            continue;       //never the one against the wall, which the door's sill stands on
+        }
+        float d0 = D + HUT_PORCH * (float)i / porch_planks;
+        float d1 = D + HUT_PORCH * (float)(i + 1) / porch_planks;
+        float dm = (d0 + d1) * 0.5f;
+        float short_l = (rnd(3,i) - 0.5f) * 0.14f;
+        float short_r = (rnd(4,i) - 0.5f) * 0.14f;
+        Beam(out,at(-L + 0.02f + short_l,dm),at(L - 0.02f + short_r,dm),floor_y - 0.06f,0.06f,d1 - d0 - 0.014f,
+             (rnd(5,i) < 0.5f) ? PAL_TIMBER : PAL_BARK,row);
+    }
+
+    //--- The roof's shape, which the walls go up to: the ridge over d = 0 sagging in its middle, the eaves with it -----
+    const float sag = HUT_SAG * (0.45f + 0.55f * rnd(6,0));
+    const float roof_l = L + HUT_GABLE_OUT;
+    const float eave_d = D + HUT_EAVE_OUT;
+    const float drop = HUT_EAVE_OUT * HUT_RISE / D;        //the slope carried on out past the walls
+    auto ridge_y = [&](float u){
+        float f = u / roof_l;
+        return eave_y + HUT_RISE - sag * std::max(0.0f,1.0f - f * f);
+    };
+    auto eave = [&](float u, float s){
+        //The eaves sag with the ridge, a little.
+        return P(u,s * eave_d,eave_y - drop - (HUT_RISE + eave_y - ridge_y(u)) * 0.35f);
+    };
+    auto ridge = [&](float u){
+        return P(u,0.0f,ridge_y(u));
+    };
+    //The thatch's height over (u, d): every wall stays under it, or its planks poke through where the eaves sag.
+    auto roof_y = [&](float u, float d){
+        float y0 = eave(u,1.0f).y;
+        return y0 + (ridge_y(u) - y0) * (1.0f - std::fabs(d) / eave_d);
+    };
+
+    //--- The room: dark inside - what shows through every gap - then planks over it --------------------------------
+    const float in = 0.02f;     //the dark box, this far inside the planks' backs
+    const float door_u = (rnd(7,0) - 0.5f) * L * 0.6f;
+    const int window_wall = (h & 2) ? 1 : -1;       //which gable end, at u = window_wall * L
+    const float window_d = (rnd(8,0) - 0.5f) * D * 0.5f;
+    const float window_y0 = floor_y + 0.40f;
+    const float window_y1 = floor_y + 0.64f;
+    //The dark: the room's four walls just inside, up to the thatch - in pieces along the long walls, as it sags.
+    {
+        float iL = L - in;
+        float iD = D - in;
+        const int pieces = 6;
+        for (int s = -1; s <= 1; s += 2){
+            for (int j = 0; j < pieces; j++){
+                float u0 = -iL + 2.0f * iL * (float)j / pieces;
+                float u1 = -iL + 2.0f * iL * (float)(j + 1) / pieces;
+                float d = s * iD;
+                MeshQuad(out,P(u0,d,floor_y),P(u1,d,floor_y),P(u1,d,roof_y(u1,iD) - 0.02f),P(u0,d,roof_y(u0,iD) - 0.02f),
+                         front3 * (float)s,PAL_VOID,PAL_EFFECTS);
+            }
+            float u = s * iL;
+            float y = roof_y(u,iD) - 0.02f;
+            vec3 o = along3 * (float)s;
+            MeshQuad(out,P(u,-iD,floor_y),P(u,iD,floor_y),P(u,iD,y),P(u,-iD,y),o,PAL_VOID,PAL_EFFECTS);
+            MeshTri(out,P(u,-iD,y),P(u,iD,y),P(u,0.0f,roof_y(u,0.0f) - 0.02f),o,PAL_VOID,PAL_EFFECTS);
+        }
+    }
+    /*
+        The planks, wall by wall: wall 0 the front (the door's), 1 the back, 2 and 3 the gable ends. Each plank its own
+        wood and length - its foot rotted short now and then, its top ragged under the eaves or, on a gable end, cut to
+        the roof's slope - and some gone. Over the door, and round the window, a plank is only what is left above and
+        below the hole.
+    */
+    const int plank_wood[3] = {PAL_BARK,PAL_TIMBER,PAL_BARK_DARK};
+    for (int wall = 0; wall < 4; wall++){
+        bool f_long = wall < 2;
+        float sgn = (wall == 0 || wall == 2) ? 1.0f : -1.0f;
+        float half = f_long ? L : D;
+        int planks = std::max(3,(int)std::lround(2.0f * half / HUT_PLANK));
+        //A plank from t0 to t1 along this wall (u on a long wall, d on a gable end), from y0 to y1.
+        auto plank = [&](float t0, float t1, float y0, float y1, int column){
+            if (y1 - y0 < 0.03f){
+                return;
+            }
+            float o = (f_long ? D : L) + HUT_PLANK_THICK * 0.5f;
+            vec2 a = f_long ? at(t0,sgn * o) : at(sgn * o,t0);
+            vec2 b = f_long ? at(t1,sgn * o) : at(sgn * o,t1);
+            Beam(out,a,b,y0,y1 - y0,HUT_PLANK_THICK,column,row);
+        };
+        for (int i = 0; i < planks; i++){
+            float t0 = -half + 2.0f * half * (float)i / planks + 0.006f;
+            float t1 = -half + 2.0f * half * (float)(i + 1) / planks - 0.006f;
+            bool f_end = (i == 0 || i == planks - 1);
+            if (!f_end && rnd(10 + wall,i) < HUT_GAP_SHARE){
+                continue;
+            }
+            int column = plank_wood[(int)(rnd(20 + wall,i) * 2.999f)];
+            float y0 = floor_y - 0.07f + ((rnd(30 + wall,i) < 0.2f) ? 0.12f : 0.0f);
+            //Under the thatch at whichever of its edges it is lower, so none pokes through: on a long wall ragged short
+            //of it, on a gable end cut to its slope.
+            float face = (f_long ? D : L) + HUT_PLANK_THICK;
+            float y1;
+            if (f_long){
+                y1 = std::min(roof_y(t0,face),roof_y(t1,face)) - 0.03f - 0.06f * rnd(40 + wall,i);
+            }else{
+                y1 = roof_y(sgn * face,std::max(std::fabs(t0),std::fabs(t1))) - 0.03f;
+            }
+            if (wall == 0 && t1 > door_u - HUT_DOOR_HALF && t0 < door_u + HUT_DOOR_HALF){
+                plank(t0,t1,floor_y + HUT_DOOR_H + 0.05f,y1,column);
+            }else if (wall >= 2 && sgn == (float)window_wall && t1 > window_d - 0.13f && t0 < window_d + 0.13f){
+                plank(t0,t1,y0,window_y0,column);
+                plank(t0,t1,window_y1,y1,column);
+            }else{
+                plank(t0,t1,y0,y1,column);
+            }
+        }
+    }
+    //The door, hanging open on the dark, its frame the planks' ends.
+    {
+        float o = D + HUT_PLANK_THICK;
+        BreachedDoor(out,at(door_u - HUT_DOOR_HALF * 1.4f,o),at(door_u + HUT_DOOR_HALF * 1.4f,o),front3,HUT_DOOR_HALF,
+                     floor_y,floor_y + HUT_DOOR_H,PAL_BARK,h >> 8);
+        Beam(out,at(door_u - HUT_DOOR_HALF - 0.06f,o),at(door_u + HUT_DOOR_HALF + 0.06f,o),floor_y + HUT_DOOR_H,0.06f,0.06f,
+             PAL_BARK_DARK,row);
+    }
+    //The window, a board nailed across it.
+    {
+        float o = window_wall * (L + HUT_PLANK_THICK + 0.02f);
+        float tilt = (h & 4) ? 1.0f : -1.0f;
+        Rod(out,P(o,window_d - tilt * 0.18f,window_y0 - 0.04f),P(o,window_d + tilt * 0.18f,window_y1 + 0.04f),0.05f,
+            PAL_TIMBER,row);
+    }
+
+    //--- The roof: reed thatch on two slopes, the ridge sagging, its eaves hanging ragged -------------------------
+    //Old thatch gone grey-brown - and on some huts one strip of fresher reed, on one slope, where it was mended. (A strip
+    //of each, by chance, striped the roof like an awning.)
+    const int strips = 6;
+    const int mended = ((h >> 17) % 2 == 0) ? (int)((h >> 18) % (uint32_t)strips) : -1;
+    const int mended_side = ((h >> 21) & 1) ? 1 : -1;
+    for (int s = -1; s <= 1; s += 2){
+        vec3 slope_up = up * (eave_d / (HUT_RISE + drop)) + front3 * (float)s;
+        int ends[2] = {PAL_ROOF,PAL_ROOF};
+        for (int j = 0; j < strips; j++){
+            float u0 = -roof_l + 2.0f * roof_l * (float)j / strips;
+            float u1 = -roof_l + 2.0f * roof_l * (float)(j + 1) / strips;
+            int column = (j == mended && s == mended_side) ? PAL_FIELD : PAL_ROOF;
+            MeshQuad(out,eave(u0,(float)s),eave(u1,(float)s),ridge(u1),ridge(u0),slope_up,column,row);
+            MeshQuad(out,eave(u0,(float)s),eave(u1,(float)s),ridge(u1),ridge(u0),slope_up * -1.0f,PAL_BARK_DARK,row);
+            if (j == 0 || j == strips - 1){
+                ends[j == 0 ? 0 : 1] = column;
+            }
+        }
+        //The fringe: tufts of reed hanging from the eave, each its own length.
+        const int tufts = 9;
+        for (int j = 0; j < tufts; j++){
+            float u0 = -roof_l + 2.0f * roof_l * (float)j / tufts;
+            float u1 = -roof_l + 2.0f * roof_l * (float)(j + 1) / tufts;
+            vec3 a = eave(u0,(float)s);
+            vec3 b = eave(u1,(float)s);
+            vec3 tip = (a + b) * 0.5f + front3 * ((float)s * 0.02f) - up * (0.04f + HUT_FRINGE * rnd(50 + (s > 0),j));
+            int column = (s == mended_side && mended >= 0 && (int)((float)j * strips / tufts) == mended) ? PAL_FIELD : PAL_ROOF;
+            MeshTri(out,a,b,tip,front3 * (float)s,column,row);
+            MeshTri(out,a,b,tip,front3 * (float)-s,PAL_BARK_DARK,row);
+        }
+        //The thatch's thickness up each gable end's edge.
+        for (int e = -1; e <= 1; e += 2){
+            vec3 a = eave(e * roof_l,(float)s);
+            vec3 b = ridge(e * roof_l);
+            MeshQuad(out,a,b,b - up * 0.07f,a - up * 0.07f,along3 * (float)e,ends[e > 0 ? 1 : 0],row);
+        }
+    }
+    //The ridge pole, out past both ends, and the rafters crossed over it at each gable.
+    Rod(out,ridge(-roof_l - 0.14f) + up * 0.03f,ridge(0.0f) + up * 0.03f,0.07f,PAL_BARK_DARK,row);
+    Rod(out,ridge(0.0f) + up * 0.03f,ridge(roof_l + 0.14f) + up * 0.03f,0.07f,PAL_BARK_DARK,row);
+    for (int e = -1; e <= 1; e += 2){
+        float u = e * (roof_l - 0.03f);
+        for (int s = -1; s <= 1; s += 2){
+            vec3 a = eave(u,(float)s) + up * 0.03f;
+            vec3 b = ridge(u) + up * 0.03f;
+            Rod(out,a,b + (b - a) * 0.17f,0.05f,PAL_BARK_DARK,row);
+        }
+    }
+    //Thatch's slope point, t from the eave (0) to the ridge (1), lifted off it by `lift`.
+    auto on_roof = [&](float u, float t, float s, float lift){
+        vec3 q = eave(u,s) + (ridge(u) - eave(u,s)) * t;
+        return q + (up * (eave_d / (HUT_RISE + drop)) + front3 * s) * lift;
+    };
+    //A patch of boards where the thatch rotted through, on one slope or the other.
+    if ((h >> 5) % 3 != 0){
+        float s = ((h >> 7) & 1) ? 1.0f : -1.0f;
+        float pu = (rnd(60,0) - 0.5f) * roof_l;
+        for (int b = 0; b < 3; b++){
+            float u0 = pu - 0.2f + 0.135f * b;
+            float u1 = u0 + 0.12f;
+            float t0 = 0.22f + 0.06f * rnd(61,b);
+            float t1 = 0.62f + 0.08f * rnd(62,b);
+            MeshQuad(out,on_roof(u0,t0,s,0.03f),on_roof(u1,t0,s,0.03f),on_roof(u1,t1,s,0.03f),on_roof(u0,t1,s,0.03f),
+                     up * 0.5f + front3 * s,(b == 1) ? PAL_TIMBER : PAL_BARK_DARK,row);
+        }
+    }
+    //Moss, in the damp low on the thatch.
+    for (int m = 0; m < 3; m++){
+        float s = (rnd(70,m) < 0.5f) ? 1.0f : -1.0f;
+        float mu = (rnd(71,m) - 0.5f) * 1.4f * roof_l;
+        float mt = 0.05f + 0.3f * rnd(72,m);
+        float r = 0.10f + 0.10f * rnd(73,m);
+        vec3 o = on_roof(mu,mt,s,0.015f);
+        vec3 a = on_roof(mu - r,mt,s,0.015f);
+        vec3 b = on_roof(mu,mt + r * 0.9f,s,0.015f);
+        vec3 d = on_roof(mu + r * 0.8f,mt + 0.04f,s,0.015f);
+        vec3 e = on_roof(mu + 0.1f * r,std::max(0.0f,mt - r * 0.5f),s,0.015f);
+        vec3 n = up * 0.5f + front3 * s;
+        MeshTri(out,o,a,b,n,PAL_LEAF_DARK,row);
+        MeshTri(out,o,b,d,n,PAL_LEAF_DARK,row);
+        MeshTri(out,o,d,e,n,PAL_LEAF_DARK,row);
+        MeshTri(out,o,e,a,n,PAL_LEAF_DARK,row);
+    }
+    //A stovepipe, crooked and long cold, out through the back slope.
+    if ((h >> 9) % 2 == 0){
+        float pu = ((h >> 10) & 1 ? 1.0f : -1.0f) * L * 0.5f;
+        vec3 base = on_roof(pu,0.45f,-1.0f,0.0f) - up * 0.1f;
+        vec3 bend = base + up * 0.58f + along3 * 0.04f;
+        Rod(out,base,bend,0.08f,PAL_STONE_DARK,row);
+        Rod(out,bend,bend + along3 * 0.14f - front3 * 0.05f + up * 0.06f,0.08f,PAL_STONE_DARK,row);
+    }
+
+    //--- Sunk on one side: the whole of it turned about the ground under its middle ------------------------------------
+    const float lean = HUT_LEAN * (0.4f + 0.6f * rnd(90,0));
+    const float lean_way = 6.2831853f * rnd(91,0);
+    const vec3 axis(std::cos(lean_way),0.0f,std::sin(lean_way));
+    const vec3 pivot(c.x,high,c.y);
+    MeshTurn(out,first,pivot,axis,lean);
+    //Where a point of it ended up, turned as MeshTurn turned it.
+    auto turned = [&](const vec3& q){
+        float cs = std::cos(lean);
+        float sn = std::sin(lean);
+        vec3 v = q - pivot;
+        return pivot + v * cs + axis.cross(v) * sn + axis * (axis.dot(v) * (1.0f - cs));
+    };
+
+    //--- The way down: a plank from the porch's edge to the ground before it, a cleat or two across it ---------------
+    {
+        const float half_w = 0.13f;
+        const float pu = door_u;
+        vec3 top_l = turned(P(pu - half_w,porch - 0.02f,floor_y));
+        vec3 top_r = turned(P(pu + half_w,porch - 0.02f,floor_y));
+        vec2 top_mid((top_l.x + top_r.x) * 0.5f,(top_l.z + top_r.z) * 0.5f);
+        float top_y = (top_l.y + top_r.y) * 0.5f;
+        int foot_plot = (door >= 0) ? door : plot;
+        float run = 0.55f;
+        float foot_y = 0.0f;
+        for (int k = 0; k < 4; k++){
+            foot_y = ZoneGroundHeight(w,z,foot_plot,top_mid + front * run);
+            run = std::max(0.55f,std::min(1.6f,(top_y - foot_y) * 1.7f));
+        }
+        vec2 foot = top_mid + front * run;
+        vec3 foot_l(foot.x - along.x * half_w,foot_y - 0.03f,foot.y - along.y * half_w);
+        vec3 foot_r(foot.x + along.x * half_w,foot_y - 0.03f,foot.y + along.y * half_w);
+        vec3 t(0.0f,0.04f,0.0f);
+        vec3 slope_n = up * run + front3 * (top_y - foot_y);
+        MeshQuad(out,top_l + t,top_r + t,foot_r + t,foot_l + t,slope_n,PAL_TIMBER,row);
+        MeshQuad(out,top_l,top_r,foot_r,foot_l,slope_n * -1.0f,PAL_BARK_DARK,row);
+        MeshQuad(out,top_l,foot_l,foot_l + t,top_l + t,along3 * -1.0f,PAL_BARK_DARK,row);
+        MeshQuad(out,top_r,foot_r,foot_r + t,top_r + t,along3,PAL_BARK_DARK,row);
+        for (int k = 1; k <= 2; k++){
+            float f = (float)k / 3.0f;
+            vec3 l = top_l + (foot_l - top_l) * f + t;
+            vec3 r = top_r + (foot_r - top_r) * f + t;
+            Rod(out,l,r,0.035f,PAL_BARK_DARK,row);
+        }
+    }
+    //--- A pole by the porch with a rag hanging off it, and a few stakes of a fence long fallen ---------------------
+    if ((h >> 11) % 3 != 0){
+        float ps = ((h >> 13) & 1) ? 1.0f : -1.0f;
+        vec2 pole = at(ps * (L + 0.22f),porch - 0.05f);
+        float y0 = ZoneGroundHeight(w,z,plot,pole) - 0.2f;
+        vec3 top(pole.x + 0.05f * along.x * ps,y0 + 2.0f,pole.y + 0.05f * along.y * ps);
+        Rod(out,vec3(pole.x,y0,pole.y),top,0.06f,PAL_BARK_DARK,row);
+        vec3 arm = top - up * 0.15f + front3 * 0.32f;
+        Rod(out,top - up * 0.15f,arm,0.04f,PAL_BARK_DARK,row);
+        //The rag: a strip hanging from the arm's end, torn short on one side.
+        vec3 a = arm - front3 * 0.03f;
+        vec3 b = arm - front3 * 0.22f;
+        vec3 n = along3;
+        MeshQuad(out,a,b,b - up * 0.32f,a - up * 0.48f,n,PAL_CANVAS_DARK,PAL_CROPS);
+        MeshQuad(out,a,b,b - up * 0.32f,a - up * 0.48f,n * -1.0f,PAL_CANVAS_DARK,PAL_CROPS);
+    }
+    if ((h >> 14) % 2 == 0){
+        float fs = ((h >> 15) & 1) ? 1.0f : -1.0f;
+        for (int k = 0; k < 4; k++){
+            vec2 q = at(fs * (L + 0.35f + 0.05f * k),-D - 0.1f - 0.32f * k);
+            float y0 = ZoneGroundHeight(w,z,plot,q) - 0.1f;
+            size_t stake = out.size();
+            float tall = 0.55f + 0.2f * rnd(80,k);
+            if (k == 2){
+                //Fallen: lying in the mud.
+                Rod(out,vec3(q.x,y0 + 0.1f,q.y),vec3(q.x,y0 + 0.1f,q.y) + along3 * (tall * fs) + front3 * 0.1f,0.07f,PAL_BARK,row);
+                continue;
+            }
+            Rod(out,vec3(q.x,y0,q.y),vec3(q.x,y0 + tall,q.y),0.07f,PAL_BARK,row);
+            vec3 tilt(rnd(81,k) - 0.5f,0.0f,rnd(82,k) - 0.5f);
+            if (tilt.length() > 1e-3f){
+                tilt.normalize();
+                MeshTurn(out,stake,vec3(q.x,y0 + 0.1f,q.y),tilt,0.12f + 0.3f * rnd(83,k));
+            }
+        }
+    }
+}
+
 }
 
 void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std::vector<vertex>& out,
@@ -1367,6 +1762,13 @@ void BuildHouseCell(const ChasmWorld& w, const ZoneState& z, int fine_quad, std:
         if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_WELL){
             if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
                 BuildWell(w,v,out);
+            }
+            s[k] = 0;
+        }
+        //Nor a swamp hut (swamp_huts_plan.md): a room on stilts, its thatch sagging, drawn on its own (BuildSwampHut).
+        if (s[k] > 0 && z.KindOf(v) == ZONE_KIND_HUT){
+            if (picker.PlotQuadCorner(v,0) / 4 == fine_quad){
+                BuildSwampHut(w,z,v,out);
             }
             s[k] = 0;
         }

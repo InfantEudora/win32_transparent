@@ -80,6 +80,7 @@ const char* ZoneKindName(int kind){
         case ZONE_KIND_CONDENSER:   return "condenser";
         case ZONE_KIND_SAIL_LOFT:   return "sail_loft";
         case ZONE_KIND_DOCK:        return "dock";
+        case ZONE_KIND_HUT:         return "hut";
         default:                    return "none";
     }
 }
@@ -115,6 +116,7 @@ int ZoneKindMaxStoreys(int kind){
         case ZONE_KIND_STEAM:       return 1;       //a shed with its hood out over the drop (steam_plan.md)
         case ZONE_KIND_CONDENSER:   return 1;       //a shed with its brass tanks through the roof (steam_plan.md)
         case ZONE_KIND_SAIL_LOFT:   return 1;       //one long floor to lay a canvas out on (steam_plan.md step 4)
+        case ZONE_KIND_HUT:         return 1;       //one room on stilts (swamp_huts_plan.md)
         default:                    return 0;
     }
 }
@@ -678,6 +680,96 @@ static bool PlotIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, c
     return true;
 }
 
+//A step a walker could take from a to b over the ground alone (Walkers::EdgeOpen on a new map): no cliff, no water, no
+//mountain, not too steep.
+static bool GroundStep(const ChasmWorld& w, int a, int b){
+    const Terrain& t = *w.terrain;
+    float run = (w.grid->fine.pos[b] - w.grid->fine.pos[a]).length();
+    return t.SameGround(a,b) && !t.wet[b] && !t.Mountain(b) && !w.grid->fine.f_boundary[b]
+           && std::fabs(t.ground[b] - t.ground[a]) <= WALKER_STEEPEST * run;
+}
+
+int ZoneHutDoor(const ChasmWorld& w, int plot){
+    if (plot < 0 || plot >= (int)w.grid->fine.pos.size()){
+        return -1;
+    }
+    int best = -1;
+    int best_open = -1;
+    int nb[8];
+    int n = ZonePlotNeighbours(w,plot,nb,8);
+    for (int i = 0; i < n; i++){
+        if (!GroundStep(w,plot,nb[i])){
+            continue;
+        }
+        //How open the ground before it is: the steps on from there. A hut's door looks out over its hummock, not at
+        //the reeds.
+        int on[8];
+        int m = ZonePlotNeighbours(w,nb[i],on,8);
+        int open = 0;
+        for (int j = 0; j < m; j++){
+            open += (on[j] != plot && GroundStep(w,nb[i],on[j])) ? 1 : 0;
+        }
+        if (open > best_open || (open == best_open && nb[i] < best)){
+            best = nb[i];
+            best_open = open;
+        }
+    }
+    return best;
+}
+
+/*
+    Where a SWAMP HUT may stand (swamp_huts_plan.md): in the swamp, its own point dry, and a dry plot before its door. It
+    stands on stilts, so unlike a house it may have the wet at its corners - a hut by the pools is the point - and a
+    foundation's slope. Never the player's: only the seed places one (Zones::PlaceSwampHuts), or a debug paint.
+*/
+static bool HutIsBuildable(const ChasmWorld& w, const ZoneState& z, int plot, const char** why){
+    auto refuse = [why](const char* reason){
+        if (why){
+            *why = reason;
+        }
+        return false;
+    };
+    const Grid& g = *w.grid;
+    if (plot < 0 || plot >= (int)g.fine.pos.size()){
+        return refuse("no such plot");
+    }
+    if (g.fine.f_boundary[plot]){
+        return refuse("on the map's edge");
+    }
+    const Terrain& t = *w.terrain;
+    if (t.biome[plot] != TERRAIN_BIOME_SWAMP){
+        return refuse("a swamp hut stands in the swamp");
+    }
+    if (t.level[plot] == TERRAIN_FLOOR || t.level[plot] == TERRAIN_BARE){
+        return refuse("not on the plateau");
+    }
+    if (t.wet[plot]){
+        return refuse("in the water - a hut's stilts stand at a pool's edge, not in it");
+    }
+    const GridPicker& p = *w.picker;
+    for (int i = 0; i < p.PlotQuadCount(plot); i++){
+        const GridQuad& quad = g.fine.quads[p.PlotQuadCorner(plot,i) / 4];
+        for (int k = 0; k < 4; k++){
+            if (!t.SameGround(quad.v[k],plot)){
+                return refuse("too close to a cliff");
+            }
+            if (t.Mountain(quad.v[k])){
+                return refuse("on the mountain");
+            }
+        }
+        if (!z.field.empty() && z.field[quad.parent]){
+            return refuse("a field is there");
+        }
+    }
+    if (ZonePlotRise(w,plot) > ZONE_RISE_FOUNDATION){
+        return refuse("too steep, even on stilts");
+    }
+    if (ZoneHutDoor(w,plot) < 0){
+        return refuse("no dry ground before its door");
+    }
+    return true;
+}
+
 ZoneRangeCell ZoneRangeCellAt(const ChasmWorld& w, int cell){
     ZoneRangeCell r;
     const Grid& g = *w.grid;
@@ -1219,6 +1311,7 @@ static const char* FullRefusal(int kind){
         case ZONE_KIND_TOWER:       return "a tower is one plot";
         case ZONE_KIND_MINE:        return "a mine is one plot";
         case ZONE_KIND_WELL:        return "a well is one plot";
+        case ZONE_KIND_HUT:         return "a hut is one plot";
         default:                    return "a building is at most four plots";
     }
 }
@@ -1269,6 +1362,15 @@ bool ZoneCanBuild(const ChasmWorld& w, const ZoneState& z, int plot, int kind, u
     //A well (water_tools_plan.md) goes wherever a house could, on its own: it needs no water near.
     if (kind == ZONE_KIND_WELL && joining){
         return refuse("a well is one plot");
+    }
+    if (kind == ZONE_KIND_HUT){
+        if (joining){
+            return refuse("a hut is one plot");
+        }
+        if (!z.ground.empty() && plot >= 0 && plot < (int)z.ground.size() && z.ground[plot] != ZONE_GROUND_NONE){
+            return refuse("something is laid there");
+        }
+        return HutIsBuildable(w,z,plot,why);
     }
     if (kind == ZONE_KIND_BRIDGE){
         return BridgePlotOk(w,z,plot,why);
@@ -1474,6 +1576,15 @@ bool ZoneCanGround(const ChasmWorld& w, const ZoneState& z, int plot, const char
     if (f_line && !z.storeys.empty() && z.storeys[plot] > 0){
         if (why){
             *why = "a building is there";
+        }
+        return false;
+    }
+    //Nor any ground under a swamp hut: it is the swamp's (ZoneKindWild), and a hut stands only on bare ground - a garden
+    //under one would refuse it its place on the next load.
+    const ZoneBuilding* on = z.BuildingOf(plot);
+    if (on && ZoneKindWild(on->kind)){
+        if (why){
+            *why = "a swamp hut stands there";
         }
         return false;
     }
@@ -2270,6 +2381,185 @@ void Zones::PlaceStartCamp(int tents){
     last_refusal.clear();
 }
 
+/*
+    WHERE THE SWAMP HUTS STAND (swamp_huts_plan.md): every swamp plot a hut may stand on, scored on
+      - DEEP: in from the swamp's edge - full marks from ZONE_HUT_DEEP of its radius in, so they keep to the swamp's
+        heart rather than its fringe, without all crowding the one deepest point;
+      - BY THE WATER: best with ZONE_HUT_WATER_BEST of the ground round it wet - at a pool's edge, its stilts in the
+        shallows - falling to nothing on a dry hummock and in the middle of the pools;
+      - and a little of the seed's own, so two maps with alike swamps do not put their huts alike.
+    Refused near the map's edge, within ZONE_HUT_CAMP_LEAST of the camp, and with a tree on a plot beside it - a hut
+    stands in a clearing. Whether a walk from a hut's door reaches
+    the camp over the ground as it is - no bridge - is noted: the huts whose zombies can walk to the colony are taken
+    before those a river cuts off, so a map's threat is a real one where the swamp allows it.
+*/
+static float HutJitter(uint32_t seed, int plot){
+    uint32_t h = (uint32_t)plot * 0x9E3779B1u + seed * 0x85EBCA77u + 0x5A4Bu;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return (float)(h % 1000) * 0.001f;
+}
+#define ZONE_HUT_W_JITTER   0.3f    //the seed's share of a spot's score, against 1 each for deep and by the water
+
+void ZoneSwampHutSpots(const ChasmWorld& w, int camp, std::vector<ZoneHutSpot>& out){
+    out.clear();
+    const Grid& g = *w.grid;
+    const Terrain& t = *w.terrain;
+    const int n = (int)g.fine.pos.size();
+    const ChasmLayout::Region& swamp = g.layout.swamp;
+    if (swamp.radius <= 0.0f){
+        return;
+    }
+    const ZoneState none;           //a new map's: nothing built yet
+    //Every plot a walk from the camp reaches over the ground: what a zombie could walk to before anything is built.
+    std::vector<uint8_t> reach(n,0);
+    std::vector<int> queue;
+    if (camp >= 0 && camp < n){
+        queue.assign(1,camp);
+        reach[camp] = 1;
+        for (size_t i = 0; i < queue.size(); i++){
+            int nb[8];
+            int k = ZonePlotNeighbours(w,queue[i],nb,8);
+            for (int j = 0; j < k; j++){
+                if (!reach[nb[j]] && GroundStep(w,queue[i],nb[j])){
+                    reach[nb[j]] = 1;
+                    queue.push_back(nb[j]);
+                }
+            }
+        }
+    }
+    //The plots a tree stands on: a hut stands in a clearing, as no willow beside it could be drawn without growing
+    //through its walls (one on its own plot it hides, as any building does).
+    std::vector<uint8_t> wooded(n,0);
+    if (w.forest){
+        for (const PropInstance& pr : w.forest->props){
+            if (ForestIsTree(pr.kind) && pr.plot >= 0 && pr.plot < n){
+                wooded[pr.plot] = 1;
+            }
+        }
+    }
+    auto clearing = [&](int v){
+        int nb[8];
+        int k = ZonePlotNeighbours(w,v,nb,8);
+        for (int j = 0; j < k; j++){
+            if (wooded[nb[j]]){
+                return false;
+            }
+        }
+        return true;
+    };
+    std::vector<int> mark(n,0);
+    int marks = 0;
+    for (int v = 0; v < n; v++){
+        if (t.biome[v] != TERRAIN_BIOME_SWAMP){
+            continue;
+        }
+        ZoneHutSpot s;
+        s.plot = v;
+        const vec2 at = g.fine.pos[v];
+        s.deep = std::max(0.0f,std::min(1.0f,(swamp.radius - (at - swamp.centre).length()) / (swamp.radius * ZONE_HUT_DEEP)));
+        s.camp = (camp >= 0 && camp < n) ? (at - g.fine.pos[camp]).length() : -1.0f;
+        float edge = std::min(std::min(at.x - g.bounds_min.x,g.bounds_max.x - at.x),
+                              std::min(at.y - g.bounds_min.y,g.bounds_max.y - at.y));
+        const char* why = NULL;
+        if (!HutIsBuildable(w,none,v,&why)){
+            s.refused = why;
+        }else if (edge < ZONE_HUT_EDGE_LEAST){
+            s.refused = "too near the map's edge";
+        }else if (s.camp >= 0.0f && s.camp < ZONE_HUT_CAMP_LEAST){
+            s.refused = "too near the camp";
+        }else if (!clearing(v)){
+            s.refused = "a tree beside it";
+        }
+        if (s.refused){
+            out.push_back(s);
+            continue;
+        }
+        //The pools round it: the share of the plots within ZONE_HUT_WATER_NEAR that are wet.
+        int m = ++marks;
+        queue.assign(1,v);
+        mark[v] = m;
+        int wet = 0;
+        for (size_t i = 0; i < queue.size(); i++){
+            wet += t.wet[queue[i]] ? 1 : 0;
+            int nb[8];
+            int k = ZonePlotNeighbours(w,queue[i],nb,8);
+            for (int j = 0; j < k; j++){
+                if (mark[nb[j]] != m && (g.fine.pos[nb[j]] - at).length() <= ZONE_HUT_WATER_NEAR){
+                    mark[nb[j]] = m;
+                    queue.push_back(nb[j]);
+                }
+            }
+        }
+        s.water = (float)wet / (float)queue.size();
+        float by_water = (s.water <= ZONE_HUT_WATER_BEST) ? s.water / ZONE_HUT_WATER_BEST
+                                                         : std::max(0.0f,1.0f - (s.water - ZONE_HUT_WATER_BEST) / (1.0f - ZONE_HUT_WATER_BEST));
+        int door = ZoneHutDoor(w,v);
+        s.f_walk = door >= 0 && reach[door];
+        s.score = s.deep + by_water + ZONE_HUT_W_JITTER * HutJitter(g.settings.seed,v);
+        out.push_back(s);
+    }
+}
+
+void ZoneSwampHutPlots(const ChasmWorld& w, int camp, std::vector<int>& out){
+    out.clear();
+    std::vector<ZoneHutSpot> spots;
+    ZoneSwampHutSpots(w,camp,spots);
+    std::vector<const ZoneHutSpot*> order;
+    for (const ZoneHutSpot& s : spots){
+        if (!s.refused){
+            order.push_back(&s);
+        }
+    }
+    std::sort(order.begin(),order.end(),[](const ZoneHutSpot* a, const ZoneHutSpot* b){
+        if (a->f_walk != b->f_walk){
+            return a->f_walk;
+        }
+        return (a->score != b->score) ? a->score > b->score : a->plot < b->plot;
+    });
+    const Grid& g = *w.grid;
+    for (const ZoneHutSpot* s : order){
+        if ((int)out.size() >= ZONE_SWAMP_HUTS){
+            break;
+        }
+        bool f_alone = true;
+        for (int o : out){
+            f_alone = f_alone && (g.fine.pos[o] - g.fine.pos[s->plot]).length() >= ZONE_HUT_APART;
+        }
+        if (f_alone){
+            out.push_back(s->plot);
+        }
+    }
+}
+
+int Zones::PlaceSwampHuts(){
+    if (!state.world){
+        return 0;
+    }
+    const ChasmWorld& w = *state.world;
+    //The start camp's first plot: the huts keep their distance from the colony.
+    int camp = -1;
+    for (size_t v = 0; v < state.building.size() && camp < 0; v++){
+        uint32_t id = state.building[v];
+        if (id && id < state.buildings.size() && state.buildings[id].kind == ZONE_KIND_CAMP){
+            camp = (int)v;
+        }
+    }
+    std::vector<int> plots;
+    ZoneSwampHutPlots(w,camp,plots);
+    //Stroke numbers no drag reaches, as the camp's; a hut is one plot, so each is a building of its own anyway.
+    const uint32_t HUT_STROKE = 0x7FFF00u;
+    int placed = 0;
+    for (size_t i = 0; i < plots.size(); i++){
+        placed += Apply(ZONE_OP_BUILD_PAINT,(uint32_t)plots[i],ZONE_KIND_HUT,HUT_STROKE + (uint32_t)i) ? 1 : 0;
+    }
+    state.stroke = 0;
+    state.stroke_building = 0;
+    last_refusal.clear();
+    return placed;
+}
+
 void Zones::Reset(std::shared_ptr<const ChasmWorld> world){
     state = ZoneState();
     state.world = world;
@@ -2579,11 +2869,19 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 last_refusal = "a well is a debug tool, never a player's (water_tools_plan.md)";
                 return false;
             }
+            if (ZoneKindWild(kind) && f_play){
+                last_refusal = "a swamp hut is never the colony's to build";
+                return false;
+            }
             if (plot < 0 || plot >= (int)state.storeys.size()){
                 last_refusal = "no such plot";
                 return false;
             }
             uint32_t on = state.building[plot];
+            if (on && f_play && ZoneKindWild(state.buildings[on].kind)){
+                last_refusal = "a swamp hut stands there";
+                return false;
+            }
             if (on){
                 //A stroke starting on a building of its kind extends that building.
                 if (stroke != state.stroke){
@@ -2672,6 +2970,11 @@ bool Zones::Apply(int op, uint32_t index, int kind, uint32_t stroke, bool f_play
                 return false;
             }
             uint32_t id = state.building[plot];
+            //A swamp hut is the swamp's (ZoneKindWild): a player's erase brush passes over it. Debug may take one off.
+            if (f_play && ZoneKindWild(state.buildings[id].kind)){
+                last_refusal = "the swamp hut is not the colony's to take down";
+                return false;
+            }
             uint8_t& s = state.storeys[plot];
             //A guard tower is only ever whole (ZoneKindPaintStoreys): a storey less takes it all.
             if (op == ZONE_OP_BUILD_REMOVE && s > 1 && state.buildings[id].kind != ZONE_KIND_TOWER){

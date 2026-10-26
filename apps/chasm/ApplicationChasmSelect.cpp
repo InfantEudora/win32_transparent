@@ -64,6 +64,7 @@
 #define SHAPE_TENT          0.85f       //a tent, as tall as it is drawn
 #define SHAPE_WINCH         2.6f        //a winch's gantry
 #define SHAPE_WELL          1.9f        //a well's roof at its ridge (BuildingMesh.cpp, BuildWell)
+#define SHAPE_HUT           2.2f        //a swamp hut's ridge, its stilts and all (BuildingMesh.cpp, BuildSwampHut)
 
 namespace {
 
@@ -736,6 +737,7 @@ const char* KindTitle(int kind){
         case ZONE_KIND_CONDENSER:   return "Condenser";
         case ZONE_KIND_SAIL_LOFT:   return "Sail loft";
         case ZONE_KIND_DOCK:        return "Zeppelin dock";
+        case ZONE_KIND_HUT:         return "Swamp hut";
         default:                    return "?";
     }
 }
@@ -2217,6 +2219,10 @@ void BuildingCard(const ChasmWorld& w, const ZoneState& z, const EconomyState* e
     if (b.kind == ZONE_KIND_WINCH && info.storeys > 0){
         c.Text("Lowers to the balcony below",HUD_TEXT_DIM);
     }
+    //A SWAMP HUT (swamp_huts_plan.md): nobody's in the colony, and nothing to be done with it - yet.
+    if (b.kind == ZONE_KIND_HUT){
+        c.Text("Nobody you know lives here",HUD_TEXT_DIM);
+    }
     //A WELL (water_tools_plan.md): the water it still holds, anyone's - or that it is kept full.
     if (b.kind == ZONE_KIND_WELL && id < e->stock.size()){
         std::array<int,GOOD_COUNT> water{};
@@ -2754,6 +2760,7 @@ float ShapeTop(const ChasmWorld& w, const ZoneState& z, int plot){
         case ZONE_KIND_WINCH:   return ground + SHAPE_WINCH;
         case ZONE_KIND_MINE:    return ground + SHAPE_WINCH;      //its portal, about a winch's height
         case ZONE_KIND_WELL:    return ground + SHAPE_WELL;
+        case ZONE_KIND_HUT:     return ground + SHAPE_HUT;
         case ZONE_KIND_BRIDGE:  return terrain_levels[w.terrain->level[plot]].height + ZONE_BRIDGE_DECK + 0.45f;
         default:{
             float foot = BuildingFootHalves(w,z,z.KindOf(plot),plot) * ZONE_STOREY_HEIGHT * 0.5f;

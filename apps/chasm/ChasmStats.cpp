@@ -136,8 +136,9 @@ ChasmStatsNow ChasmStatsNowOf(const EconomyState& e, const ZoneState& z, uint32_
     std::vector<uint8_t> stands(z.buildings.size(),0);
     std::vector<uint8_t> site(z.buildings.size(),0);
     std::vector<uint8_t> mine(z.buildings.size(),0);
+    //Never a swamp hut (ZoneKindWild): the swamp's, whoever's land it stands on.
     for (size_t id = 1; id < z.buildings.size(); id++){
-        mine[id] = ours((uint32_t)id) ? 1 : 0;
+        mine[id] = (ours((uint32_t)id) && !ZoneKindWild(z.buildings[id].kind)) ? 1 : 0;
     }
     for (size_t v = 0; v < z.building.size(); v++){
         uint32_t id = z.building[v];
@@ -472,6 +473,7 @@ const char* ChasmKindLabel(int kind, bool f_plural){
         case ZONE_KIND_CONDENSER:   return f_plural ? "condensers" : "condenser";
         case ZONE_KIND_SAIL_LOFT:   return f_plural ? "sail lofts" : "sail loft";
         case ZONE_KIND_DOCK:        return f_plural ? "zeppelin docks" : "zeppelin dock";
+        case ZONE_KIND_HUT:         return f_plural ? "swamp huts" : "swamp hut";
         default:                    return f_plural ? "buildings" : "building";
     }
 }
